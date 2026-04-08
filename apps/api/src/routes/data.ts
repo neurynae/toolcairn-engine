@@ -155,41 +155,8 @@ export function dataRoutes() {
     }
   });
 
-  // GET /v1/data/tools/:name — single tool detail by name
-  app.get('/tools/:name', async (c) => {
-    try {
-      const name = decodeURIComponent(c.req.param('name'));
-      const result = await repo.findByName(name);
-      if (!result.ok || !result.data) {
-        return c.json({ ok: false, error: 'not_found', message: `Tool "${name}" not found` }, 404);
-      }
-      const t = result.data;
-      return c.json({
-        ok: true,
-        data: {
-          name: t.name,
-          display_name: t.display_name,
-          description: t.description,
-          category: t.category,
-          github_url: t.github_url,
-          homepage_url: t.homepage_url,
-          language: t.language,
-          languages: t.languages,
-          license: t.license,
-          topics: t.topics,
-          health: t.health,
-          docs: t.docs,
-        },
-      });
-    } catch (e) {
-      return c.json(
-        { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
-        500,
-      );
-    }
-  });
-
   // GET /v1/data/tools/names — all tool names for autocomplete
+  // IMPORTANT: registered BEFORE /tools/:name so literal path takes priority
   app.get('/tools/names', async (c) => {
     try {
       const result = await repo.getAllToolNames();
@@ -223,6 +190,40 @@ export function dataRoutes() {
 
       return c.json({ ok: true, data: names }, 200, {
         'Cache-Control': 'public, max-age=300, stale-while-revalidate=600',
+      });
+    } catch (e) {
+      return c.json(
+        { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
+        500,
+      );
+    }
+  });
+
+  // GET /v1/data/tools/:name — single tool detail by name (AFTER /tools/names)
+  app.get('/tools/:name', async (c) => {
+    try {
+      const name = decodeURIComponent(c.req.param('name'));
+      const result = await repo.findByName(name);
+      if (!result.ok || !result.data) {
+        return c.json({ ok: false, error: 'not_found', message: `Tool "${name}" not found` }, 404);
+      }
+      const t = result.data;
+      return c.json({
+        ok: true,
+        data: {
+          name: t.name,
+          display_name: t.display_name,
+          description: t.description,
+          category: t.category,
+          github_url: t.github_url,
+          homepage_url: t.homepage_url,
+          language: t.language,
+          languages: t.languages,
+          license: t.license,
+          topics: t.topics,
+          health: t.health,
+          docs: t.docs,
+        },
       });
     } catch (e) {
       return c.json(
