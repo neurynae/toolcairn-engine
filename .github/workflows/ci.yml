@@ -27,6 +27,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate Prisma client
+        run: pnpm --filter @toolcairn/db run db:generate
+
       - name: Lint
         run: pnpm lint
 
@@ -120,7 +123,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run Prisma migrations
-        run: pnpm --filter @toolpilot/db db:migrate
+        run: pnpm --filter @toolcairn/db db:migrate
         env:
           DATABASE_URL: postgresql://toolpilot:toolpilot@localhost:5432/toolpilot
 

@@ -61,7 +61,9 @@ jobs:
           GIT_ACTOR: ${{ github.actor }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "${VPS_SSH_KEY}" > ~/.ssh/deploy_key
+          # Strip Windows CRLF line endings that corrupt the key format
+          echo "${VPS_SSH_KEY}" | tr -d '\r' > ~/.ssh/deploy_key
+          echo "" >> ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "deploy@${VPS_HOST}" bash -s << ENDSSH
