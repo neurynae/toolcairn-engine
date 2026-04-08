@@ -6,7 +6,7 @@
 
 services:
   api-staging:
-    image: ghcr.io/neurynae/toolcairn/toolcairn-api:${IMAGE_TAG:-staging}
+    image: ghcr.io/neurynae/toolcairn-engine/api:${IMAGE_TAG:-staging}
     restart: unless-stopped
     environment:
       NODE_ENV: production

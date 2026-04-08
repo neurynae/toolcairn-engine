@@ -38,8 +38,8 @@ jobs:
           push: true
           no-cache: true
           tags: |
-            ghcr.io/neurynae/toolcairn/toolcairn-api:latest
-            ghcr.io/neurynae/toolcairn/toolcairn-api:${{ github.sha }}
+            ghcr.io/neurynae/toolcairn-engine/api:latest
+            ghcr.io/neurynae/toolcairn-engine/api:${{ github.sha }}
 
       - name: Build and push Indexer image
         uses: docker/build-push-action@v6
@@ -49,8 +49,8 @@ jobs:
           push: true
           no-cache: true
           tags: |
-            ghcr.io/neurynae/toolcairn/toolcairn-indexer:latest
-            ghcr.io/neurynae/toolcairn/toolcairn-indexer:${{ github.sha }}
+            ghcr.io/neurynae/toolcairn-engine/indexer:latest
+            ghcr.io/neurynae/toolcairn-engine/indexer:${{ github.sha }}
 
       - name: Deploy to VPS via SSH
         uses: appleboy/ssh-action@v1
