@@ -1,0 +1,11 @@
+{
+  "extends": "@toolcairn/tsconfig/node.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../config" }
+  ]
+}

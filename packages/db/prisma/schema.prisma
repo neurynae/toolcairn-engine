@@ -1,0 +1,247 @@
+// ToolPilot — PostgreSQL Staging Layer
+// This database holds AI-generated nodes awaiting graduation to Memgraph,
+// search sessions for multi-turn guided discovery, and outcome feedback.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Staging Layer ─────────────────────────────────────────────────────────
+
+/// AI-generated graph nodes awaiting review and graduation to Memgraph
+model StagedNode {
+  id                String    @id @default(uuid())
+  node_type         String    // "Tool" | "UseCase" | "Stack" | "Pattern" | "Requirement"
+  node_data         Json      // Full node properties as JSON
+  confidence        Float     // 0–1 confidence score from the AI generator
+  source            String    // "ai_generated" | "indexer" | "user_report"
+  supporting_queries String[] // query_ids that triggered this node proposal
+  graduated         Boolean   @default(false)
+  graduated_at      DateTime?
+  reviewed_by       String?
+  reviewed_at       DateTime?
+  rejection_reason  String?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  @@index([node_type, graduated])
+  @@index([confidence])
+}
+
+/// AI-generated graph edges awaiting review and graduation to Memgraph
+model StagedEdge {
+  id                String    @id @default(uuid())
+  edge_type         String    // "SOLVES" | "INTEGRATES_WITH" | "CONFLICTS_WITH" etc.
+  source_node_id    String    // Memgraph node ID
+  target_node_id    String    // Memgraph node ID
+  edge_data         Json      // EdgeProperties as JSON
+  confidence        Float     // 0–1
+  source            String    // "ai_generated" | "github_signal" | "co_occurrence"
+  supporting_queries String[]
+  graduated         Boolean   @default(false)
+  graduated_at      DateTime?
+  reviewed_by       String?
+  reviewed_at       DateTime?
+  rejection_reason  String?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  @@index([edge_type, graduated])
+  @@index([source_node_id, target_node_id])
+}
+
+// ─── Search Sessions ───────────────────────────────────────────────────────
+
+/// Multi-turn guided discovery session state
+model SearchSession {
+  id                    String    @id @default(uuid())
+  query                 String    // Original user query
+  context               Json?     // Additional context (stack, constraints, etc.)
+  /// Accumulated clarification Q&A: [{ question, options, answer }]
+  clarification_history Json[]    @default([])
+  results               Json?     // Final results once search completes
+  stage                 Int       @default(1) // Current stage (1–4)
+  status                String    @default("active") // "active" | "completed" | "abandoned"
+  expires_at            DateTime  // 30 minutes from creation
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+
+  outcomes OutcomeReport[]
+
+  @@index([status, expires_at])
+}
+
+// ─── Feedback Loop ─────────────────────────────────────────────────────────
+
+/// Outcome reports from report_outcome() MCP tool
+/// Used to update graph edge weights via async queue jobs
+model OutcomeReport {
+  id            String    @id @default(uuid())
+  query_id      String
+  chosen_tool   String    // Tool name that was selected
+  reason        String?   // Why the user chose this tool
+  outcome       String?   // "success" | "failure" | "replaced" | "pending"
+  feedback      String?   // Free-form feedback from the agent/user
+  processed     Boolean   @default(false)
+  processed_at  DateTime?
+  created_at    DateTime  @default(now())
+
+  session SearchSession? @relation(fields: [query_id], references: [id], onDelete: SetNull)
+
+  @@index([processed])
+  @@index([chosen_tool])
+}
+
+// ─── MCP Event Tracking ────────────────────────────────────────────────────
+
+/// Lightweight event log for every MCP tool invocation.
+/// Written asynchronously — never blocks tool responses.
+/// Powers the standalone tracker dashboard at .toolpilot/tracker.html
+model McpEvent {
+  id          String   @id @default(uuid())
+  tool_name   String
+  query_id    String?
+  duration_ms Int
+  status      String   // "ok" | "error"
+  metadata    Json?    // tool-specific extra data (result summary, flags, etc.)
+  created_at  DateTime @default(now())
+
+  @@index([tool_name, created_at])
+  @@index([created_at])
+}
+
+// ─── Indexer Tracking ──────────────────────────────────────────────────────
+
+/// Tracks the indexing state of each tool to enable incremental updates
+model IndexedTool {
+  id              String    @id @default(uuid())
+  github_url      String    @unique
+  graph_node_id   String?   // Memgraph node ID once indexed
+  last_indexed_at DateTime?
+  index_status    String    @default("pending") // "pending" | "indexed" | "failed" | "skipped"
+  error_message   String?
+  retry_count     Int       @default(0)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  @@index([index_status])
+  @@index([last_indexed_at])
+}
+
+// ─── Auth (Auth.js v5 Prisma Adapter) ────────────────────────────────────────
+
+/// Platform user accounts — created via email/password, Google, or GitHub
+model User {
+  id            String    @id @default(uuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?   // null for OAuth-only users
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  apiKeys       ApiKey[]
+  deviceCodes   DeviceCode[]
+
+  @@index([email])
+}
+
+/// OAuth and credentials accounts linked to a user
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String  // "oauth" | "credentials"
+  provider          String  // "google" | "github" | "credentials"
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+/// Database sessions (required by Auth.js Prisma adapter even with JWT strategy)
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Email verification and password reset tokens
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── API Keys ────────────────────────────────────────────────────────────────
+
+/// API keys — both anonymous (legacy free-tier UUID) and user-linked (authenticated)
+model ApiKey {
+  id        String    @id @default(uuid())
+  key       String    @unique   // UUID sent in X-ToolCairn-Key header
+  userId    String?             // null = anonymous (backward-compatible free tier)
+  label     String?             // user-assigned label e.g. "my laptop"
+  tier      String    @default("free")
+  rateLimit Int       @default(60)
+  lastUsed  DateTime?
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([key])
+  @@index([userId])
+}
+
+/// Device authorization codes for MCP CLI authentication flow (like gh auth login)
+model DeviceCode {
+  id         String   @id @default(uuid())
+  deviceCode String   @unique
+  userCode   String   @unique   // Human-readable e.g. "ABCD-1234"
+  userId     String?
+  status     String   @default("pending") // pending | approved | expired
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([deviceCode])
+  @@index([userCode])
+}
+
+// ─── App Settings ─────────────────────────────────────────────────────────────
+
+/// Global application settings and feature toggles
+model AppSettings {
+  id                          String   @id @default("global")
+  reindex_scheduler_enabled   Boolean  @default(true)
+  discovery_scheduler_enabled Boolean  @default(false)
+  discovery_topics            String[] @default([])
+  discovery_batch_size        Int      @default(20)
+  discovery_interval_hours    Int      @default(24)
+  discovery_min_stars         Int      @default(100)
+  discovery_last_pushed_days  Int      @default(90)
+  last_discovery_run          DateTime?
+  last_reindex_run            DateTime?
+  updated_at                  DateTime @updatedAt
+}

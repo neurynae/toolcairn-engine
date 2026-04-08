@@ -1,0 +1,71 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "organizeImports": {
+    "enabled": true
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "noUnusedVariables": "warn",
+        "noUnusedImports": "warn"
+      },
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noConsoleLog": "warn"
+      },
+      "style": {
+        "noDefaultExport": "error",
+        "useConst": "error",
+        "noNonNullAssertion": "warn"
+      }
+    }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "trailingCommas": "all",
+      "semicolons": "always"
+    }
+  },
+  "files": {
+    "ignore": [
+      "node_modules",
+      "dist",
+      ".next",
+      ".turbo",
+      "coverage",
+      "*.generated.ts",
+      "prisma/generated/**",
+      "apps/web/src/app/**",
+      "apps/web/next-env.d.ts",
+      "apps/web/next.config.ts",
+      "apps/web/vitest.config.ts",
+      "apps/public/src/app/**",
+      "apps/public/next-env.d.ts",
+      "apps/public/next.config.ts",
+      "apps/public/vitest.config.ts",
+      "ToolPilot Dev/**",
+      ".mcp.json",
+      ".claude/settings.json",
+      "**/tsconfig.json",
+      "**/tsconfig*.json",
+      "ai-toolkit/**",
+      "**/*.config.ts",
+      "**/*.config.mjs",
+      "**/*.config.js",
+      "apps/public/src/components/**",
+      "apps/web/src/components/ui/**",
+      "apps/web/src/hooks/**",
+      "apps/mcp-server/test-e2e.mjs",
+      "apps/mcp-server/bin/**"
+    ]
+  }
+}

@@ -1,0 +1,74 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'apps/indexer/**'
+      - 'packages/**'
+      - 'docker-compose.prod.yml'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    name: Build & Deploy API
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          no-cache: true
+          tags: |
+            ghcr.io/neurynae/toolcairn/toolcairn-api:latest
+            ghcr.io/neurynae/toolcairn/toolcairn-api:${{ github.sha }}
+
+      - name: Build and push Indexer image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/indexer/Dockerfile
+          push: true
+          no-cache: true
+          tags: |
+            ghcr.io/neurynae/toolcairn/toolcairn-indexer:latest
+            ghcr.io/neurynae/toolcairn/toolcairn-indexer:${{ github.sha }}
+
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 25m
+          script: |
+            cd /opt/toolcairn
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # Free disk before pulling new images (removes old SHA-tagged images from prior deploys)
+            docker image prune -a -f
+            docker builder prune -f
+            echo "Disk after cleanup: $(df -h / | tail -1 | awk '{print $4}') free"
+            curl -fsSL https://raw.githubusercontent.com/neurynae/toolcairn-engine/main/docker-compose.prod.yml -o docker-compose.prod.yml
+            IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml --env-file .env.prod pull api indexer
+            IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-deps api indexer
+            # Prune again after deploy (removes any remaining dangling layers)
+            docker image prune -f
+            echo "Deployed ${{ github.sha }} at $(date)"

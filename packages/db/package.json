@@ -1,0 +1,40 @@
+{
+  "name": "@toolcairn/db",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "prisma generate && tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "prisma db seed",
+    "db:generate": "prisma generate",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.3.1",
+    "@toolcairn/config": "workspace:*",
+    "pino": "^9.6.0",
+    "prisma": "^6.3.1"
+  },
+  "devDependencies": {
+    "@toolcairn/tsconfig": "workspace:*",
+    "@types/node": "^22.10.7",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma",
+    "seed": "tsx prisma/seed.ts"
+  }
+}

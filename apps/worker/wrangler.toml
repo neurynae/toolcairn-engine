@@ -1,0 +1,24 @@
+name = "toolcairn-api-gateway"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+routes = [
+  { pattern = "api.neurynae.com/*", zone_name = "neurynae.com" }
+]
+
+[[kv_namespaces]]
+binding = "KV"
+id = "839fb2f795274b2a8a3995274c1a2ae9"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "toolcairn-feedback"
+database_id = "0b95d681-912e-4906-8683-11140ff84493"
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secrets set via: wrangler secret put ORIGIN_SECRET
+# Secrets set via: wrangler secret put API_ORIGIN_URL

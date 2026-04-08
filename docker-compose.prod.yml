@@ -1,0 +1,211 @@
+##
+## ToolPilot Production Stack
+## Usage: docker compose -f docker-compose.prod.yml up -d
+## All services run on an internal bridge network; only Caddy exposes port 443.
+##
+
+services:
+  # ── ToolPilot HTTP API ───────────────────────────────────────────────────────
+  api:
+    image: ghcr.io/neurynae/toolcairn/toolcairn-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      TOOLPILOT_MODE: production
+      MEMGRAPH_URL: bolt://memgraph:7687
+      QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+      NOMIC_API_KEY: ${NOMIC_API_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      ORIGIN_SECRET: ${ORIGIN_SECRET}
+      ADMIN_SECRET: ${ADMIN_SECRET}
+      MCP_SERVER_PORT: "3001"
+      LOG_LEVEL: info
+    # No external port — Caddy proxies HTTPS → api:3001 internally
+    expose:
+      - "3001"
+    networks:
+      - toolpilot
+    depends_on:
+      memgraph:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3001/v1/health').then(r=>process.exit(r.ok?0:1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── Indexer (persistent — always watching the queue) ─────────────────────────
+  indexer:
+    image: ghcr.io/neurynae/toolcairn/toolcairn-indexer:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      MEMGRAPH_URL: bolt://memgraph:7687
+      QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+      NOMIC_API_KEY: ${NOMIC_API_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    networks:
+      - toolpilot
+    depends_on:
+      memgraph:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # ── Memgraph ─────────────────────────────────────────────────────────────────
+  memgraph:
+    image: memgraph/memgraph-mage:latest
+    restart: unless-stopped
+    command:
+      - "--memory-limit=1024"
+      - "--bolt-num-workers=4"
+      - "--log-level=WARNING"
+      - "--also-log-to-stderr"
+    volumes:
+      - memgraph_prod:/var/lib/memgraph
+    networks:
+      - toolpilot
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+        reservations:
+          memory: 768M
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'RETURN 1;' | mgconsole --host 127.0.0.1 --port 7687 --use_ssl=false >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ── Qdrant ────────────────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant_prod:/qdrant/storage
+    networks:
+      - toolpilot
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' 2>/dev/null && echo ok || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    command: >
+      postgres
+        -c shared_buffers=64MB
+        -c effective_cache_size=256MB
+        -c work_mem=2MB
+        -c max_connections=20
+        -c wal_buffers=4MB
+        -c checkpoint_completion_target=0.9
+    environment:
+      POSTGRES_DB: toolpilot
+      POSTGRES_USER: toolpilot
+      POSTGRES_PASSWORD: ${DB_PASS}
+    volumes:
+      - postgres_prod:/var/lib/postgresql/data
+    networks:
+      - toolpilot
+    shm_size: 128m
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U toolpilot -d toolpilot"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Redis ─────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 96mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_prod:/data
+    networks:
+      - toolpilot
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  # ── Caddy (reverse proxy + SSL) ──────────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - toolpilot
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  toolpilot:
+    driver: bridge
+
+volumes:
+  memgraph_prod:
+  qdrant_prod:
+  postgres_prod:
+  redis_prod:
+  caddy_data:
+  caddy_config:

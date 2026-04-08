@@ -1,0 +1,32 @@
+# Caddy reverse proxy for ToolCairn production API
+# Let's Encrypt cert is obtained automatically via HTTP challenge on first start.
+# origin.toolcairn.neurynae.com is gray-cloud (DNS-only) so HTTP challenge works directly.
+
+origin.neurynae.com {
+  # Caddy auto-issues + renews Let's Encrypt cert
+  reverse_proxy api:3001 {
+    header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+    header_up X-Forwarded-Proto {scheme}
+  }
+
+  encode gzip
+
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    -Server
+  }
+
+  log {
+    output stdout
+    format json
+  }
+}
+
+# Staging API — direct access, no Cloudflare Worker (developer-only)
+staging.neurynae.com {
+  reverse_proxy api-staging:3002 {
+    header_up X-Real-IP {remote_host}
+  }
+  encode gzip
+}

@@ -1,0 +1,52 @@
+name: Daily Indexer
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC daily
+  workflow_dispatch: {}    # manual trigger any time
+
+jobs:
+  trigger-indexer:
+    name: Trigger indexer on VPS
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read   # needed to pull from GHCR
+
+    steps:
+      - name: Run indexer via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 90m
+          envs: GITHUB_TOKEN,GITHUB_ACTOR
+          script: |
+            cd /opt/toolcairn
+            echo "Starting indexer at $(date)"
+
+            # Authenticate with GHCR and pull latest image
+            echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            docker compose -f docker-compose.prod.yml --env-file .env.prod --profile indexer pull indexer
+
+            # Step 1: Run one-shot reindex scheduler.
+            # Finds tools stale > 7 days, enqueues them to Redis, then exits cleanly (~5 sec).
+            echo "=== Step 1: Reindex scheduler ($(date)) ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.prod --profile indexer \
+              run --rm -e INDEXER_IDLE_EXIT_MINUTES=5 indexer node dist/run-reindex.js
+            echo "=== Scheduler done ($(date)) ==="
+
+            # Step 2: Process any enqueued jobs.
+            # INDEXER_IDLE_EXIT_MINUTES=5 makes the consumer self-exit after 5 min of empty queue.
+            # When no tools were enqueued (queue is empty), it exits in ~5 min automatically.
+            # When tools were enqueued, it processes them and exits 5 min after the last job.
+            echo "=== Step 2: Queue processor with idle-exit ($(date)) ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.prod --profile indexer \
+              run --rm -e INDEXER_IDLE_EXIT_MINUTES=5 indexer
+            echo "=== Queue processor done ($(date)) ==="
+
+            echo "Indexer run complete at $(date)"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}

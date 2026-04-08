@@ -1,0 +1,16 @@
+{
+  "extends": "@toolcairn/tsconfig/node.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/config" },
+    { "path": "../../packages/tools" },
+    { "path": "../../packages/db" },
+    { "path": "../../packages/graph" },
+    { "path": "../../packages/vector" },
+    { "path": "../../packages/queue" }
+  ]
+}

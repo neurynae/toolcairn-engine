@@ -1,0 +1,32 @@
+{
+  "name": "toolcairn-engine",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "test": "turbo test:unit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "turbo typecheck",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:seed": "turbo db:seed",
+    "db:migrate": "pnpm --filter @toolcairn/db run db:migrate",
+    "indexer:run": "turbo --filter=@toolcairn/indexer start",
+    "clean": "turbo clean && rimraf node_modules"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "turbo": "^2.8.21",
+    "typescript": "^5.9.3",
+    "@types/node": "^22.19.15",
+    "cross-env": "^7.0.3",
+    "rimraf": "^6.1.3"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

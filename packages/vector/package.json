@@ -1,0 +1,35 @@
+{
+  "name": "@toolcairn/vector",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@qdrant/js-client-rest": "^1.13.0",
+    "@toolcairn/config": "workspace:*",
+    "@toolcairn/core": "workspace:*",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@toolcairn/tsconfig": "workspace:*",
+    "@types/node": "^22.10.7",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.4"
+  }
+}

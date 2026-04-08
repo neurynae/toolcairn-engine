@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+
+# Turborepo
+.turbo/
+
+# Test coverage
+coverage/
+
+# Environment files (NEVER commit)
+*.env
+*.env.local
+*.env.production
+!.env.example
+
+# TypeScript
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Docker volumes
+qdrant_data/
+memgraph_data/
+postgres_data/
+redis_data/
+
+# Prisma
+prisma/dev.db
+prisma/dev.db-journal

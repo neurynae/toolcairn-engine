@@ -1,0 +1,42 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": [".env"],
+  "globalEnv": [
+    "NODE_ENV",
+    "TOOLPILOT_MODE",
+    "MEMGRAPH_URL",
+    "MEMGRAPH_USER",
+    "MEMGRAPH_PASSWORD",
+    "QDRANT_URL",
+    "QDRANT_API_KEY",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "NOMIC_API_KEY",
+    "GITHUB_TOKEN",
+    "LOG_LEVEL"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "dev": {
+      "dependsOn": ["^build"],
+      "persistent": true,
+      "cache": false
+    },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "test:unit": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"]
+    },
+    "db:seed": {
+      "dependsOn": ["^build"]
+    },
+    "clean": {
+      "cache": false
+    }
+  }
+}
