@@ -60,6 +60,11 @@ jobs:
       - name: Add VPS to known hosts
         run: ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
+      - name: Copy docker-compose to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: scp docker-compose.prod.yml "deploy@${VPS_HOST}:/opt/toolcairn/docker-compose.prod.yml"
+
       - name: Deploy to VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -74,7 +79,6 @@ jobs:
             docker image prune -a -f
             docker builder prune -f
             echo "Disk after cleanup: \$(df -h / | tail -1 | awk '{print \$4}') free"
-            curl -fsSL https://raw.githubusercontent.com/neurynae/toolcairn-engine/main/docker-compose.prod.yml -o docker-compose.prod.yml
             IMAGE_TAG=${GIT_SHA} docker compose -f docker-compose.prod.yml --env-file .env.prod pull api indexer
             IMAGE_TAG=${GIT_SHA} docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-deps api indexer
             docker image prune -f
