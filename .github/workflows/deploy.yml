@@ -53,22 +53,26 @@ jobs:
             ghcr.io/neurynae/toolcairn-engine/indexer:${{ github.sha }}
 
       - name: Deploy to VPS via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: deploy
-          key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 25m
-          script: |
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_SHA: ${{ github.sha }}
+          GIT_ACTOR: ${{ github.actor }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${VPS_SSH_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "deploy@${VPS_HOST}" bash -s << ENDSSH
             cd /opt/toolcairn
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            # Free disk before pulling new images (removes old SHA-tagged images from prior deploys)
+            echo "${GH_TOKEN}" | docker login ghcr.io -u "${GIT_ACTOR}" --password-stdin
             docker image prune -a -f
             docker builder prune -f
-            echo "Disk after cleanup: $(df -h / | tail -1 | awk '{print $4}') free"
+            echo "Disk after cleanup: \$(df -h / | tail -1 | awk '{print \$4}') free"
             curl -fsSL https://raw.githubusercontent.com/neurynae/toolcairn-engine/main/docker-compose.prod.yml -o docker-compose.prod.yml
-            IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml --env-file .env.prod pull api indexer
-            IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-deps api indexer
-            # Prune again after deploy (removes any remaining dangling layers)
+            IMAGE_TAG=${GIT_SHA} docker compose -f docker-compose.prod.yml --env-file .env.prod pull api indexer
+            IMAGE_TAG=${GIT_SHA} docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-deps api indexer
             docker image prune -f
-            echo "Deployed ${{ github.sha }} at $(date)"
+            echo "Deployed ${GIT_SHA} at \$(date)"
+          ENDSSH
