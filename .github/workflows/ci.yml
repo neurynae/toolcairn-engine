@@ -55,8 +55,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate Prisma client
+        run: pnpm --filter @toolcairn/db run db:generate
+
       - name: Run unit tests
-        run: pnpm test:unit
+        run: pnpm test
 
   test-integration:
     name: Integration Tests

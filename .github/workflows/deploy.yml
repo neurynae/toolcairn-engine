@@ -52,21 +52,23 @@ jobs:
             ghcr.io/neurynae/toolcairn-engine/indexer:latest
             ghcr.io/neurynae/toolcairn-engine/indexer:${{ github.sha }}
 
-      - name: Deploy to VPS via SSH
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Add VPS to known hosts
+        run: ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GIT_SHA: ${{ github.sha }}
           GIT_ACTOR: ${{ github.actor }}
         run: |
-          mkdir -p ~/.ssh
-          # Strip Windows CRLF line endings that corrupt the key format
-          echo "${VPS_SSH_KEY}" | tr -d '\r' > ~/.ssh/deploy_key
-          echo "" >> ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "deploy@${VPS_HOST}" bash -s << ENDSSH
+          ssh "deploy@${VPS_HOST}" bash << ENDSSH
+            set -e
             cd /opt/toolcairn
             echo "${GH_TOKEN}" | docker login ghcr.io -u "${GIT_ACTOR}" --password-stdin
             docker image prune -a -f
