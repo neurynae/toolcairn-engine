@@ -2,14 +2,35 @@ import type { ApiKeyRecord, Env } from './types.js';
 
 const AUTH_RATE_LIMIT = 300; // requests per minute for authenticated users
 
+const SERVICE_RATE_LIMIT = 600; // requests per minute for web app service auth
+
 /**
- * Validate a request — JWT Bearer token is required.
- * Anonymous API-key-only requests are rejected; all clients must authenticate.
+ * Validate a request.
+ *
+ * Two auth paths:
+ *   1. Service auth (web app → CF Worker): x-toolpilot-key header matching ORIGIN_SECRET.
+ *      Used by the Vercel web app proxy; key is stripped and replaced with X-Origin-Secret
+ *      before forwarding to VPS origin. Safe over HTTPS.
+ *   2. User auth (MCP clients): Authorization: Bearer {JWT} signed with AUTH_SECRET.
  */
 export async function validateRequest(
   request: Request,
   env: Env,
 ): Promise<{ valid: boolean; record: ApiKeyRecord | null; error?: string }> {
+  // ── Service auth: web app sends x-toolpilot-key === ORIGIN_SECRET ──────────
+  const serviceKey = request.headers.get('x-toolpilot-key');
+  if (serviceKey && env.ORIGIN_SECRET && serviceKey === env.ORIGIN_SECRET) {
+    const record: ApiKeyRecord = {
+      client_id: 'web-app-service',
+      tier: 'pro',
+      rate_limit: SERVICE_RATE_LIMIT,
+      created_at: new Date().toISOString(),
+      user_id: 'web-app-service',
+    };
+    return { valid: true, record };
+  }
+
+  // ── User auth: MCP clients send JWT Bearer token ────────────────────────────
   const authHeader = request.headers.get('Authorization');
 
   if (!authHeader?.startsWith('Bearer ')) {
