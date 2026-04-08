@@ -16,7 +16,6 @@ function getPrismaClient(): PrismaClient {
   return globalForPrisma._prisma;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: Proxy requires any for property forwarding
 export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
   get(_target, prop: string | symbol) {
     return getPrismaClient()[prop as keyof PrismaClient];
