@@ -12,7 +12,8 @@
     "test:unit": "vitest run --passWithNoTests",
     "clean": "rimraf dist",
     "index-issues": "tsx src/run-index-issues.ts",
-    "migrate-topics": "tsx src/run-migrate-topics.ts"
+    "migrate-topics": "tsx src/run-migrate-topics.ts",
+    "bulk-index": "tsx src/bulk-index-10k.ts"
   },
   "dependencies": {
     "@octokit/plugin-retry": "^8.1.0",
