@@ -36,11 +36,7 @@ import {
 } from './crawlers/rate-limit.js';
 import { handleIndexJob } from './queue-consumers/index-consumer.js';
 
-const logger = pino({
-  name: '@toolcairn/indexer:bulk-10k',
-  level: 'info',
-  transport: { target: 'pino-pretty', options: { colorize: true } },
-});
+const logger = pino({ name: '@toolcairn/indexer:bulk-10k', level: 'info' });
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
