@@ -9,7 +9,6 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc tsconfig.base.json ./
 COPY packages/ ./packages/
 COPY apps/indexer/ ./apps/indexer/
-COPY apps/mcp-server/package.json ./apps/mcp-server/
 COPY apps/api/package.json ./apps/api/
 COPY apps/worker/package.json ./apps/worker/
 
@@ -17,17 +16,17 @@ COPY apps/worker/package.json ./apps/worker/
 RUN pnpm install --no-frozen-lockfile
 
 # Generate Prisma client
-RUN pnpm --filter @toolpilot/db run db:generate
+RUN pnpm --filter @toolcairn/db run db:generate
 
 # Build all packages in dependency order
-RUN pnpm --filter @toolpilot/config build && \
-    pnpm --filter @toolpilot/core build && \
-    pnpm --filter @toolpilot/db build && \
-    pnpm --filter @toolpilot/vector build && \
-    pnpm --filter @toolpilot/graph build && \
-    pnpm --filter @toolpilot/queue build && \
-    pnpm --filter @toolpilot/search build && \
-    pnpm --filter @toolpilot/indexer build
+RUN pnpm --filter @toolcairn/config build && \
+    pnpm --filter @toolcairn/core build && \
+    pnpm --filter @toolcairn/db build && \
+    pnpm --filter @toolcairn/vector build && \
+    pnpm --filter @toolcairn/graph build && \
+    pnpm --filter @toolcairn/queue build && \
+    pnpm --filter @toolcairn/search build && \
+    pnpm --filter @toolcairn/indexer build
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
@@ -46,10 +45,8 @@ COPY packages/queue/package.json ./packages/queue/
 COPY packages/search/package.json ./packages/search/
 COPY packages/vector/package.json ./packages/vector/
 COPY packages/tools/package.json ./packages/tools/
-COPY packages/remote/package.json ./packages/remote/
 COPY apps/indexer/package.json ./apps/indexer/
 COPY apps/api/package.json ./apps/api/
-COPY apps/mcp-server/package.json ./apps/mcp-server/
 COPY apps/worker/package.json ./apps/worker/
 
 RUN pnpm install --no-frozen-lockfile --prod
