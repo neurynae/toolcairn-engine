@@ -61,10 +61,27 @@ export function alertRoutes(prisma: PrismaClient): Hono {
     }
   });
 
-  // POST /v1/alerts/subscribe — subscribe to deprecation alerts for a tool
+  // POST /v1/alerts/subscribe — subscribe to deprecation alerts (Pro only)
   app.post('/subscribe', async (c) => {
     const userId = c.req.header('X-ToolCairn-User-Id');
     if (!userId) return c.json({ ok: false, error: 'unauthorized' }, 401);
+
+    // Pro gate — verify active subscription before allowing alert subscriptions
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { plan: true, planExpiresAt: true },
+    });
+    const isPro = user?.plan === 'pro' && user.planExpiresAt && user.planExpiresAt > new Date();
+    if (!isPro) {
+      return c.json(
+        {
+          ok: false,
+          error: 'pro_required',
+          message: 'Deprecation alerts require a Pro plan. Upgrade at /billing',
+        },
+        403,
+      );
+    }
 
     let body: unknown;
     try {
@@ -116,10 +133,28 @@ export function alertRoutes(prisma: PrismaClient): Hono {
     }
   });
 
-  // PATCH /v1/alerts/config — update webhook URL
+  // PATCH /v1/alerts/config — update webhook URL (Pro only)
   app.patch('/config', async (c) => {
     const userId = c.req.header('X-ToolCairn-User-Id');
     if (!userId) return c.json({ ok: false, error: 'unauthorized' }, 401);
+
+    // Pro gate
+    const userPlan = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { plan: true, planExpiresAt: true },
+    });
+    const isPro =
+      userPlan?.plan === 'pro' && userPlan.planExpiresAt && userPlan.planExpiresAt > new Date();
+    if (!isPro) {
+      return c.json(
+        {
+          ok: false,
+          error: 'pro_required',
+          message: 'Webhook alerts require a Pro plan. Upgrade at /billing',
+        },
+        403,
+      );
+    }
 
     let body: unknown;
     try {
