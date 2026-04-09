@@ -218,7 +218,15 @@ async function forwardToOrigin(
 
   const headers = new Headers(request.headers);
   headers.set('X-Origin-Secret', env.ORIGIN_SECRET);
-  if (userId) headers.set('X-ToolCairn-User-Id', userId);
+  // Preserve caller's X-ToolCairn-User-Id if already set (e.g. Vercel web app sets
+  // the real user ID for user-specific endpoints like billing/status).
+  // Only inject worker-derived userId if the caller didn't supply one.
+  const callerUserId = request.headers.get('X-ToolCairn-User-Id');
+  if (callerUserId) {
+    headers.set('X-ToolCairn-User-Id', callerUserId);
+  } else if (userId) {
+    headers.set('X-ToolCairn-User-Id', userId);
+  }
   headers.set('X-Real-IP', request.headers.get('CF-Connecting-IP') ?? 'unknown');
   headers.delete('X-ToolPilot-Key');
 
