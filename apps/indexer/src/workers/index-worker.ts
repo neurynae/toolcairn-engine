@@ -10,6 +10,7 @@ import pino from 'pino';
 import { getRateLimitStatus, refreshRateLimitsFromGitHub } from '../crawlers/github-discovery.js';
 import { handleIndexJob } from '../queue-consumers/index-consumer.js';
 import { runDiscoveryScheduler } from '../schedulers/discovery-scheduler.js';
+import { runPendingWatchdog } from '../schedulers/pending-watchdog.js';
 import { runReindexScheduler } from '../schedulers/reindex-scheduler.js';
 
 const logger = pino({ name: '@toolcairn/indexer:index-worker' });
@@ -96,6 +97,17 @@ async function startSchedulerCron(): Promise<void> {
             );
           }
         }
+      }
+      // ── Pending watchdog ───────────────────────────────────────────────────
+      // Runs every tick. Re-enqueues tools stuck in 'pending' > 30 min —
+      // catches PostgreSQL/Redis drift after consumer crash or bulk-indexer death.
+      try {
+        const watchdogResult = await runPendingWatchdog(prisma);
+        if (watchdogResult.requeued > 0) {
+          logger.info(watchdogResult, 'Cron: pending watchdog re-queued stuck tools');
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Cron: pending watchdog failed — will retry next tick');
       }
     } catch (err) {
       logger.warn({ err }, 'Cron tick failed — will retry next interval');

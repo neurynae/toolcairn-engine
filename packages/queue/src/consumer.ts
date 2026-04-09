@@ -127,16 +127,75 @@ export async function readFromStream(
 }
 
 /**
- * Claim and re-queue messages stuck in the PEL (delivered to dead consumers,
- * never acknowledged). Runs once at startup using XAUTOCLAIM (Redis 7+).
+ * Read messages from a specific start position (for draining the PEL).
+ * Unlike readFromStream (which uses '>'), this reads already-delivered
+ * messages owned by this consumer — used to process reclaimed PEL entries.
  */
-async function reclaimStalePending(group: string, consumer: string): Promise<void> {
+async function readFromPEL(
+  group: string,
+  consumer: string,
+  count: number,
+): Promise<StreamMessage[]> {
   const redis = getRedisClient();
-  const IDLE_MS = 60_000; // reclaim messages idle > 1 minute
+  const messages: StreamMessage[] = [];
 
   for (const stream of [INDEX_STREAM, SCHEDULER_STREAM]) {
     try {
-      // XAUTOCLAIM: atomically transfers idle PEL entries to this consumer
+      // '0' reads messages already in this consumer's PEL (not new ones)
+      const result = await redis.xreadgroup(
+        'GROUP',
+        group,
+        consumer,
+        'COUNT',
+        String(count),
+        'STREAMS',
+        stream,
+        '0',
+      );
+      if (!result) continue;
+      for (const [, entries] of result as [string, [string, string[]][]][]) {
+        for (const [entryId, fields] of entries) {
+          const map: Record<string, string> = {};
+          for (let i = 0; i < fields.length; i += 2) {
+            map[fields[i] ?? ''] = fields[i + 1] ?? '';
+          }
+          const appId = map.id;
+          const type = map.type;
+          const payload = map.payload;
+          const timestamp = map.timestamp;
+          if (!appId || !type || !payload || !timestamp) continue;
+          messages.push({
+            id: appId,
+            type,
+            payload: JSON.parse(payload),
+            timestamp: Number(timestamp),
+            _streamKey: stream,
+            _entryId: entryId,
+          });
+        }
+      }
+    } catch (e) {
+      logger.warn({ err: e, stream }, 'readFromPEL failed — skipping');
+    }
+  }
+  return messages;
+}
+
+/**
+ * Claim and process messages stuck in the PEL (delivered to dead consumers,
+ * never acknowledged). Runs once at startup using XAUTOCLAIM (Redis 7+).
+ *
+ * Key fix: XAUTOCLAIM transfers ownership but does NOT re-deliver messages
+ * via '>'. We must explicitly drain the PEL with '0' reads after claiming.
+ */
+async function reclaimStalePending(group: string, consumer: string): Promise<number> {
+  const redis = getRedisClient();
+  const IDLE_MS = 60_000; // reclaim messages idle > 1 minute
+  let totalClaimed = 0;
+
+  for (const stream of [INDEX_STREAM, SCHEDULER_STREAM]) {
+    try {
+      // Transfer orphaned PEL entries to this consumer
       const result = await redis.xautoclaim(
         stream,
         group,
@@ -144,17 +203,20 @@ async function reclaimStalePending(group: string, consumer: string): Promise<voi
         IDLE_MS,
         '0-0',
         'COUNT',
-        '100',
+        '500',
       );
       // ioredis returns [nextId, [[entryId, fields], ...], deletedIds]
       const entries: [string, string[]][] = Array.isArray(result[1]) ? result[1] : [];
       if (entries.length > 0) {
-        logger.info({ stream, count: entries.length }, 'Reclaimed stale pending messages');
+        totalClaimed += entries.length;
+        logger.info({ stream, count: entries.length }, 'Reclaimed stale PEL messages — will drain');
       }
     } catch (e) {
       logger.warn({ err: e, stream }, 'XAUTOCLAIM failed — skipping PEL recovery');
     }
   }
+
+  return totalClaimed;
 }
 
 export interface ConsumerOptions {
@@ -189,8 +251,41 @@ export async function startConsumer(
   process.once('SIGINT', shutdown);
 
   try {
-    // On startup, reclaim any messages stuck in PEL from dead consumer instances
-    await reclaimStalePending(group, consumer);
+    // On startup: reclaim PEL messages from dead consumers, then drain them.
+    // reclaimStalePending uses XAUTOCLAIM which transfers ownership but does NOT
+    // re-deliver via '>'. We must explicitly process the PEL with '0' reads.
+    const claimedCount = await reclaimStalePending(group, consumer);
+    if (claimedCount > 0) {
+      logger.info({ claimedCount }, 'Draining PEL — processing reclaimed messages');
+      let pelMessages = await readFromPEL(group, consumer, 10);
+      while (pelMessages.length > 0) {
+        for (const msg of pelMessages) {
+          try {
+            if (msg.type === 'index-job') {
+              const { toolId, priority } = msg.payload as { toolId: string; priority: number };
+              await handlers.onIndexJob(toolId, priority);
+            } else if (msg.type === 'run-discovery' && handlers.onRunDiscovery) {
+              await handlers.onRunDiscovery();
+            } else if (msg.type === 'run-reindex' && handlers.onRunReindex) {
+              await handlers.onRunReindex();
+            }
+          } catch (e) {
+            logger.error({ err: e, messageId: msg.id }, 'PEL drain: message processing failed');
+          }
+        }
+        const redis = getRedisClient();
+        const indexIds = pelMessages
+          .filter((m) => m._streamKey === INDEX_STREAM)
+          .map((m) => m._entryId);
+        const schedulerIds = pelMessages
+          .filter((m) => m._streamKey === SCHEDULER_STREAM)
+          .map((m) => m._entryId);
+        if (indexIds.length > 0) await redis.xack(INDEX_STREAM, group, ...indexIds);
+        if (schedulerIds.length > 0) await redis.xack(SCHEDULER_STREAM, group, ...schedulerIds);
+        pelMessages = await readFromPEL(group, consumer, 10);
+      }
+      logger.info('PEL drain complete');
+    }
 
     while (running) {
       const messages = await readFromStream(group, consumer, 10);
