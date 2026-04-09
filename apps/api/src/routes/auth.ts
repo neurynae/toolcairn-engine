@@ -27,12 +27,30 @@ function randomUserCode(): string {
   return `${part(4)}-${part(4)}`;
 }
 
-async function mintAccessToken(userId: string, email: string, secret: string): Promise<string> {
-  return new SignJWT({ sub: userId, email, type: 'mcp', tier: 'free' })
+async function mintAccessToken(
+  userId: string,
+  email: string,
+  secret: string,
+  tier = 'free',
+): Promise<string> {
+  return new SignJWT({ sub: userId, email, type: 'mcp', tier })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('90d')
     .sign(new TextEncoder().encode(secret));
+}
+
+/** Resolve current plan tier for a user — checks expiry. */
+async function getUserTier(prisma: PrismaClient, userId: string): Promise<string> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { plan: true, planExpiresAt: true },
+  });
+  if (!user) return 'free';
+  if (user.plan !== 'free' && user.planExpiresAt && user.planExpiresAt > new Date()) {
+    return user.plan;
+  }
+  return 'free';
 }
 
 export function authRoutes(prisma: PrismaClient): Hono {
@@ -233,7 +251,13 @@ export function authRoutes(prisma: PrismaClient): Hono {
     const authSecret = process.env.AUTH_SECRET;
     if (!authSecret) return c.json({ error: 'server_misconfigured' }, 500);
 
-    const accessToken = await mintAccessToken(record.user.id, record.user.email ?? '', authSecret);
+    const tier = await getUserTier(prisma, record.user.id);
+    const accessToken = await mintAccessToken(
+      record.user.id,
+      record.user.email ?? '',
+      authSecret,
+      tier,
+    );
 
     const apiKey = await prisma.apiKey.upsert({
       where: { key: `${record.user.id}-mcp` },
@@ -268,6 +292,29 @@ export function authRoutes(prisma: PrismaClient): Hono {
     try {
       const payload = JSON.parse(atob(auth.slice(7).split('.')[1] ?? ''));
       return c.json({ ok: true, user: { id: payload.sub, email: payload.email } });
+    } catch {
+      return c.json({ error: 'invalid_token' }, 401);
+    }
+  });
+
+  // POST /v1/auth/refresh-token — get a new JWT with updated plan tier
+  // Called by MCP clients after a user upgrades their plan, without re-authenticating.
+  app.post('/refresh-token', async (c) => {
+    const auth = c.req.header('Authorization');
+    if (!auth?.startsWith('Bearer ')) return c.json({ error: 'unauthorized' }, 401);
+    const authSecret = process.env.AUTH_SECRET;
+    if (!authSecret) return c.json({ error: 'server_misconfigured' }, 500);
+    try {
+      const payload = JSON.parse(atob(auth.slice(7).split('.')[1] ?? ''));
+      const userId = payload.sub as string;
+      if (!userId) return c.json({ error: 'invalid_token' }, 401);
+      const tier = await getUserTier(prisma, userId);
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true },
+      });
+      const accessToken = await mintAccessToken(userId, user?.email ?? '', authSecret, tier);
+      return c.json({ access_token: accessToken, tier, expires_in: 90 * 24 * 3600 });
     } catch {
       return c.json({ error: 'invalid_token' }, 401);
     }

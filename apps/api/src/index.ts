@@ -19,6 +19,7 @@ import { adminRoutes } from './routes/admin.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { authRoutes } from './routes/auth.js';
 import { badgeRoutes } from './routes/badge.js';
+import { billingRoutes } from './routes/billing.js';
 import { dataRoutes } from './routes/data.js';
 import { eventRoutes } from './routes/events.js';
 import { feedbackRoutes } from './routes/feedback.js';
@@ -51,14 +52,15 @@ app.use('*', async (c, next) => {
 app.route('/v1', systemRoutes());
 app.route('/v1/auth', authRoutes(prisma));
 app.route('/v1/admin', adminRoutes());
-// Badge endpoint — public SVG badges for README files, cached by CF Worker
+// Badge — public SVG badges for README files, cached by CF Worker
 app.route('/v1/badge', badgeRoutes());
 
-// ── Protected endpoints (require X-Origin-Secret from CF Worker) ─────────────
+// ── Protected endpoints — originAuth exempts /v1/billing/webhook automatically ──
 app.use('/v1/*', originAuth);
 app.route('/v1/data', dataRoutes());
 app.route('/v1/events', eventRoutes());
 app.route('/v1/analytics', analyticsRoutes());
+app.route('/v1/billing', billingRoutes(prisma));
 app.route('/v1/search', searchRoutes(handlers));
 app.route('/v1/graph', graphRoutes(handlers));
 app.route('/v1/intelligence', intelligenceRoutes(handlers));

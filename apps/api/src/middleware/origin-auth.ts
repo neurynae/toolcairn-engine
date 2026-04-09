@@ -8,7 +8,16 @@ import type { Context, MiddlewareHandler, Next } from 'hono';
  * If ORIGIN_SECRET is not configured the middleware is a no-op,
  * which allows direct requests during local development.
  */
+// Paths that bypass origin-auth — called directly by external services
+const PUBLIC_PATHS = ['/v1/billing/webhook'];
+
 export const originAuth: MiddlewareHandler = async (c: Context, next: Next) => {
+  // Exempt external webhook callbacks from origin-auth
+  if (PUBLIC_PATHS.includes(c.req.path)) {
+    await next();
+    return;
+  }
+
   const secret = config.ORIGIN_SECRET;
   if (!secret) {
     // Dev/staging: no secret configured — allow all requests

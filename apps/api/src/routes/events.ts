@@ -12,7 +12,7 @@ import { z } from 'zod';
 
 const EventSchema = z.object({
   tool_name: z.string().min(1).max(128),
-  query_id: z.string().uuid().optional(),
+  query_id: z.string().uuid().nullish(),
   duration_ms: z.number().int().min(0).default(0),
   status: z.enum(['ok', 'error']).default('ok'),
   metadata: z.record(z.unknown()).optional(),

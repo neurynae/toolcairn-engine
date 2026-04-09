@@ -38,6 +38,14 @@ const configSchema = z.object({
   /** Secret shared between Cloudflare Worker and the API origin server */
   ORIGIN_SECRET: z.string().optional(),
 
+  // ── Razorpay (Billing) ────────────────────────────────────────────────────
+  RAZORPAY_KEY_ID: z.string().optional(),
+  RAZORPAY_KEY_SECRET: z.string().optional(),
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+  RAZORPAY_PLAN_MONTHLY: z.string().optional(),
+  RAZORPAY_PLAN_QUARTERLY: z.string().optional(),
+  RAZORPAY_PLAN_SEMIANNUAL: z.string().optional(),
+
   // ── General ───────────────────────────────────────────────────────────────
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
