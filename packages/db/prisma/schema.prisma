@@ -19,18 +19,20 @@ model StagedNode {
   node_type         String    // "Tool" | "UseCase" | "Stack" | "Pattern" | "Requirement"
   node_data         Json      // Full node properties as JSON
   confidence        Float     // 0–1 confidence score from the AI generator
-  source            String    // "ai_generated" | "indexer" | "user_report"
+  source            String    // "ai_generated" | "indexer" | "user_report" | "community"
   supporting_queries String[] // query_ids that triggered this node proposal
   graduated         Boolean   @default(false)
   graduated_at      DateTime?
   reviewed_by       String?
   reviewed_at       DateTime?
   rejection_reason  String?
+  submitted_by      String?   // userId of community submitter
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
 
   @@index([node_type, graduated])
   @@index([confidence])
+  @@index([submitted_by])
 }
 
 /// AI-generated graph edges awaiting review and graduation to Memgraph
@@ -70,10 +72,12 @@ model SearchSession {
   expires_at            DateTime  // 30 minutes from creation
   created_at            DateTime  @default(now())
   updated_at            DateTime  @updatedAt
+  co_occurrence_processed Boolean @default(false) // processed for CO_OCCURS_WITH edge computation
 
   outcomes OutcomeReport[]
 
   @@index([status, expires_at])
+  @@index([co_occurrence_processed, status])
 }
 
 // ─── Feedback Loop ─────────────────────────────────────────────────────────
@@ -106,6 +110,7 @@ model McpEvent {
   id          String   @id @default(uuid())
   tool_name   String
   query_id    String?
+  user_id     String?  // authenticated user who triggered the call
   duration_ms Int
   status      String   // "ok" | "error"
   metadata    Json?    // tool-specific extra data (result summary, flags, etc.)
@@ -113,6 +118,7 @@ model McpEvent {
 
   @@index([tool_name, created_at])
   @@index([created_at])
+  @@index([user_id, created_at])
 }
 
 // ─── Indexer Tracking ──────────────────────────────────────────────────────
@@ -146,10 +152,21 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts      Account[]
-  sessions      Session[]
-  apiKeys       ApiKey[]
-  deviceCodes   DeviceCode[]
+  // Billing
+  plan                   String    @default("free")  // "free" | "pro"
+  planExpiresAt          DateTime?
+  razorpayCustomerId     String?   @unique
+  razorpaySubscriptionId String?   @unique
+
+  // Alerts & notifications
+  alertWebhookUrl    String?
+  emailDigestEnabled Boolean   @default(false)
+
+  accounts           Account[]
+  sessions           Session[]
+  apiKeys            ApiKey[]
+  deviceCodes        DeviceCode[]
+  alertSubscriptions AlertSubscription[]
 
   @@index([email])
 }
@@ -227,6 +244,69 @@ model DeviceCode {
 
   @@index([deviceCode])
   @@index([userCode])
+}
+
+// ─── Analytics ───────────────────────────────────────────────────────────────
+
+/// Materialized usage aggregates for leaderboards and admin metrics.
+/// Populated hourly by the usage-aggregator job in the API server.
+model UsageAggregate {
+  id              String   @id @default(uuid())
+  period          String   // "hourly" | "daily"
+  period_start    DateTime
+  tool_name       String
+  call_count      Int      @default(0)
+  error_count     Int      @default(0)
+  avg_duration_ms Float    @default(0)
+  unique_users    Int      @default(0)
+  created_at      DateTime @default(now())
+
+  @@unique([period, period_start, tool_name])
+  @@index([period, period_start])
+  @@index([tool_name, period])
+}
+
+/// Snapshots of system load used to compute the adaptive free-tier daily limit.
+/// Written every 60s by the load-monitor job in the API server.
+model SystemLoadSnapshot {
+  id                 String   @id @default(uuid())
+  queue_depth        Int
+  api_latency_p95_ms Int
+  active_connections Int      @default(0)
+  free_tier_limit    Int      // computed value in range [100, 200]
+  created_at         DateTime @default(now())
+
+  @@index([created_at])
+}
+
+// ─── Deprecation Alerts ───────────────────────────────────────────────────────
+
+/// Deprecation event detected by the indexer during a crawl cycle.
+model DeprecationAlert {
+  id          String    @id @default(uuid())
+  tool_name   String
+  reason      String    // "npm_deprecated" | "repo_archived" | "stale_commits" | "open_issues"
+  details     String
+  severity    String    // "warning" | "critical"
+  delivered   Boolean   @default(false)
+  delivered_at DateTime?
+  created_at  DateTime  @default(now())
+
+  @@index([tool_name, created_at])
+  @@index([delivered])
+}
+
+/// Per-user subscriptions to deprecation alerts for specific tools (Pro only).
+model AlertSubscription {
+  id         String   @id @default(uuid())
+  user_id    String
+  tool_name  String
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, tool_name])
+  @@index([tool_name])
 }
 
 // ─── App Settings ─────────────────────────────────────────────────────────────

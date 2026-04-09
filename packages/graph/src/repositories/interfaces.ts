@@ -31,6 +31,7 @@ export interface ToolRepository {
     useCaseNames: string[],
     limit?: number,
   ): Promise<Result<ToolNode[], RepositoryError>>;
+  findByGitHubUrl(urlFragment: string): Promise<Result<ToolNode | null, RepositoryError>>;
 }
 
 export type TopicNodeType = 'UseCase' | 'Pattern' | 'Stack';

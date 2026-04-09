@@ -7,6 +7,7 @@ import {
   DELETE_TOOL,
   FIND_TOOLS_BY_CATEGORIES,
   FIND_TOOLS_BY_CATEGORY,
+  FIND_TOOL_BY_GITHUB_URL,
   FIND_TOOL_BY_NAME,
   GET_ALL_TOOL_NAMES,
   GET_DIRECT_EDGES_BETWEEN,
@@ -283,6 +284,21 @@ export class MemgraphToolRepository implements ToolRepository {
       });
       const tools = result.records.map((r) => mapRecordToToolNode(r.toObject()));
       return { ok: true, data: tools };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  async findByGitHubUrl(urlFragment: string): Promise<ToolResult<ToolNode | null>> {
+    const session = this.session();
+    try {
+      const result = await session.run(FIND_TOOL_BY_GITHUB_URL.text, { fragment: urlFragment });
+      const record = result.records[0];
+      if (!record) return { ok: true, data: null };
+      return { ok: true, data: mapRecordToToolNode(record.toObject()) };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return { ok: false, error: { code: 'DB_ERROR', message } };

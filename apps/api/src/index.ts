@@ -12,10 +12,15 @@ import { createAllHandlers, createDeps } from '@toolcairn/tools';
 import { Hono } from 'hono';
 import { compress } from 'hono/compress';
 import pino from 'pino';
+import { recordLatency, startLoadMonitor } from './jobs/load-monitor.js';
+import { startUsageAggregator } from './jobs/usage-aggregator.js';
 import { originAuth } from './middleware/origin-auth.js';
 import { adminRoutes } from './routes/admin.js';
+import { analyticsRoutes } from './routes/analytics.js';
 import { authRoutes } from './routes/auth.js';
+import { badgeRoutes } from './routes/badge.js';
 import { dataRoutes } from './routes/data.js';
+import { eventRoutes } from './routes/events.js';
 import { feedbackRoutes } from './routes/feedback.js';
 import { graphRoutes } from './routes/graph.js';
 import { intelligenceRoutes } from './routes/intelligence.js';
@@ -33,28 +38,27 @@ const app = new Hono();
 // Gzip all responses
 app.use('*', compress());
 
-// Request logging
+// Request logging + latency recording for adaptive rate limiting
 app.use('*', async (c, next) => {
   const t0 = Date.now();
   await next();
-  logger.info(
-    { method: c.req.method, path: c.req.path, status: c.res.status, ms: Date.now() - t0 },
-    'request',
-  );
+  const ms = Date.now() - t0;
+  recordLatency(ms);
+  logger.info({ method: c.req.method, path: c.req.path, status: c.res.status, ms }, 'request');
 });
 
-// System endpoints (no origin-auth required — health check must be public)
+// ── Public endpoints (no origin-auth) ────────────────────────────────────────
 app.route('/v1', systemRoutes());
-
-// Auth endpoints — no origin-auth (called by web app + MCP CLI directly)
 app.route('/v1/auth', authRoutes(prisma));
-
-// Admin endpoints — use their own JWT auth (must be before originAuth)
 app.route('/v1/admin', adminRoutes());
+// Badge endpoint — public SVG badges for README files, cached by CF Worker
+app.route('/v1/badge', badgeRoutes());
 
-// All other endpoints require origin secret
+// ── Protected endpoints (require X-Origin-Secret from CF Worker) ─────────────
 app.use('/v1/*', originAuth);
 app.route('/v1/data', dataRoutes());
+app.route('/v1/events', eventRoutes());
+app.route('/v1/analytics', analyticsRoutes());
 app.route('/v1/search', searchRoutes(handlers));
 app.route('/v1/graph', graphRoutes(handlers));
 app.route('/v1/intelligence', intelligenceRoutes(handlers));
@@ -73,4 +77,6 @@ const port = config.MCP_SERVER_PORT ?? 3001;
 
 serve({ fetch: app.fetch, port }, () => {
   logger.info({ port }, 'ToolPilot API server started');
+  startLoadMonitor();
+  startUsageAggregator();
 });

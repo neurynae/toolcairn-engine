@@ -136,6 +136,11 @@ export class FakeToolRepository implements ToolRepository {
     return { ok: true, data: [] };
   }
 
+  async findByGitHubUrl(urlFragment: string): Promise<ToolResult<ToolNode | null>> {
+    const found = Array.from(this.tools.values()).find((t) => t.github_url?.includes(urlFragment));
+    return { ok: true, data: found ?? null };
+  }
+
   async getAllToolNames(): Promise<ToolResult<string[]>> {
     try {
       const names = Array.from(this.tools.keys());

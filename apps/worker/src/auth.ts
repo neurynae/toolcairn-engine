@@ -105,6 +105,32 @@ export async function checkRateLimit(apiKey: string, limit: number, env: Env): P
 }
 
 /**
+ * Checks the daily call limit for an API key.
+ * Free tier: dynamic limit (100–200) read from KV `system:free_tier_limit`.
+ * Pro/team tier: fixed higher limits.
+ * Returns { allowed, used, limit }.
+ */
+export async function checkDailyLimit(
+  apiKey: string,
+  tier: string,
+  env: Env,
+): Promise<{ allowed: boolean; used: number; limit: number }> {
+  const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const usageKey = `usage:${apiKey}:${day}`;
+  const used = Number.parseInt((await env.KV.get(usageKey)) ?? '0');
+
+  let limit: number;
+  if (tier === 'pro' || tier === 'team') {
+    limit = tier === 'team' ? 20_000 : 5_000;
+  } else {
+    // Free tier: dynamic limit computed by the load monitor on the VPS
+    limit = Number.parseInt((await env.KV.get('system:free_tier_limit')) ?? '200');
+  }
+
+  return { allowed: used < limit, used, limit };
+}
+
+/**
  * Increments daily usage counter (async, non-blocking — call with ctx.waitUntil).
  */
 export async function meterUsage(apiKey: string, path: string, env: Env): Promise<void> {

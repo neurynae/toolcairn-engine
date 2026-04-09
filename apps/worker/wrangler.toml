@@ -17,6 +17,10 @@ binding = "DB"
 database_name = "toolcairn-feedback"
 database_id = "0b95d681-912e-4906-8683-11140ff84493"
 
+[triggers]
+# Fetch load snapshot from VPS every minute and cache free_tier_limit in KV
+crons = ["* * * * *"]
+
 [vars]
 ENVIRONMENT = "production"
 

@@ -138,6 +138,10 @@ export const FIND_TOOL_BY_NAME = {
   text: 'MATCH (t:Tool { name: $name }) RETURN t',
 };
 
+export const FIND_TOOL_BY_GITHUB_URL = {
+  text: 'MATCH (t:Tool) WHERE t.github_url CONTAINS $fragment RETURN t LIMIT 1',
+};
+
 export const FIND_TOOLS_BY_CATEGORY = {
   text: `MATCH (t:Tool { category: $category })
    RETURN t

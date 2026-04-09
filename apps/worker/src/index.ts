@@ -2,17 +2,20 @@
  * ToolCairn API Gateway — Cloudflare Worker
  *
  * Sits in front of the VPS API at origin.toolcairn.neurynae.com.
- * Handles: auth, rate limiting, POST caching, usage metering.
+ * Handles: auth, rate limiting (per-minute + daily), POST caching, usage metering.
  *
  * Flow per request:
- *   1. Validate API key (auto-register new keys as free tier)
- *   2. Rate limit check (per-minute, per-key)
- *   3. Cache check (for cacheable endpoints)
- *   4. Forward to VPS origin (with X-Origin-Secret header)
- *   5. Cache response (async, non-blocking)
- *   6. Meter usage (async, non-blocking)
+ *   1. Validate API key / JWT
+ *   2. Per-minute rate limit check
+ *   3. Daily limit check (free: 100–200 dynamic, pro: 5000)
+ *   4. Cache check (for cacheable POST endpoints)
+ *   5. Forward to VPS origin
+ *   6. Cache response + meter usage (async)
+ *
+ * Cron (every minute):
+ *   - Fetches /v1/system/load from VPS and writes free_tier_limit to KV
  */
-import { checkRateLimit, meterUsage, validateRequest } from './auth.js';
+import { checkDailyLimit, checkRateLimit, meterUsage, validateRequest } from './auth.js';
 import { getCached, isCacheable, putCached } from './cache.js';
 import type { Env } from './types.js';
 
@@ -22,6 +25,19 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // ── CORS preflight ──────────────────────────────────────────────────────
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, X-ToolPilot-Key, Authorization',
+          'Access-Control-Max-Age': '86400',
+        },
+      });
+    }
+
     // ── Health check — no auth required ────────────────────────────────────
     if (path === '/v1/health' && request.method === 'GET') {
       return Response.json({
@@ -29,6 +45,11 @@ export default {
         service: 'toolcairn-gateway',
         ts: new Date().toISOString(),
       });
+    }
+
+    // ── System load — public (fetched by CF cron + status page) ────────────
+    if (path === '/v1/system/load' && request.method === 'GET') {
+      return forwardToOrigin(request, env, path);
     }
 
     // ── Registration — no auth required (creates the key) ──────────────────
@@ -43,6 +64,16 @@ export default {
 
     // ── Auth routes — no API key required (device code flow, signup, token) ──
     if (path.startsWith('/v1/auth/')) {
+      return forwardToOrigin(request, env, path);
+    }
+
+    // ── Billing webhook — no API key required (comes from Razorpay) ─────────
+    if (path === '/v1/billing/webhook' && request.method === 'POST') {
+      return forwardToOrigin(request, env, path);
+    }
+
+    // ── SVG badges — public, no auth (embedded in READMEs) ──────────────────
+    if (path.startsWith('/v1/badge/')) {
       return forwardToOrigin(request, env, path);
     }
 
@@ -62,9 +93,9 @@ export default {
       );
     }
 
-    // ── Rate limiting ───────────────────────────────────────────────────────
-    const withinLimit = await checkRateLimit(record.client_id, record.rate_limit, env);
-    if (!withinLimit) {
+    // ── Per-minute rate limit ───────────────────────────────────────────────
+    const withinMinuteLimit = await checkRateLimit(record.client_id, record.rate_limit, env);
+    if (!withinMinuteLimit) {
       return Response.json(
         {
           ok: false,
@@ -77,6 +108,31 @@ export default {
           headers: {
             'Retry-After': '60',
             'X-RateLimit-Limit': String(record.rate_limit),
+            'X-RateLimit-Tier': record.tier,
+          },
+        },
+      );
+    }
+
+    // ── Daily limit check ───────────────────────────────────────────────────
+    const daily = await checkDailyLimit(record.client_id, record.tier, env);
+    if (!daily.allowed) {
+      return Response.json(
+        {
+          ok: false,
+          error: 'daily_limit_exceeded',
+          message: `You've used ${daily.used}/${daily.limit} calls today. Upgrade to Pro for 5,000 calls/day.`,
+          used: daily.used,
+          limit: daily.limit,
+          tier: record.tier,
+          upgrade_url: 'https://toolcairn.neurynae.com/billing',
+        },
+        {
+          status: 429,
+          headers: {
+            'X-RateLimit-Daily-Limit': String(daily.limit),
+            'X-RateLimit-Daily-Used': String(daily.used),
+            'X-RateLimit-Daily-Remaining': '0',
             'X-RateLimit-Tier': record.tier,
           },
         },
@@ -97,41 +153,73 @@ export default {
 
       const cached = await getCached(path, body);
       if (cached) {
-        // Clone response and mark as cache hit
         const hit = new Response(cached.body, cached);
         hit.headers.set('X-Cache', 'HIT');
         hit.headers.set('X-Cache-Path', path);
+        appendRateLimitHeaders(hit.headers, record.tier, daily);
         return hit;
       }
 
-      // Cache miss — forward to origin, cache the response
-      const originResponse = await forwardToOrigin(request, env, path);
+      const originResponse = await forwardToOrigin(request, env, path, record.user_id);
       if (originResponse.ok) {
         ctx.waitUntil(putCached(path, body, originResponse.clone()));
       }
       const miss = new Response(originResponse.body, originResponse);
       miss.headers.set('X-Cache', 'MISS');
+      appendRateLimitHeaders(miss.headers, record.tier, daily);
       return miss;
     }
 
     // ── Non-cacheable: forward directly ────────────────────────────────────
-    return forwardToOrigin(request, env, path);
+    const response = await forwardToOrigin(request, env, path, record.user_id);
+    const result = new Response(response.body, response);
+    appendRateLimitHeaders(result.headers, record.tier, daily);
+    return result;
+  },
+
+  // Cron trigger — runs every minute.
+  // Fetches the VPS load snapshot and caches free_tier_limit in KV so the
+  // fetch handler can read it without a network call.
+  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
+    try {
+      const res = await fetch(`${env.API_ORIGIN_URL.replace(/\/$/, '')}/v1/system/load`, {
+        headers: { 'X-Origin-Secret': env.ORIGIN_SECRET },
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) return;
+      const json = (await res.json()) as { ok: boolean; data?: { free_tier_limit?: number } };
+      const limit = json.data?.free_tier_limit ?? 200;
+      await env.KV.put('system:free_tier_limit', String(limit), { expirationTtl: 300 });
+    } catch {
+      // Non-fatal — stale KV value is fine for one missed cycle
+    }
   },
 };
 
-/**
- * Forward request to the VPS origin with the origin secret header.
- * The VPS API validates this header and rejects requests without it.
- */
-async function forwardToOrigin(request: Request, env: Env, path: string): Promise<Response> {
+function appendRateLimitHeaders(
+  headers: Headers,
+  tier: string,
+  daily: { used: number; limit: number },
+): void {
+  headers.set('X-RateLimit-Daily-Limit', String(daily.limit));
+  headers.set('X-RateLimit-Daily-Used', String(daily.used));
+  headers.set('X-RateLimit-Daily-Remaining', String(Math.max(0, daily.limit - daily.used)));
+  headers.set('X-RateLimit-Tier', tier);
+}
+
+async function forwardToOrigin(
+  request: Request,
+  env: Env,
+  path: string,
+  userId?: string,
+): Promise<Response> {
   const search = new URL(request.url).search;
   const originUrl = env.API_ORIGIN_URL.replace(/\/$/, '') + path + search;
 
   const headers = new Headers(request.headers);
   headers.set('X-Origin-Secret', env.ORIGIN_SECRET);
-  // Pass the real client IP to the origin for logging
+  if (userId) headers.set('X-ToolCairn-User-Id', userId);
   headers.set('X-Real-IP', request.headers.get('CF-Connecting-IP') ?? 'unknown');
-  // Remove the API key header — origin doesn't need it
   headers.delete('X-ToolPilot-Key');
 
   try {
@@ -141,7 +229,6 @@ async function forwardToOrigin(request: Request, env: Env, path: string): Promis
       body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : null,
     });
 
-    // Add CORS headers so browser-based MCP clients can call this
     const result = new Response(response.body, response);
     result.headers.set('Access-Control-Allow-Origin', '*');
     result.headers.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');

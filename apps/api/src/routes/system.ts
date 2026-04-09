@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { getCurrentLoad } from '../jobs/load-monitor.js';
 
 export function systemRoutes() {
   const app = new Hono();
@@ -6,6 +7,12 @@ export function systemRoutes() {
   // GET /v1/health — health check (used by Cloudflare Worker origin probe)
   app.get('/health', (c) => {
     return c.json({ ok: true, service: 'toolpilot-api', ts: new Date().toISOString() });
+  });
+
+  // GET /v1/system/load — current system load + adaptive free-tier limit
+  // Public endpoint — CF Worker cron fetches this every minute and caches in KV.
+  app.get('/system/load', (c) => {
+    return c.json({ ok: true, data: getCurrentLoad() });
   });
 
   // POST /v1/register — anonymous API key registration

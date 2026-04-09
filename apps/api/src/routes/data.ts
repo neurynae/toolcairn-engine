@@ -6,7 +6,7 @@
  * (Memgraph) without requiring a direct database connection.
  */
 
-import type { ToolNode } from '@toolcairn/core';
+import { type ToolNode, computeQualityBreakdown } from '@toolcairn/core';
 import { MemgraphToolRepository } from '@toolcairn/graph';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -96,6 +96,7 @@ function toolShape(t: ToolNode) {
     category: t.category,
     github_url: t.github_url,
     maintenance_score: t.health.maintenance_score,
+    quality_score: Math.round(t.health.maintenance_score * 100),
     stars: t.health.stars,
     language: t.language,
     license: t.license,
@@ -200,29 +201,50 @@ export function dataRoutes() {
   });
 
   // GET /v1/data/tools/:name — single tool detail by name (AFTER /tools/names)
+  // Returns { tool, related, neighborhood, quality_score } to match the web app's expected shape.
   app.get('/tools/:name', async (c) => {
     try {
       const name = decodeURIComponent(c.req.param('name'));
-      const result = await repo.findByName(name);
-      if (!result.ok || !result.data) {
+      const [toolResult, relatedResult, neighborhoodResult] = await Promise.all([
+        repo.findByName(name),
+        repo.getRelated(name, 1),
+        repo.getToolNeighborhood(name),
+      ]);
+
+      if (!toolResult.ok || !toolResult.data) {
         return c.json({ ok: false, error: 'not_found', message: `Tool "${name}" not found` }, 404);
       }
-      const t = result.data;
+
+      const t = toolResult.data;
+      const related = (relatedResult.ok ? relatedResult.data : []).slice(0, 6).map((r) => ({
+        name: r.name,
+        display_name: r.display_name,
+        category: r.category,
+        maintenance_score: r.health.maintenance_score,
+      }));
+
       return c.json({
         ok: true,
         data: {
-          name: t.name,
-          display_name: t.display_name,
-          description: t.description,
-          category: t.category,
-          github_url: t.github_url,
-          homepage_url: t.homepage_url,
-          language: t.language,
-          languages: t.languages,
-          license: t.license,
-          topics: t.topics,
-          health: t.health,
-          docs: t.docs,
+          tool: {
+            name: t.name,
+            display_name: t.display_name,
+            description: t.description,
+            category: t.category,
+            github_url: t.github_url,
+            homepage_url: t.homepage_url,
+            language: t.language,
+            languages: t.languages,
+            license: t.license,
+            deployment_models: t.deployment_models,
+            package_managers: t.package_managers,
+            topics: t.topics,
+            health: t.health,
+            docs: t.docs,
+          },
+          related,
+          neighborhood: neighborhoodResult.ok ? neighborhoodResult.data : null,
+          quality_score: computeQualityBreakdown(t.health),
         },
       });
     } catch (e) {
