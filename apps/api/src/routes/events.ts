@@ -50,7 +50,7 @@ export function eventRoutes() {
           user_id: userId,
           duration_ms: parsed.data.duration_ms,
           status: parsed.data.status,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // biome-ignore lint/suspicious/noExplicitAny: Prisma Json field requires cast from Record<string,unknown>
           metadata: parsed.data.metadata as any,
         },
       })
