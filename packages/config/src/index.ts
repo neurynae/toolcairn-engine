@@ -38,6 +38,9 @@ const configSchema = z.object({
   /** Secret shared between Cloudflare Worker and the API origin server */
   ORIGIN_SECRET: z.string().optional(),
 
+  // ── Resend (Email) ────────────────────────────────────────────────────────
+  RESEND_API_KEY: z.string().optional(),
+
   // ── Razorpay (Billing) ────────────────────────────────────────────────────
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),

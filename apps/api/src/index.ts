@@ -26,6 +26,7 @@ import { eventRoutes } from './routes/events.js';
 import { feedbackRoutes } from './routes/feedback.js';
 import { graphRoutes } from './routes/graph.js';
 import { intelligenceRoutes } from './routes/intelligence.js';
+import { scanRoutes } from './routes/scan.js';
 import { searchRoutes } from './routes/search.js';
 import { systemRoutes } from './routes/system.js';
 
@@ -67,6 +68,7 @@ app.route('/v1/search', searchRoutes(handlers));
 app.route('/v1/graph', graphRoutes(handlers));
 app.route('/v1/intelligence', intelligenceRoutes(handlers));
 app.route('/v1/feedback', feedbackRoutes(handlers));
+app.route('/v1/scan', scanRoutes());
 
 // 404 fallback
 app.notFound((c) => c.json({ error: 'not_found', path: c.req.path }, 404));

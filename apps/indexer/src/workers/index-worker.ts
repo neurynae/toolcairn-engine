@@ -99,8 +99,6 @@ async function startSchedulerCron(): Promise<void> {
         }
       }
       // ── Pending watchdog ───────────────────────────────────────────────────
-      // Runs every tick. Re-enqueues tools stuck in 'pending' > 30 min —
-      // catches PostgreSQL/Redis drift after consumer crash or bulk-indexer death.
       try {
         const watchdogResult = await runPendingWatchdog(prisma);
         if (watchdogResult.requeued > 0) {
@@ -108,6 +106,25 @@ async function startSchedulerCron(): Promise<void> {
         }
       } catch (err) {
         logger.warn({ err }, 'Cron: pending watchdog failed — will retry next tick');
+      }
+
+      // ── Weekly email digest ────────────────────────────────────────────────
+      try {
+        const { runDigestScheduler } = await import('../schedulers/digest-scheduler.js');
+        await runDigestScheduler();
+      } catch (err) {
+        logger.warn({ err }, 'Cron: digest scheduler failed — non-fatal');
+      }
+
+      // ── Collaborative filtering (co-occurrence edges) ─────────────────────
+      // Gated to 1000+ sessions; runs daily when unprocessed sessions exist
+      try {
+        const { runCoOccurrenceScheduler } = await import(
+          '../schedulers/co-occurrence-scheduler.js'
+        );
+        await runCoOccurrenceScheduler();
+      } catch (err) {
+        logger.warn({ err }, 'Cron: co-occurrence scheduler failed — non-fatal');
       }
     } catch (err) {
       logger.warn({ err }, 'Cron tick failed — will retry next interval');

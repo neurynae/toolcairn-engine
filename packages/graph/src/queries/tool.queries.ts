@@ -193,18 +193,21 @@ export const GET_ALL_TOOL_NAMES = {
 };
 
 export const GET_TOOL_GRAPH_RERANK = {
-  // Only semantic edges (COMPATIBLE_WITH, INTEGRATES_WITH, POPULAR_WITH, REPLACES) contribute
-  // to the direct_score. REQUIRES edges are build/dependency edges that inflate graph scores for
-  // well-connected dependency packages (e.g. nock) regardless of semantic relevance.
+  // Semantic + co-occurrence edges contribute to direct_score.
+  // REQUIRES excluded (build deps inflate scores for unrelated packages like nock).
+  // CO_OCCURS_WITH gets a reduced weight multiplier (0.5) since it's weaker signal.
   text: `MATCH (t:Tool)
 WHERE t.name IN $names
-OPTIONAL MATCH (t)-[e:COMPATIBLE_WITH|INTEGRATES_WITH|POPULAR_WITH|REPLACES]-(related:Tool)
+OPTIONAL MATCH (t)-[e:COMPATIBLE_WITH|INTEGRATES_WITH|POPULAR_WITH|REPLACES|CO_OCCURS_WITH]-(related:Tool)
 WHERE related.name IN $names
 WITH t,
      sum(CASE WHEN e IS NULL THEN 0
-          WHEN e.last_verified IS NULL THEN e.weight
-          ELSE e.weight * exp(-e.decay_rate *
-               (datetime() - datetime(e.last_verified)).day)
+          ELSE
+            (CASE WHEN type(e) = 'CO_OCCURS_WITH' THEN 0.5 ELSE 1.0 END) *
+            (CASE WHEN e.last_verified IS NULL THEN e.weight
+                  ELSE e.weight * exp(-coalesce(e.decay_rate, 0.05) *
+                       (datetime() - datetime(e.last_verified)).day)
+             END)
      END) AS direct_score
 OPTIONAL MATCH (t)-[:SOLVES]->(u:UseCase)<-[:SOLVES]-(other:Tool)
 WHERE other.name IN $names AND other <> t
@@ -448,3 +451,24 @@ export function mapRecordToToolNode(record: Record<string, unknown>): ToolNode {
     updated_at: requireString(t.updated_at, 't.updated_at'),
   };
 }
+
+/** Get tools that frequently co-occur with a given tool in user sessions. */
+export const GET_CO_OCCURRING_TOOLS = {
+  text: `
+    MATCH (t:Tool {name: $name})-[e:CO_OCCURS_WITH]-(co:Tool)
+    RETURN co, e.weight AS weight
+    ORDER BY weight DESC
+    LIMIT 10
+  `,
+};
+
+/** Upsert a CO_OCCURS_WITH edge between two tools with the given weight. */
+export const UPSERT_CO_OCCURS_EDGE = {
+  text: `
+    MATCH (a:Tool {name: $name_a}), (b:Tool {name: $name_b})
+    MERGE (a)-[e:CO_OCCURS_WITH]-(b)
+    ON CREATE SET e.weight = $weight, e.session_count = 1, e.last_seen = $now
+    ON MATCH SET e.weight = e.weight + $weight, e.session_count = e.session_count + 1,
+                 e.last_seen = $now
+  `,
+};

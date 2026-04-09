@@ -27,7 +27,8 @@ export type EdgeType =
   | 'POPULAR_WITH'
   | 'BREAKS_FROM'
   | 'HAS_VERSION'
-  | 'COMPATIBLE_WITH';
+  | 'COMPATIBLE_WITH'
+  | 'CO_OCCURS_WITH';
 
 export type NodeType = 'Tool' | 'UseCase' | 'Stack' | 'Pattern' | 'Requirement' | 'Version';
 

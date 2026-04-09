@@ -320,6 +320,46 @@ export function authRoutes(prisma: PrismaClient): Hono {
     }
   });
 
+  // PATCH /v1/auth/preferences — update user notification preferences (Pro gate for digest)
+  app.patch('/preferences', async (c) => {
+    const auth = c.req.header('Authorization');
+    if (!auth?.startsWith('Bearer ')) return c.json({ error: 'unauthorized' }, 401);
+    try {
+      const payload = JSON.parse(atob(auth.slice(7).split('.')[1] ?? ''));
+      const userId = payload.sub as string;
+      if (!userId) return c.json({ error: 'invalid_token' }, 401);
+
+      const body = (await c.req.json()) as { emailDigestEnabled?: boolean };
+
+      // Pro gate for email digest
+      if (body.emailDigestEnabled === true) {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { plan: true, planExpiresAt: true },
+        });
+        const isPro = user?.plan === 'pro' && user.planExpiresAt && user.planExpiresAt > new Date();
+        if (!isPro) {
+          return c.json(
+            {
+              ok: false,
+              error: 'pro_required',
+              message: 'Weekly digest requires a Pro plan. Upgrade at /billing',
+            },
+            403,
+          );
+        }
+      }
+
+      await prisma.user.update({
+        where: { id: userId },
+        data: { emailDigestEnabled: body.emailDigestEnabled },
+      });
+      return c.json({ ok: true });
+    } catch {
+      return c.json({ error: 'invalid_token' }, 401);
+    }
+  });
+
   // POST /v1/auth/device/approve — approve a device code (called by Vercel consent page)
   app.post('/device/approve', async (c) => {
     try {
