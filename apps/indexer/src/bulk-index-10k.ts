@@ -142,7 +142,7 @@ async function discoverTopic(topic: string, pages: number): Promise<string[]> {
   for (let p = 1; p <= pages; p++) {
     const hits = await searchPage(query, p);
     if (hits.length === 0) break; // no more results
-    hits.forEach((h) => found.add(h.fullName));
+    for (const h of hits) found.add(h.fullName);
     await sleep(300); // small delay between pages
   }
   return [...found];
@@ -158,7 +158,7 @@ async function discoverKeyword(keyword: string, pages: number): Promise<string[]
   for (let p = 1; p <= pages; p++) {
     const hits = await searchPage(query, p);
     if (hits.length === 0) break;
-    hits.forEach((h) => found.add(h.fullName));
+    for (const h of hits) found.add(h.fullName);
     await sleep(300);
   }
   return [...found];
@@ -371,7 +371,7 @@ async function main() {
 
   // Keyword searches
   let kwEnqueued = 0;
-  for (const [i, keyword] of KEYWORD_QUERIES.entries()) {
+  for (const [_i, keyword] of KEYWORD_QUERIES.entries()) {
     const repos = await discoverKeyword(keyword, 3); // 3 pages per keyword
     const enqueued = await enqueueNewRepos(prisma, repos);
     kwEnqueued += enqueued;
