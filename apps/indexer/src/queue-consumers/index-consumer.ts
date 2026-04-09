@@ -99,6 +99,43 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
       await writeTopicNodes(processedTool.node.id, processedTool.topicEdges);
     }
 
+    // 6. Deprecation check — fire-and-forget, non-fatal
+    {
+      const { detectDeprecation } = await import('../processors/deprecation-detector.js');
+      const { prisma } = await import('@toolcairn/db');
+      // biome-ignore lint/suspicious/noExplicitAny: raw is untyped crawler response
+      const dep = detectDeprecation(processedTool.node.health, crawlerResult.raw as any);
+      if (dep.isDeprecated && dep.reason && dep.severity) {
+        prisma.deprecationAlert
+          .findFirst({
+            where: { tool_name: processedTool.node.name, reason: dep.reason, delivered: false },
+          })
+          .then(async (existing) => {
+            if (!existing) {
+              const alert = await prisma.deprecationAlert.create({
+                data: {
+                  tool_name: processedTool.node.name,
+                  reason: dep.reason as string,
+                  details: dep.details,
+                  severity: dep.severity as string,
+                },
+              });
+              // Deliver webhooks to subscribers
+              const { deliverDeprecationAlerts } = await import('../workers/alert-worker.js');
+              await deliverDeprecationAlerts(
+                processedTool.node.name,
+                alert.id,
+                dep.reason as string,
+                dep.severity as string,
+                dep.details,
+              );
+            }
+          })
+          .catch((e) => logger.error({ toolId, err: e }, 'Deprecation alert non-fatal'));
+        logger.warn({ toolId, reason: dep.reason, severity: dep.severity }, 'Deprecation detected');
+      }
+    }
+
     logger.info({ toolId, nodeId: processedTool.node.id }, 'Index job complete');
   } catch (e) {
     logger.error({ toolId, err: e }, 'Index job failed');

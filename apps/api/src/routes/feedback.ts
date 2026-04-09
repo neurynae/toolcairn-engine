@@ -9,7 +9,11 @@ export function feedbackRoutes(handlers: ToolHandlers) {
   // POST /v1/feedback/outcome — record tool usage outcome
   app.post('/outcome', async (c) => {
     const body = await c.req.json().catch(() => null);
-    const parsed = z.object(reportOutcomeSchema).safeParse(body);
+    // Inject user_id from header if not provided in body (CF Worker propagates it)
+    const headerUserId = c.req.header('X-ToolCairn-User-Id');
+    const bodyWithUser =
+      body && headerUserId && !body.user_id ? { ...body, user_id: headerUserId } : body;
+    const parsed = z.object(reportOutcomeSchema).safeParse(bodyWithUser);
     if (!parsed.success) {
       return c.json({ error: 'validation_error', issues: parsed.error.issues }, 400);
     }

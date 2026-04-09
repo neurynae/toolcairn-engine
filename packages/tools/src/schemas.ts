@@ -19,6 +19,7 @@ export const reportOutcomeSchema = {
   outcome: z.enum(['success', 'failure', 'replaced', 'pending']),
   feedback: z.string().optional(),
   replaced_by: z.string().optional(),
+  user_id: z.string().uuid().optional(),
 };
 
 export const getStackSchema = {

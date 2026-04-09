@@ -55,8 +55,9 @@ export class SearchPipeline {
       'Stage 3 complete',
     );
 
-    // Stage 4 — precision selection
-    const stage4 = stage4Select(stage3);
+    // Stage 4 — precision selection (with optional user preference boost)
+    const userPrefs = input.userId ? await loadUserPreferences(input.userId) : undefined;
+    const stage4 = stage4Select(stage3, userPrefs);
     logger.debug(
       { elapsed_ms: stage4.elapsed_ms, is_two_option: stage4.is_two_option },
       'Stage 4 complete',
@@ -150,5 +151,27 @@ export class SearchPipeline {
     return (points as Array<{ payload: Record<string, unknown> | null }>)
       .filter((p) => p.payload != null)
       .map((p) => p.payload as unknown as ToolNode);
+  }
+}
+
+/** Load user tool preferences from Redis sorted set (fire-and-forget safe). */
+async function loadUserPreferences(userId: string): Promise<Map<string, number> | undefined> {
+  if (!process.env.REDIS_URL) return undefined;
+  try {
+    const { Redis } = await import('ioredis');
+    const redis = new Redis(process.env.REDIS_URL, { lazyConnect: true, connectTimeout: 2000, maxRetriesPerRequest: 0 });
+    await redis.connect();
+    try {
+      const raw = await redis.zrangebyscore(`user:${userId}:tool_prefs`, '-inf', '+inf', 'WITHSCORES');
+      const prefs = new Map<string, number>();
+      for (let i = 0; i < raw.length - 1; i += 2) {
+        prefs.set(raw[i] as string, Number(raw[i + 1]));
+      }
+      return prefs.size > 0 ? prefs : undefined;
+    } finally {
+      redis.disconnect();
+    }
+  } catch {
+    return undefined;
   }
 }

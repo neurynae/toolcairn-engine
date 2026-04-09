@@ -8,6 +8,8 @@ export interface SearchPipelineInput {
   query: string;
   sessionId: string;
   context?: SearchContext;
+  /** Authenticated user ID — enables preference-based result boosting */
+  userId?: string;
 }
 
 export interface ClarificationQuestion {

@@ -74,7 +74,26 @@ export function createReportOutcomeHandler(
     outcome: 'success' | 'failure' | 'replaced' | 'pending';
     feedback?: string;
     replaced_by?: string;
+    user_id?: string;
   }) {
+    // Record user tool preference via Redis sorted set — fire-and-forget, before DB write
+    // so it succeeds even if query_id FK constraint fails (query may not be in SearchSession yet)
+    if (args.user_id) {
+      const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
+      import('ioredis')
+        .then(({ Redis }) => {
+          const r = new Redis(redisUrl, {
+            lazyConnect: true,
+            connectTimeout: 2000,
+          });
+          return r
+            .connect()
+            .then(() => r.zincrby(`user:${args.user_id}:tool_prefs`, 1, args.chosen_tool))
+            .finally(() => r.disconnect());
+        })
+        .catch(() => undefined);
+    }
+
     try {
       await deps.prisma.outcomeReport.create({
         data: {

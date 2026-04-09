@@ -25,6 +25,7 @@
     "@toolcairn/db": "workspace:*",
     "@toolcairn/graph": "workspace:*",
     "@toolcairn/vector": "workspace:*",
+    "ioredis": "^5.4.2",
     "pino": "^9.6.0",
     "zod": "^3.24.1"
   },
