@@ -21,26 +21,25 @@ jobs:
           username: deploy
           key: ${{ secrets.VPS_SSH_KEY }}
           command_timeout: 90m
-          envs: GITHUB_TOKEN,GITHUB_ACTOR
+          envs: GHCR_TOKEN,GITHUB_ACTOR
           script: |
             cd /opt/toolcairn
             echo "Starting indexer at $(date)"
 
-            # Authenticate with GHCR and pull latest image
-            echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            # Authenticate with GHCR using the Actions token (stored separately to avoid
+            # polluting the GITHUB_TOKEN env var that the indexer reads from .env.prod).
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
             docker compose -f docker-compose.prod.yml --env-file .env.prod --profile indexer pull indexer
 
             # Step 1: Run one-shot reindex scheduler.
             # Finds tools stale > 7 days, enqueues them to Redis, then exits cleanly (~5 sec).
             echo "=== Step 1: Reindex scheduler ($(date)) ==="
             docker compose -f docker-compose.prod.yml --env-file .env.prod --profile indexer \
-              run --rm -e INDEXER_IDLE_EXIT_MINUTES=5 indexer node dist/run-reindex.js
+              run --rm -e INDEXER_IDLE_EXIT_MINUTES=5 indexer node apps/indexer/dist/run-reindex.js
             echo "=== Scheduler done ($(date)) ==="
 
             # Step 2: Process any enqueued jobs.
             # INDEXER_IDLE_EXIT_MINUTES=5 makes the consumer self-exit after 5 min of empty queue.
-            # When no tools were enqueued (queue is empty), it exits in ~5 min automatically.
-            # When tools were enqueued, it processes them and exits 5 min after the last job.
             echo "=== Step 2: Queue processor with idle-exit ($(date)) ==="
             docker compose -f docker-compose.prod.yml --env-file .env.prod --profile indexer \
               run --rm -e INDEXER_IDLE_EXIT_MINUTES=5 indexer
@@ -48,5 +47,5 @@ jobs:
 
             echo "Indexer run complete at $(date)"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
