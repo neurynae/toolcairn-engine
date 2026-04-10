@@ -58,7 +58,7 @@ export function createSearchToolsHandler(
         });
       }
 
-      const stage1 = await stage1HybridSearch(args.query, corpus);
+      const stage1 = await stage1HybridSearch(args.query, corpus, lookupMaps);
 
       const idSet = new Set(stage1.ids);
       const candidates = corpus.filter((t) => idSet.has(t.id));
