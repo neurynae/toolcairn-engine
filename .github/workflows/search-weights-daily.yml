@@ -2,7 +2,7 @@ name: Daily Search Weights Update
 
 on:
   schedule:
-    - cron: '0 4 * * *'   # 04:00 UTC daily (1 hour after indexer)
+    - cron: '0 6 * * *'   # 06:00 UTC daily (3 hours after indexer)
   workflow_dispatch: {}    # manual trigger any time
 
 jobs:
