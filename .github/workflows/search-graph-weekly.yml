@@ -1,0 +1,51 @@
+name: Weekly Search Graph Refresh
+
+on:
+  schedule:
+    - cron: '0 5 * * 0'   # 05:00 UTC every Sunday
+  workflow_dispatch: {}    # manual trigger any time
+
+jobs:
+  refresh-graph:
+    name: Compute centrality + PageRank + set canonical flags
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Run graph refresh scripts via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 60m
+          envs: GHCR_TOKEN,GITHUB_ACTOR
+          script: |
+            cd /opt/toolcairn
+            echo "Starting weekly graph refresh at $(date)"
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+            # Step 1: Inbound edge centrality
+            echo "=== Step 1: Computing inbound edge centrality ($(date)) ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.prod --profile indexer \
+              run --rm indexer node apps/indexer/dist/compute-centrality.js
+            echo "=== Centrality done ($(date)) ==="
+
+            # Step 2: PageRank
+            echo "=== Step 2: Computing PageRank ($(date)) ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.prod --profile indexer \
+              run --rm indexer node apps/indexer/dist/compute-pagerank.js
+            echo "=== PageRank done ($(date)) ==="
+
+            # Step 3: Refresh canonical flags (idempotent — safe to re-run weekly)
+            echo "=== Step 3: Setting canonical tool flags ($(date)) ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.prod --profile indexer \
+              run --rm indexer node apps/indexer/dist/set-canonical-tools.js
+            echo "=== Canonical flags done ($(date)) ==="
+
+            echo "Weekly graph refresh complete at $(date)"
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
