@@ -19,3 +19,8 @@ export { InformationGainCalculator } from './clarification/gain.js';
 export { SearchPipeline } from './pipeline.js';
 export type { RunStages2to4Result } from './pipeline.js';
 export { stage1HybridSearch } from './stages/stage1-hybrid.js';
+export {
+  buildExactLookupMaps,
+  stage0ExactResolve,
+} from './stages/stage0-exact.js';
+export type { ExactLookupMaps, Stage0Result } from './stages/stage0-exact.js';
