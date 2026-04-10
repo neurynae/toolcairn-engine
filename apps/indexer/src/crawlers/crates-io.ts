@@ -1,6 +1,7 @@
 import pino from 'pino';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
+import { enrichDescription } from './description-enricher.js';
 
 const logger = pino({ name: '@toolcairn/indexer:crates-io-crawler' });
 
@@ -70,7 +71,7 @@ export async function crawlCratesIoPackage(name: string): Promise<CrawlerResult>
     const extracted: ExtractedToolData = {
       name: pkgName,
       display_name: pkgName,
-      description,
+      description: enrichDescription(description, keywords),
       github_url: githubUrl,
       homepage_url: homepage || undefined,
       docs_url: documentation || undefined,

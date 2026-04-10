@@ -1,6 +1,7 @@
 import pino from 'pino';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
+import { enrichDescription } from './description-enricher.js';
 
 const logger = pino({ name: '@toolcairn/indexer:pypi-crawler' });
 
@@ -11,6 +12,7 @@ interface PyPiInfo {
   docs_url?: unknown;
   license?: unknown;
   project_urls?: unknown;
+  keywords?: unknown;
   author?: unknown;
 }
 
@@ -71,8 +73,15 @@ export async function crawlPyPiPackage(name: string): Promise<CrawlerResult> {
       .filter(Boolean);
 
     const pkgName = extractString(info.name) || name;
-    const description = extractString(info.summary);
+    const rawDescription = extractString(info.summary);
     const homePage = extractString(info.home_page);
+
+    // PyPI keywords field (comma-separated or already tokenized)
+    const pypiKeywords = extractString(info.keywords)
+      .split(/[,\s]+/)
+      .map((k) => k.trim().toLowerCase())
+      .filter((k) => k.length > 1);
+    const description = enrichDescription(rawDescription, [...pypiKeywords, ...topics]);
     const license = extractString(info.license) || 'unknown';
     const githubUrl = extractGitHubUrl(info);
 

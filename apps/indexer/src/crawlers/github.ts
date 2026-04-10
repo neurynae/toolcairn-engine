@@ -2,6 +2,7 @@ import type { Octokit } from '@octokit/rest';
 import pino from 'pino';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
+import { enrichDescription } from './description-enricher.js';
 import {
   corePreFlight,
   getBestCoreSlot,
@@ -313,7 +314,7 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     const extracted: ExtractedToolData = {
       name: repoData.name,
       display_name: repoData.name,
-      description: repoData.description ?? '',
+      description: enrichDescription(repoData.description ?? '', topics),
       github_url: repoData.html_url,
       homepage_url: homepage,
       docs_url: docsUrl,

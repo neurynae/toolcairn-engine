@@ -1,6 +1,7 @@
 import pino from 'pino';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
+import { enrichDescription } from './description-enricher.js';
 import { extractDocsUrl } from './readme-parser.js';
 
 const logger = pino({ name: '@toolcairn/indexer:npm-crawler' });
@@ -66,7 +67,7 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
     const extracted: ExtractedToolData = {
       name: pkgName,
       display_name: pkgName,
-      description,
+      description: enrichDescription(description, keywords),
       github_url: githubUrl || `https://www.npmjs.com/package/${name}`,
       homepage_url: homepage || undefined,
       docs_url: docsUrl,
