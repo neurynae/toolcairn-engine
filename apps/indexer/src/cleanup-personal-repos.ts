@@ -144,15 +144,16 @@ async function main() {
         else orgOwners.add(owner);
 
         if (checked % 50 === 0) {
-          const rem = Number(
-            (resp.headers as Record<string, string>)['x-ratelimit-remaining'] ?? 9999,
-          );
-          const reset = Number((resp.headers as Record<string, string>)['x-ratelimit-reset'] ?? 0);
-          if (rem < 200) {
-            const waitMs = Math.max(0, reset * 1000 - Date.now()) + 5000;
+          // Check the BEST available slot's remaining — not just the last-used slot.
+          // getBestCoreSlot() already auto-switches to secondary when primary is low,
+          // so only pause when even the best slot is critically low.
+          const bestNow = getBestCoreSlot();
+          const bestRem = bestNow.core.remaining;
+          if (bestRem < 200 && bestNow.core.resetAt > 0) {
+            const waitMs = Math.max(0, bestNow.core.resetAt * 1000 - Date.now()) + 5000;
             logger.warn(
-              { rem, token: best.label, waitSecs: Math.round(waitMs / 1000) },
-              'Rate limit low — pausing',
+              { bestRem, token: bestNow.label, waitSecs: Math.round(waitMs / 1000) },
+              'All tokens low — pausing until soonest reset',
             );
             await new Promise((r) => setTimeout(r, waitMs));
           }
