@@ -77,10 +77,25 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
       deployment_models: ['self-hosted'],
     };
 
+    // Fetch weekly download count from npm stats API (non-fatal)
+    let weeklyDownloads = 0;
+    try {
+      const dlRes = await fetch(
+        `https://api.npmjs.org/downloads/point/last-week/${encodeURIComponent(name)}`,
+        { signal: AbortSignal.timeout(3000) },
+      );
+      if (dlRes.ok) {
+        const dlData = (await dlRes.json()) as { downloads?: number };
+        weeklyDownloads = dlData.downloads ?? 0;
+      }
+    } catch {
+      // Non-fatal — leave as 0
+    }
+
     return {
       source: 'npm',
       url,
-      raw: { ...raw, topics: keywords },
+      raw: { ...raw, topics: keywords, weekly_downloads: weeklyDownloads },
       extracted,
     };
   } catch (e) {

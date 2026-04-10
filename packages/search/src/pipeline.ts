@@ -65,16 +65,16 @@ export class SearchPipeline {
       return result;
     }
 
-    // Stage 1 — hybrid retrieval
-    const stage1 = await stage1HybridSearch(query, allTools);
+    // Stage 1 — hybrid retrieval (pass lookupMaps for graph entity expansion)
+    const stage1 = await stage1HybridSearch(query, allTools, lookupMaps);
     logger.debug({ elapsed_ms: stage1.elapsed_ms, count: stage1.ids.length }, 'Stage 1 complete');
 
     // Stage 2 — payload filters
     const stage2 = await stage2ApplyFilters(stage1.ids, context);
     logger.debug({ elapsed_ms: stage2.elapsed_ms, count: stage2.hits.length }, 'Stage 2 complete');
 
-    // Stage 3 — graph re-ranking
-    const stage3 = await stage3GraphRerank(stage2);
+    // Stage 3 — graph re-ranking (pass intent for weight adjustments)
+    const stage3 = await stage3GraphRerank(stage2, stage1.intent);
     logger.debug(
       { elapsed_ms: stage3.elapsed_ms, count: stage3.results.length },
       'Stage 3 complete',

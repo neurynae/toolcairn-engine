@@ -26,32 +26,44 @@ interface ToolPayload {
   name: string;
   github_url: string;
   owner_type?: string;
+  is_fork?: boolean;
   health: {
     stars: number;
-    stars_velocity_90d: number;
+    forks_count?: number;
+    stars_velocity_30d?: number;
     maintenance_score: number;
     contributor_count: number;
+    weekly_downloads?: number;
     credibility_score?: number;
   };
 }
 
 function computeCredibility(tool: ToolPayload): number {
-  const { stars, maintenance_score, contributor_count, stars_velocity_90d } = tool.health;
+  const { stars, maintenance_score, contributor_count } = tool.health;
+  const forksCount = tool.health.forks_count ?? 0;
+  const weeklyDownloads = tool.health.weekly_downloads ?? 0;
+  const velocity30d = tool.health.stars_velocity_30d ?? 0;
   const ownerType = tool.owner_type;
+  const isFork = tool.is_fork ?? false;
 
   const logStars = Math.min(1, Math.log10(stars + 1) / Math.log10(300_001));
+  const forksScore = Math.min(1, Math.log10(forksCount + 1) / Math.log10(100_001));
   const orgBonus = ownerType === 'Organization' ? 1.0 : stars >= 1000 ? 0.6 : 0.3;
   const contribScore = normalizeLog(contributor_count, 500);
-  const velocityScore = normalizeLog(stars_velocity_90d, 5000);
+  const dlScore = normalizeLog(weeklyDownloads, 500_000);
+  const velocity30dScore = normalizeLog(velocity30d, 5000);
 
-  const score =
-    0.35 * logStars +
-    0.2 * orgBonus +
-    0.2 * Math.max(0, Math.min(1, maintenance_score)) +
-    0.15 * contribScore +
-    0.1 * velocityScore;
+  const raw =
+    0.28 * logStars +
+    0.18 * forksScore +
+    0.15 * orgBonus +
+    0.15 * Math.max(0, Math.min(1, maintenance_score)) +
+    0.12 * dlScore +
+    0.07 * contribScore +
+    0.05 * velocity30dScore;
 
-  return Math.max(0, Math.min(1, score));
+  const forkPenalty = isFork ? 0.4 : 1.0;
+  return Math.max(0, Math.min(1, raw * forkPenalty));
 }
 
 async function main() {

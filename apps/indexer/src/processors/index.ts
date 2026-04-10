@@ -164,7 +164,7 @@ export async function processTool(
 
   logger.info({ toolName: extracted.name }, 'Processing tool');
 
-  const health = calculateHealth(raw, prevHealth, extracted.owner_type);
+  const health = calculateHealth(raw, prevHealth, extracted.owner_type, extracted.is_fork);
 
   // Fetch existing tools from Memgraph for dynamic relationship matching
   let existingTools: Set<string> | undefined;
@@ -207,6 +207,11 @@ export async function processTool(
     homepage_url: extracted.homepage_url,
     owner_name: extracted.owner_name,
     owner_type: extracted.owner_type,
+    is_fork: extracted.is_fork ?? false,
+    ecosystem_centrality: 0,
+    pagerank_score: 0,
+    search_weight: 1.0,
+    is_canonical: false,
     license: extracted.license,
     language: extracted.language,
     languages: extracted.languages,

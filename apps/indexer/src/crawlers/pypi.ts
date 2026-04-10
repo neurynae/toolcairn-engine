@@ -96,10 +96,25 @@ export async function crawlPyPiPackage(name: string): Promise<CrawlerResult> {
       deployment_models: ['self-hosted'],
     };
 
+    // Fetch weekly download count from PyPI Stats API (non-fatal)
+    let weeklyDownloads = 0;
+    try {
+      const dlRes = await fetch(
+        `https://pypistats.org/api/packages/${encodeURIComponent(name)}/recent`,
+        { signal: AbortSignal.timeout(3000) },
+      );
+      if (dlRes.ok) {
+        const dlData = (await dlRes.json()) as { data?: { last_week?: number } };
+        weeklyDownloads = dlData.data?.last_week ?? 0;
+      }
+    } catch {
+      // Non-fatal — leave as 0
+    }
+
     return {
       source: 'pypi',
       url,
-      raw: { ...raw, topics },
+      raw: { ...raw, topics, weekly_downloads: weeklyDownloads },
       extracted,
     };
   } catch (e) {

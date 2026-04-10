@@ -318,6 +318,7 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
       homepage_url: homepage,
       docs_url: docsUrl,
       changelog_url: `${repoData.html_url}/releases`,
+      is_fork: repoData.fork === true,
       owner_name: repoData.owner?.login ?? undefined,
       owner_type: (repoData.owner?.type as 'User' | 'Organization') ?? undefined,
       license: repoData.license?.spdx_id ?? 'unknown',

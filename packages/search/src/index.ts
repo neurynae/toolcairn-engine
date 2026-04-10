@@ -24,3 +24,7 @@ export {
   stage0ExactResolve,
 } from './stages/stage0-exact.js';
 export type { ExactLookupMaps, Stage0Result } from './stages/stage0-exact.js';
+export { expandQueryAliases, ALIAS_MAP } from './aliases.js';
+export { classifyQueryIntent, getIntentWeights } from './query-intent.js';
+export type { QueryIntent, IntentWeights } from './query-intent.js';
+export { expandQueryWithGraphEntities } from './query-expander.js';

@@ -31,6 +31,8 @@ export interface ToolScoredResult {
 export interface Stage1Result {
   ids: string[];
   elapsed_ms: number;
+  /** Detected query intent — propagated to Stage 3 for weight adjustments */
+  intent?: import('./query-intent.js').QueryIntent;
 }
 
 export interface Stage2Result {

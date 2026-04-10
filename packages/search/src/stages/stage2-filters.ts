@@ -4,12 +4,10 @@ import pino from 'pino';
 import type { SearchContext, Stage2Result } from '../types.js';
 
 const logger = pino({ name: '@toolcairn/search:stage2' });
-const STAGE2_TOP_N = 15;
+const STAGE2_TOP_N = 25; // increased from 15 for better recall with 150-candidate Stage 1
 const MIN_RESULTS = 3;
 
-/** Weight for Stage 1 relevance rank vs credibility in Stage 2 scoring.
- * 50/50 gives credibility enough force to surface established tools
- * even when lower-quality tools rank higher in BM25/vector. */
+/** Weight for Stage 1 relevance rank vs credibility in Stage 2 scoring. */
 const RANK_WEIGHT = 0.5;
 const CREDIBILITY_WEIGHT = 0.5;
 
@@ -47,7 +45,8 @@ export async function stage2ApplyFilters(
       const credScore = tool.health.credibility_score ?? 0;
       return {
         tool,
-        score: RANK_WEIGHT * rankScore + CREDIBILITY_WEIGHT * credScore,
+        score:
+          (RANK_WEIGHT * rankScore + CREDIBILITY_WEIGHT * credScore) * (tool.search_weight ?? 1.0),
       };
     })
     .sort((a, b) => b.score - a.score);

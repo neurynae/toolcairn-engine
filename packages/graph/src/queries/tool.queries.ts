@@ -32,6 +32,12 @@ export interface CreateToolParams {
   health_last_release_date: string;
   health_maintenance_score: number;
   health_credibility_score: number;
+  health_forks_count: number;
+  health_weekly_downloads: number;
+  health_stars_snapshot_at: string;
+  health_stars_velocity_7d: number;
+  health_stars_velocity_30d: number;
+  is_fork: boolean;
   docs_readme_url: string | null;
   docs_docs_url: string | null;
   docs_api_url: string | null;
@@ -105,7 +111,12 @@ export function buildUpsertEdgeQuery(params: UpsertEdgeParams): {
 
 export const CREATE_TOOL = {
   text: `MERGE (t:Tool { name: $name })
-   ON CREATE SET t.grace_until = NULL, t.grace_retries = 0
+   ON CREATE SET t.grace_until = NULL,
+                 t.grace_retries = 0,
+                 t.ecosystem_centrality = 0,
+                 t.pagerank_score = 0,
+                 t.search_weight = 1.0,
+                 t.is_canonical = false
    SET t.id = $id,
        t.display_name = $display_name,
        t.description = $description,
@@ -131,6 +142,12 @@ export const CREATE_TOOL = {
        t.health_last_release_date = $health_last_release_date,
        t.health_maintenance_score = $health_maintenance_score,
        t.health_credibility_score = $health_credibility_score,
+       t.health_forks_count = $health_forks_count,
+       t.health_weekly_downloads = $health_weekly_downloads,
+       t.health_stars_snapshot_at = $health_stars_snapshot_at,
+       t.health_stars_velocity_7d = $health_stars_velocity_7d,
+       t.health_stars_velocity_30d = $health_stars_velocity_30d,
+       t.is_fork = $is_fork,
        t.docs_readme_url = $docs_readme_url,
        t.docs_docs_url = $docs_docs_url,
        t.docs_api_url = $docs_api_url,
@@ -219,8 +236,21 @@ WITH t,
 OPTIONAL MATCH (t)-[:SOLVES]->(u:UseCase)<-[:SOLVES]-(other:Tool)
 WHERE other.name IN $names AND other <> t
 WITH t, direct_score, count(DISTINCT u) * 0.3 AS usecase_overlap
-RETURN t, direct_score + usecase_overlap AS graphScore
+RETURN t,
+  direct_score + usecase_overlap
+  + coalesce(t.ecosystem_centrality, 0) * 0.1
+  + coalesce(t.pagerank_score, 0) * 0.15
+  AS graphScore
 ORDER BY graphScore DESC`,
+};
+
+/** Fetch IDs of tools directly connected to a named tool for query expansion. */
+export const GET_INTEGRATION_NEIGHBORS = {
+  text: `MATCH (t:Tool {name: $name})
+         -[:INTEGRATES_WITH|COMPATIBLE_WITH|POPULAR_WITH]->
+         (related:Tool)
+         RETURN related.id AS id
+         LIMIT $limit`,
 };
 
 export const GET_TOOL_NEIGHBORHOOD = {
@@ -451,6 +481,15 @@ export function mapRecordToToolNode(record: Record<string, unknown>): ToolNode {
       maintenance_score: requireNumber(t.health_maintenance_score, 't.health_maintenance_score'),
       credibility_score:
         typeof t.health_credibility_score === 'number' ? t.health_credibility_score : 0,
+      forks_count: typeof t.health_forks_count === 'number' ? t.health_forks_count : 0,
+      weekly_downloads:
+        typeof t.health_weekly_downloads === 'number' ? t.health_weekly_downloads : 0,
+      stars_snapshot_at:
+        typeof t.health_stars_snapshot_at === 'string' ? t.health_stars_snapshot_at : '',
+      stars_velocity_7d:
+        typeof t.health_stars_velocity_7d === 'number' ? t.health_stars_velocity_7d : 0,
+      stars_velocity_30d:
+        typeof t.health_stars_velocity_30d === 'number' ? t.health_stars_velocity_30d : 0,
     },
     docs: {
       readme_url: typeof t.docs_readme_url === 'string' ? t.docs_readme_url : undefined,
@@ -459,6 +498,11 @@ export function mapRecordToToolNode(record: Record<string, unknown>): ToolNode {
       changelog_url: typeof t.docs_changelog_url === 'string' ? t.docs_changelog_url : undefined,
     },
     topics: Array.isArray(t.topics) ? (t.topics as string[]) : [],
+    is_fork: typeof t.is_fork === 'boolean' ? t.is_fork : false,
+    ecosystem_centrality: typeof t.ecosystem_centrality === 'number' ? t.ecosystem_centrality : 0,
+    pagerank_score: typeof t.pagerank_score === 'number' ? t.pagerank_score : 0,
+    search_weight: typeof t.search_weight === 'number' ? t.search_weight : 1.0,
+    is_canonical: typeof t.is_canonical === 'boolean' ? t.is_canonical : false,
     grace_until: typeof t.grace_until === 'string' ? t.grace_until : undefined,
     grace_retries: typeof t.grace_retries === 'number' ? t.grace_retries : 0,
     created_at: requireString(t.created_at, 't.created_at'),

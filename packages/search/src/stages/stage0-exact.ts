@@ -118,9 +118,10 @@ export function stage0ExactResolve(query: string, maps: ExactLookupMaps): Stage0
   if (nameMatches.length > 0) {
     const best = pickBest(nameMatches);
     const bestCred = best.health.credibility_score ?? 0;
-    if (bestCred >= MIN_CRED) {
+    // Canonical tools bypass the credibility gate entirely — they are definitively the answer
+    if (best.is_canonical || bestCred >= MIN_CRED) {
       logger.info(
-        { tool: best.name, cred: bestCred.toFixed(2), via: 'name' },
+        { tool: best.name, cred: bestCred.toFixed(2), canonical: best.is_canonical, via: 'name' },
         'Stage 0 exact match',
       );
       return { match: best, elapsed_ms: Date.now() - t0 };

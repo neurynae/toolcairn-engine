@@ -63,10 +63,21 @@ export interface HealthSignals {
   maintenance_score: number;
   /**
    * Composite credibility score 0–1 blending popularity, trust, and activity.
-   * Used as a ranking multiplier in search pipeline Stages 2–4.
-   * Formula: 0.35*log_stars + 0.20*org_bonus + 0.20*maintenance + 0.15*contributors + 0.10*velocity
+   * Updated formula: 0.28*log_stars + 0.18*forks_score + 0.15*org_bonus
+   *   + 0.15*maintenance + 0.12*downloads + 0.07*contributors + 0.05*velocity_30d
+   * Multiplied by 0.4 if the tool is itself a fork (is_fork = true).
    */
   credibility_score: number;
+  /** GitHub forks_count — how many times others have forked this tool */
+  forks_count: number;
+  /** Weekly downloads from npm/PyPI (0 if not applicable) */
+  weekly_downloads: number;
+  /** ISO date when stars were last snapshotted for velocity computation */
+  stars_snapshot_at: string;
+  /** Stars gained in last 7 days (computed from snapshots) */
+  stars_velocity_7d: number;
+  /** Stars gained in last 30 days (computed from snapshots) */
+  stars_velocity_30d: number;
 }
 
 export interface DocumentationLinks {
@@ -98,6 +109,30 @@ export interface ToolNode {
   docs: DocumentationLinks;
   /** GitHub topics / npm keywords — community-curated tags, persisted for graph mesh */
   topics: string[];
+  /** True if this repo is a fork of another repo — carries a credibility penalty */
+  is_fork: boolean;
+  /**
+   * Inbound edge count — how many other tools have edges pointing TO this tool.
+   * Set by compute-centrality.ts script. Never overwritten on re-index.
+   */
+  ecosystem_centrality: number;
+  /**
+   * Normalized PageRank score 0–1 from the tool graph.
+   * Set by compute-pagerank.ts weekly. Never overwritten on re-index.
+   */
+  pagerank_score: number;
+  /**
+   * Feedback-loop search weight multiplier (default 1.0, max 2.0).
+   * Incremented by update-search-weights.ts when users report success.
+   * Never overwritten on re-index.
+   */
+  search_weight: number;
+  /**
+   * Curated canonical flag — tool is definitively the primary tool for its name.
+   * Set by set-canonical-tools.ts. Never overwritten on re-index.
+   * Canonical tools bypass the Stage 0 credibility gate.
+   */
+  is_canonical: boolean;
   /**
    * Grace period for personal repos (500-999 stars).
    * ISO date when current grace window expires. Null = not in grace period.

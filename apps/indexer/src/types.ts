@@ -10,6 +10,7 @@ export interface ExtractedToolData {
   changelog_url?: string;
   owner_name?: string;
   owner_type?: 'User' | 'Organization';
+  is_fork?: boolean;
   license: string;
   language: string;
   languages: string[];

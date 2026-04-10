@@ -18,6 +18,11 @@ function makeHealth(maintenanceScore = 0.8) {
     last_release_date: '2024-01-01',
     maintenance_score: maintenanceScore,
     credibility_score: maintenanceScore,
+    forks_count: 0,
+    weekly_downloads: 0,
+    stars_snapshot_at: '',
+    stars_velocity_7d: 0,
+    stars_velocity_30d: 0,
   };
 }
 
@@ -35,6 +40,11 @@ function makeTool(overrides: Partial<ToolNode> & Pick<ToolNode, 'id' | 'name'>):
     health: makeHealth(),
     docs: {},
     topics: [],
+    is_fork: false,
+    ecosystem_centrality: 0,
+    pagerank_score: 0,
+    search_weight: 1.0,
+    is_canonical: false,
     created_at: '2024-01-01',
     updated_at: '2024-01-01',
     ...overrides,
