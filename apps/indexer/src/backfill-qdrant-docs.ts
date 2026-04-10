@@ -26,7 +26,7 @@ async function main() {
 
   try {
     while (true) {
-      // Fetch a page of tools from Memgraph with their docs fields
+      // Inline SKIP/LIMIT as integer literals — Memgraph rejects parameterized non-integers
       const result = await session.run(
         `MATCH (t:Tool)
          WHERE t.docs_docs_url IS NOT NULL OR t.docs_changelog_url IS NOT NULL
@@ -35,13 +35,11 @@ async function main() {
                 t.docs_docs_url AS docs_url,
                 t.docs_api_url AS api_url,
                 t.docs_changelog_url AS changelog_url
-         SKIP $offset LIMIT $limit`,
-        { offset, limit: PAGE_SIZE },
+         SKIP ${offset} LIMIT ${PAGE_SIZE}`,
       );
 
       if (result.records.length === 0) break;
 
-      // Update Qdrant payload for each tool in this page
       const updates = result.records.map((r) => ({
         name: r.get('name') as string,
         docs: {
@@ -52,7 +50,6 @@ async function main() {
         },
       }));
 
-      // Qdrant setPayload with filter per tool (batched individually — no bulk filter-by-name API)
       let pageUpdated = 0;
       for (const update of updates) {
         try {
