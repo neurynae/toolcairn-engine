@@ -2,8 +2,9 @@
  * One-time backfill: compute credibility_score for all existing tools.
  *
  * Reads every tool from Qdrant (with payload), computes credibility from
- * existing health signals + owner_type, then writes back to both Qdrant
- * (setPayload) and Memgraph (SET health_credibility_score).
+ * existing health signals + owner_type, then writes back to both:
+ *   - Qdrant: update by point UUID (exact, no name-collision risk)
+ *   - Memgraph: update by github_url (unique per tool, avoids name collisions)
  *
  * Safe to re-run — idempotent (overwrites with fresh computation).
  *
@@ -16,15 +17,14 @@ import pino from 'pino';
 
 const logger = pino({ name: '@toolcairn/indexer:backfill-credibility' });
 
-/** Same normalizeLog used in health-calculator.ts */
 function normalizeLog(value: number, scale: number): number {
   if (value <= 0) return 0;
   return Math.min(1, Math.log1p(value) / Math.log1p(scale));
 }
 
 interface ToolPayload {
-  id: string;
   name: string;
+  github_url: string;
   owner_type?: string;
   health: {
     stars: number;
@@ -79,42 +79,43 @@ async function main() {
 
       if (points.length === 0) break;
 
-      // Compute credibility for each tool and update Qdrant + Memgraph
       for (const point of points) {
         if (!point.payload) continue;
 
         const tool = point.payload as unknown as ToolPayload;
-        if (!tool.health || typeof tool.health.stars !== 'number') {
+        if (!tool.health || typeof tool.health.stars !== 'number' || !tool.github_url) {
           totalSkipped++;
           continue;
         }
 
         const credibility = computeCredibility(tool);
+        const pointId = String(point.id);
 
-        // Update Qdrant payload (partial — only touches health.credibility_score)
+        // Update Qdrant by point UUID — avoids updating multiple tools that share a name
         try {
           await client.setPayload(COLLECTION_NAME, {
             payload: {
               health: { ...tool.health, credibility_score: credibility },
             },
-            filter: {
-              must: [{ key: 'name', match: { value: tool.name } }],
-            },
+            points: [pointId],
           });
         } catch (e) {
-          logger.warn({ tool: tool.name, err: e }, 'Qdrant setPayload failed');
+          logger.warn({ tool: tool.name, pointId, err: e }, 'Qdrant setPayload failed');
           totalSkipped++;
           continue;
         }
 
-        // Update Memgraph
+        // Update Memgraph by github_url — unique per tool, no name-collision risk
         try {
           await session.run(
-            'MATCH (t:Tool { name: $name }) SET t.health_credibility_score = $score',
-            { name: tool.name, score: credibility },
+            'MATCH (t:Tool { github_url: $url }) SET t.health_credibility_score = $score',
+            { url: tool.github_url, score: credibility },
           );
         } catch (e) {
-          logger.warn({ tool: tool.name, err: e }, 'Memgraph SET failed');
+          logger.warn(
+            { tool: tool.name, github_url: tool.github_url, err: e },
+            'Memgraph SET failed',
+          );
         }
 
         totalUpdated++;
