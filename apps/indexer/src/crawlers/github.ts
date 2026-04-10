@@ -10,8 +10,31 @@ import {
   sleepUntilCoreReset,
   updateCoreRateState,
 } from './rate-limit.js';
+import { extractDocsUrl } from './readme-parser.js';
 
 const logger = pino({ name: '@toolcairn/indexer:github-crawler' });
+
+/**
+ * Fetch the README for a repo and extract the best documentation URL.
+ * Returns undefined if the README can't be fetched or has no docs link.
+ * Non-fatal — errors are swallowed so they don't block the main crawl.
+ */
+async function fetchReadmeDocsUrl(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+): Promise<string | undefined> {
+  try {
+    const { data } = await octokit.rest.repos.getReadme({ owner, repo });
+    if (data.encoding === 'base64' && data.content) {
+      const markdown = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf8');
+      return extractDocsUrl(markdown);
+    }
+  } catch {
+    // Non-fatal — README may not exist or rate limit hit
+  }
+  return undefined;
+}
 
 // ─── Octokit singleton ────────────────────────────────────────────────────────
 
@@ -276,7 +299,12 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     const packageManagers = detectPackageManagers(rootFilenames);
 
     const homepage = repoData.homepage ?? undefined;
-    const docsUrl = homepage && !homepage.includes('github.com') ? homepage : undefined;
+
+    // README-parsed docs URL is the most targeted (e.g. links to API reference pages).
+    // Homepage heuristic is a fallback for when README has no explicit docs link.
+    const readmeDocsUrl = await fetchReadmeDocsUrl(getOctokit(), owner, repo);
+    const homepageDocsUrl = homepage && !homepage.includes('github.com') ? homepage : undefined;
+    const docsUrl = readmeDocsUrl ?? homepageDocsUrl;
 
     const extracted: ExtractedToolData = {
       name: repoData.name,

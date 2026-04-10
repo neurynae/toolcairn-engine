@@ -1,6 +1,7 @@
 import pino from 'pino';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
+import { extractDocsUrl } from './readme-parser.js';
 
 const logger = pino({ name: '@toolcairn/indexer:npm-crawler' });
 
@@ -12,6 +13,7 @@ interface NpmPackageResponse {
   license?: unknown;
   repository?: unknown;
   keywords?: unknown;
+  readme?: unknown;
 }
 
 function extractString(value: unknown): string {
@@ -48,11 +50,18 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
     const homepage = extractString(raw.homepage);
     const license = extractString(raw.license) || 'unknown';
     const repoUrl = extractRepositoryUrl(raw.repository);
+    const readme = extractString(raw.readme);
 
     const githubUrl = repoUrl
       .replace(/^git\+/, '')
       .replace(/\.git$/, '')
       .replace('git://', 'https://');
+
+    // README parsing gives the most targeted docs URL (e.g. the API reference page).
+    // Fall back to homepage only when it's clearly a docs/non-GitHub site.
+    const readmeDocsUrl = readme ? extractDocsUrl(readme) : undefined;
+    const homepageDocsUrl = homepage && !homepage.includes('github.com') ? homepage : undefined;
+    const docsUrl = readmeDocsUrl ?? homepageDocsUrl;
 
     const extracted: ExtractedToolData = {
       name: pkgName,
@@ -60,7 +69,7 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
       description,
       github_url: githubUrl || `https://www.npmjs.com/package/${name}`,
       homepage_url: homepage || undefined,
-      docs_url: homepage && !homepage.includes('github.com') ? homepage : undefined,
+      docs_url: docsUrl,
       license,
       language: 'JavaScript',
       languages: ['JavaScript', 'TypeScript'],
