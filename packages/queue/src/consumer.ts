@@ -222,8 +222,9 @@ async function reclaimStalePending(group: string, consumer: string): Promise<num
 export interface ConsumerOptions {
   /**
    * Number of index-job messages to process concurrently within a single batch.
-   * Higher values use more GitHub API quota but reduce wall-clock time per batch.
-   * Default: 3. With 2 tokens (10k req/hr) and ~5 calls/tool, max effective = 5.
+   * Default: 2. Higher values increase throughput but also Postgres connections
+   * (N containers × concurrency = N×concurrency simultaneous Prisma connections).
+   * With 2 containers × concurrency=2 = 4 parallel jobs — safe for VPS Postgres.
    */
   concurrency?: number;
   /**
@@ -245,7 +246,12 @@ export async function startConsumer(
   options: ConsumerOptions = {},
 ): Promise<void> {
   const group = 'toolpilot-consumers';
-  const consumer = `consumer-${process.pid}`;
+  // Use hostname (Docker sets a unique hostname per container) + pid for uniqueness.
+  // Previously used process.pid alone which is always 1 in Docker — causing all
+  // containers to share consumer-1 and potentially reclaim each other's pending messages.
+  // process.env.HOSTNAME is set by Docker to the container ID — unique per container.
+  // Fallback to process.pid (works in non-Docker envs, but collides in Docker since pid=1).
+  const consumer = `consumer-${process.env.HOSTNAME || process.pid}-${process.pid}`;
   let running = true;
   let emptyPollCount = 0;
   let idleStartMs: number | null = null;
@@ -326,7 +332,7 @@ export async function startConsumer(
       // Pipeline parallelism: process index-job messages concurrently up to
       // `concurrency` at a time. Other message types run sequentially (they
       // are rare scheduler events that must not overlap — discovery, reindex).
-      const concurrency = options.concurrency ?? 3;
+      const concurrency = options.concurrency ?? 2;
       const indexMessages = messages.filter((m) => m.type === 'index-job');
       const otherMessages = messages.filter((m) => m.type !== 'index-job');
 
