@@ -19,7 +19,7 @@
 
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import pino from 'pino';
-import { getBestCoreSlot } from './crawlers/rate-limit.js';
+import { getBestCoreSlot, getSlots } from './crawlers/rate-limit.js';
 
 const logger = pino({ name: '@toolcairn/indexer:cleanup-personal-repos' });
 const DRY_RUN = !process.argv.includes('--delete');
@@ -85,21 +85,19 @@ async function main() {
 
     logger.info({ uniqueOwners: ownerMap.size }, 'Unique owners to check');
 
-    // 3. Check remaining rate limit before starting.
-    // Uses the token pool — with two tokens, combined limit is 10k/hour.
-    // Abort if the best available slot doesn't have enough headroom.
-    const slot = getBestCoreSlot();
-    const { data: rateData } = await slot.octokit.rateLimit.get();
-    const remaining = rateData.resources.core.remaining;
-    const resetAt = new Date(rateData.resources.core.reset * 1000).toISOString();
-    logger.info(
-      { remaining, resetAt, token: slot.label },
-      'Rate limit on best token before owner lookups',
-    );
-    if (remaining < ownerMap.size + 100) {
+    // 3. Check combined rate limit across all tokens before starting.
+    // With two tokens, pool has up to 10k/hour. Sum all slots to get the full picture.
+    const allSlots = getSlots();
+    const combinedRemaining = allSlots.reduce((sum: number, s) => sum + s.core.remaining, 0);
+    const bestSlotLabel = allSlots.map((s) => `${s.label}:${s.core.remaining}`).join(', ');
+    logger.info({ combinedRemaining, slots: bestSlotLabel }, 'Rate limit across token pool');
+    if (combinedRemaining < ownerMap.size + 100) {
+      const soonestReset = new Date(
+        Math.min(...allSlots.map((s) => s.core.resetAt)) * 1000,
+      ).toISOString();
       logger.error(
-        { remaining, needed: ownerMap.size, resetAt },
-        'Insufficient rate limit — aborting. Wait until reset and ensure the daily indexer is not running.',
+        { combinedRemaining, needed: ownerMap.size + 100, soonestReset },
+        'Insufficient combined rate limit — aborting. Ensure the daily indexer is not running.',
       );
       return;
     }
