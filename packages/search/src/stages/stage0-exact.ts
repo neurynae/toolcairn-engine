@@ -96,26 +96,39 @@ export function stage0ExactResolve(query: string, maps: ExactLookupMaps): Stage0
   // Normalize: strip trailing ".js" (users type "express.js" meaning "express")
   const qNorm = q.replace(/\.js$/, '');
 
-  // 1. Package manager canonical name — strongest identity signal
+  // Minimum credibility to short-circuit on name/PM match.
+  // PM matches bypass this threshold (they're canonical by definition).
+  // Name matches require it to prevent low-quality tools with exact names
+  // (e.g. nativescript/tailwind) from blocking the real canonical tool.
+  const MIN_CRED = 0.5;
+
+  // 1. Package manager canonical name — strongest identity signal, no credibility gate
   const pmMatches = maps.byPmName.get(q) ?? maps.byPmName.get(qNorm) ?? [];
   if (pmMatches.length > 0) {
     const best = pickBest(pmMatches);
     logger.info(
-      { tool: best.name, candidates: pmMatches.length, via: 'pm_name' },
+      { tool: best.name, cred: (best.health.credibility_score ?? 0).toFixed(2), via: 'pm_name' },
       'Stage 0 exact match',
     );
     return { match: best, elapsed_ms: Date.now() - t0 };
   }
 
-  // 2. Tool name exact match
+  // 2. Tool name exact match — only short-circuit if credibility is above threshold
   const nameMatches = maps.byName.get(q) ?? maps.byName.get(qNorm) ?? [];
   if (nameMatches.length > 0) {
     const best = pickBest(nameMatches);
-    logger.info(
-      { tool: best.name, candidates: nameMatches.length, via: 'name' },
-      'Stage 0 exact match',
+    const bestCred = best.health.credibility_score ?? 0;
+    if (bestCred >= MIN_CRED) {
+      logger.info(
+        { tool: best.name, cred: bestCred.toFixed(2), via: 'name' },
+        'Stage 0 exact match',
+      );
+      return { match: best, elapsed_ms: Date.now() - t0 };
+    }
+    logger.debug(
+      { tool: best.name, cred: bestCred.toFixed(2), threshold: MIN_CRED },
+      'Stage 0 name match below credibility threshold — falling through to pipeline',
     );
-    return { match: best, elapsed_ms: Date.now() - t0 };
   }
 
   // 3. Name component match — only for single-word queries
