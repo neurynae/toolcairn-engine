@@ -78,74 +78,85 @@ const FEATURE_ADJECTIVES = [
 
 /**
  * Classify the intent of a search query using lightweight heuristics.
- * No external API calls — pure string analysis.
+ * Queries with 5+ words are almost never direct name lookups — treat as use_case.
  */
 export function classifyQueryIntent(query: string): QueryIntent {
   const q = query.toLowerCase().trim();
+  const qTokens = q.split(/\s+/);
 
-  // Single word → likely a direct name lookup (Stage 0 handles it, but
-  // if it falls through to Stage 1, BM25 name matching is most important)
+  // Single word → likely a direct name lookup
   if (!q.includes(' ')) return 'direct_name';
 
   // Comparison intent
-  const qTokens = q.split(/\s+/);
   if (COMPARISON_TERMS.some((term) => q.includes(term))) return 'comparison';
 
   // Use-case intent (natural language)
   if (USE_CASE_PREFIXES.some((prefix) => q.startsWith(prefix))) return 'use_case';
   if (q.startsWith('what ') || q.startsWith('which ') || q.startsWith('how ')) return 'use_case';
 
+  // Long queries (5+ tokens) are almost always use-case descriptions
+  if (qTokens.length >= 5) return 'use_case';
+
   // Feature query (describes desired traits)
   if (FEATURE_ADJECTIVES.some((adj) => qTokens.includes(adj))) return 'feature_query';
 
-  // Default: treat as category query (broad terms like "CSS framework")
+  // Default: category query
   return 'category_query';
 }
 
 /**
  * Return RRF fusion weights and stage modifiers for a given intent.
  *
- * Intent weights rationale:
- * - direct_name: BM25 exact name match is most reliable → boost BM25
- * - use_case: semantic similarity matters most → boost vector
- * - comparison: graph REPLACES edges are highly relevant → boost graph
- * - feature_query: mix of BM25 (features in description) and vector
- * - category_query: balanced — both matter
+ * Key insight: BM25 excels at exact name matching but poisons semantic queries.
+ * For use_case/feature queries, vector embeddings capture meaning far better
+ * than keyword overlap. A query like "build CLI tool in Node.js" should NOT
+ * return Node.js runtime just because "node" appears in both.
  */
 export function getIntentWeights(intent: QueryIntent): IntentWeights {
   switch (intent) {
     case 'direct_name':
+      // BM25 is most reliable for exact name lookups (user knows the tool name)
       return {
         bm25Weight: 1.5,
         vectorWeight: 0.7,
         boostReplaces: false,
         graphWeightMultiplier: 1.0,
       };
+
     case 'use_case':
+      // BM25 severely downweighted — keyword overlap is misleading for intent queries.
+      // Trust vector embeddings almost entirely: they understand "build CLI tool"
+      // is semantically close to commander/yargs, not to "nodejs/node".
       return {
-        bm25Weight: 0.7,
-        vectorWeight: 1.5,
+        bm25Weight: 0.1,
+        vectorWeight: 2.0,
         boostReplaces: false,
         graphWeightMultiplier: 1.0,
       };
+
     case 'comparison':
+      // REPLACES graph edges are the key signal; vector finds semantic neighbours
       return {
         bm25Weight: 0.8,
         vectorWeight: 1.2,
         boostReplaces: true,
         graphWeightMultiplier: 1.5,
       };
+
     case 'feature_query':
+      // Feature traits are partly described in text — vector still dominates
       return {
-        bm25Weight: 1.1,
-        vectorWeight: 1.0,
+        bm25Weight: 0.3,
+        vectorWeight: 1.7,
         boostReplaces: false,
         graphWeightMultiplier: 1.0,
       };
+
     case 'category_query':
+      // Categories benefit from both signals but vector captures the concept better
       return {
-        bm25Weight: 1.0,
-        vectorWeight: 1.0,
+        bm25Weight: 0.5,
+        vectorWeight: 1.5,
         boostReplaces: false,
         graphWeightMultiplier: 1.0,
       };
