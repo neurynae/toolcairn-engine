@@ -221,6 +221,12 @@ async function reclaimStalePending(group: string, consumer: string): Promise<num
 
 export interface ConsumerOptions {
   /**
+   * Number of index-job messages to process concurrently within a single batch.
+   * Higher values use more GitHub API quota but reduce wall-clock time per batch.
+   * Default: 3. With 2 tokens (10k req/hr) and ~5 calls/tool, max effective = 5.
+   */
+  concurrency?: number;
+  /**
    * If set, the consumer exits after the queue has been continuously empty for
    * this many milliseconds. Useful for one-shot CI runs.
    * Default: undefined (run forever until SIGTERM/SIGINT).
@@ -317,12 +323,35 @@ export async function startConsumer(
       idleStartMs = null;
       emptyPollCount = 0;
 
-      for (const msg of messages) {
-        try {
-          if (msg.type === 'index-job') {
+      // Pipeline parallelism: process index-job messages concurrently up to
+      // `concurrency` at a time. Other message types run sequentially (they
+      // are rare scheduler events that must not overlap — discovery, reindex).
+      const concurrency = options.concurrency ?? 3;
+      const indexMessages = messages.filter((m) => m.type === 'index-job');
+      const otherMessages = messages.filter((m) => m.type !== 'index-job');
+
+      // Process index jobs in concurrent sliding windows
+      for (let i = 0; i < indexMessages.length; i += concurrency) {
+        const batch = indexMessages.slice(i, i + concurrency);
+        await Promise.allSettled(
+          batch.map(async (msg) => {
             const { toolId, priority } = msg.payload as { toolId: string; priority: number };
-            await handlers.onIndexJob(toolId, priority);
-          } else if (msg.type === 'search-event') {
+            try {
+              await handlers.onIndexJob(toolId, priority);
+            } catch (e) {
+              logger.error(
+                { err: e, messageId: msg.id, toolId },
+                'Index job failed (non-fatal — will be reclaimed)',
+              );
+            }
+          }),
+        );
+      }
+
+      // Process non-index messages sequentially
+      for (const msg of otherMessages) {
+        try {
+          if (msg.type === 'search-event') {
             const { query, sessionId } = msg.payload as { query: string; sessionId: string };
             await handlers.onSearchEvent(query, sessionId);
           } else if (msg.type === 'run-discovery' && handlers.onRunDiscovery) {
