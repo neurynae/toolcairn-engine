@@ -18,6 +18,7 @@ services:
       REDIS_URL: redis://redis:6379
       NOMIC_API_KEY: ${NOMIC_API_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_TOKEN_2: ${GITHUB_TOKEN_2:-}
       ORIGIN_SECRET: ${ORIGIN_SECRET}
       ADMIN_SECRET: ${ADMIN_SECRET}
       AUTH_SECRET: ${AUTH_SECRET}
@@ -66,6 +67,7 @@ services:
       REDIS_URL: redis://redis:6379
       NOMIC_API_KEY: ${NOMIC_API_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_TOKEN_2: ${GITHUB_TOKEN_2:-}
     networks:
       - toolpilot
     depends_on:
