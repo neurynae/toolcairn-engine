@@ -28,3 +28,27 @@ export async function generateEmbedding(tool: ToolNode): Promise<number[]> {
     );
   }
 }
+
+/**
+ * Generate vector embeddings for multiple ToolNodes in a single batched Nomic API call.
+ * Returns an array of vectors in the same order as the input nodes.
+ * Falls back to an array of zero-vectors if the API is unavailable.
+ */
+export async function generateEmbeddingBatch(nodes: ToolNode[]): Promise<number[][]> {
+  if (nodes.length === 0) return [];
+
+  const texts = nodes.map((node) => toolEmbedText(node.name, node.description, node.topics));
+  logger.debug({ count: nodes.length }, 'Generating batch embeddings');
+
+  try {
+    const vectors = await embedBatch(texts);
+    return vectors;
+  } catch (e) {
+    logger.warn(
+      { count: nodes.length, error: e instanceof Error ? e.message : String(e) },
+      'embedBatch failed — returning zero-vectors for batch',
+    );
+    // Graceful degradation: return zero-vectors so callers can continue without embeddings
+    return nodes.map(() => new Array(768).fill(0) as number[]);
+  }
+}

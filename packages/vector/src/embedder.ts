@@ -3,7 +3,7 @@ import { VectorError } from './errors.js';
 
 const NOMIC_API_URL = 'https://api-atlas.nomic.ai/v1/embedding/text';
 const NOMIC_MODEL = 'nomic-embed-text-v1.5';
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 50;
 
 export type EmbedTaskType = 'search_document' | 'search_query' | 'classification';
 
