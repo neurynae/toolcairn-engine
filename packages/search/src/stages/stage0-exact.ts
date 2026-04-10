@@ -100,7 +100,7 @@ export function stage0ExactResolve(query: string, maps: ExactLookupMaps): Stage0
   // PM matches bypass this threshold (they're canonical by definition).
   // Name matches require it to prevent low-quality tools with exact names
   // (e.g. nativescript/tailwind) from blocking the real canonical tool.
-  const MIN_CRED = 0.5;
+  const MIN_CRED = 0.7;
 
   // 1. Package manager canonical name — strongest identity signal, no credibility gate
   const pmMatches = maps.byPmName.get(q) ?? maps.byPmName.get(qNorm) ?? [];
