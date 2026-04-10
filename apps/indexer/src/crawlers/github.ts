@@ -1,14 +1,14 @@
-import { Octokit } from '@octokit/rest';
-import { config } from '@toolcairn/config';
+import type { Octokit } from '@octokit/rest';
 import pino from 'pino';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import {
   corePreFlight,
+  getBestCoreSlot,
   getRateLimitStatus,
   sleep,
   sleepUntilCoreReset,
-  updateCoreRateState,
+  updateSlotFromHeaders,
 } from './rate-limit.js';
 import { extractDocsUrl } from './readme-parser.js';
 
@@ -19,13 +19,9 @@ const logger = pino({ name: '@toolcairn/indexer:github-crawler' });
  * Returns undefined if the README can't be fetched or has no docs link.
  * Non-fatal — errors are swallowed so they don't block the main crawl.
  */
-async function fetchReadmeDocsUrl(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-): Promise<string | undefined> {
+async function fetchReadmeDocsUrl(owner: string, repo: string): Promise<string | undefined> {
   try {
-    const { data } = await octokit.rest.repos.getReadme({ owner, repo });
+    const { data } = await getBestCoreSlot().octokit.rest.repos.getReadme({ owner, repo });
     if (data.encoding === 'base64' && data.content) {
       const markdown = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf8');
       return extractDocsUrl(markdown);
@@ -36,15 +32,11 @@ async function fetchReadmeDocsUrl(
   return undefined;
 }
 
-// ─── Octokit singleton ────────────────────────────────────────────────────────
+// ─── Octokit accessor (delegates to token pool) ──────────────────────────────
 
-let _octokit: Octokit | undefined;
-
+/** Returns the Octokit instance for the token with most remaining Core quota. */
 function getOctokit(): Octokit {
-  if (!_octokit) {
-    _octokit = new Octokit({ auth: config.GITHUB_TOKEN || undefined });
-  }
-  return _octokit;
+  return getBestCoreSlot().octokit;
 }
 
 // ─── ETag cache (in-memory, keyed by endpoint URL) ───────────────────────────
@@ -69,21 +61,23 @@ const SECONDARY_LIMIT_WAIT_MS = 65_000; // GitHub recommends ≥60s
 async function githubRequest<T>(
   cacheKey: string,
   fn: (
-    headers?: Record<string, string>,
+    headers: Record<string, string>,
+    oc: Octokit,
   ) => Promise<{ data: unknown; headers: Record<string, string | undefined> }>,
 ): Promise<T> {
-  // Pre-flight: apply dynamic pacing and wait if quota is critical.
-  // Uses shared coreRateState from rate-limit.ts (also used by github-discovery.ts).
   await corePreFlight();
 
-  // Inject ETag for conditional GET (304 = free, doesn't consume quota)
   const cached = etagCache.get(cacheKey);
   const conditionalHeaders: Record<string, string> = cached ? { 'if-none-match': cached.etag } : {};
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    // Pick the token with most remaining quota on each attempt — after a rate-limit
+    // sleep the other token may now have more headroom.
+    const slot = getBestCoreSlot();
+
     try {
-      const response = await fn(conditionalHeaders);
-      updateCoreRateState(response.headers as Record<string, string | undefined>);
+      const response = await fn(conditionalHeaders, slot.octokit);
+      updateSlotFromHeaders(slot, 'core', response.headers as Record<string, string | undefined>);
 
       const etag = response.headers.etag;
       if (etag) etagCache.set(cacheKey, { etag, data: response.data });
@@ -97,7 +91,7 @@ async function githubRequest<T>(
       const status = e.status ?? 0;
       const respHeaders = e.response?.headers ?? {};
 
-      updateCoreRateState(respHeaders as Record<string, string | undefined>);
+      updateSlotFromHeaders(slot, 'core', respHeaders as Record<string, string | undefined>);
 
       // 304 Not Modified — serve from ETag cache (no quota consumed)
       if (status === 304 && cached) {
@@ -201,17 +195,19 @@ function detectPackageManagers(contents: string[]): Record<string, string> {
 // ─── Main crawler ─────────────────────────────────────────────────────────────
 
 export async function crawlGitHubRepo(owner: string, repo: string): Promise<CrawlerResult> {
-  const octokit = getOctokit();
   const repoKey = `${owner}/${repo}`;
 
+  // Helper type alias — resolve Octokit's repos.get return type using current best token
+  type RepoData = Awaited<
+    ReturnType<ReturnType<typeof getBestCoreSlot>['octokit']['rest']['repos']['get']>
+  >['data'];
+
   try {
-    // Fetch repo, languages, topics sequentially — one session per rule
-    const repoData = await githubRequest<
-      Awaited<ReturnType<typeof octokit.rest.repos.get>>['data']
-    >(
+    // Fetch repo, languages, topics — githubRequest picks the best token per call
+    const repoData = await githubRequest<RepoData>(
       `repo:${repoKey}`,
-      (h) =>
-        octokit.rest.repos.get({ owner, repo, headers: h }) as Promise<{
+      (h, oc) =>
+        oc.rest.repos.get({ owner, repo, headers: h }) as Promise<{
           data: unknown;
           headers: Record<string, string | undefined>;
         }>,
@@ -219,8 +215,8 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
 
     const languages = await githubRequest<Record<string, number>>(
       `languages:${repoKey}`,
-      (h) =>
-        octokit.rest.repos.listLanguages({ owner, repo, headers: h }) as Promise<{
+      (h, oc) =>
+        oc.rest.repos.listLanguages({ owner, repo, headers: h }) as Promise<{
           data: unknown;
           headers: Record<string, string | undefined>;
         }>,
@@ -228,8 +224,8 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
 
     const topicsData = await githubRequest<{ names: string[] }>(
       `topics:${repoKey}`,
-      (h) =>
-        octokit.rest.repos.getAllTopics({ owner, repo, headers: h }) as Promise<{
+      (h, oc) =>
+        oc.rest.repos.getAllTopics({ owner, repo, headers: h }) as Promise<{
           data: unknown;
           headers: Record<string, string | undefined>;
         }>,
@@ -241,8 +237,8 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     try {
       const contentsData = await githubRequest<unknown>(
         `contents:${repoKey}`,
-        (h) =>
-          octokit.rest.repos.getContent({ owner, repo, path: '', headers: h }) as Promise<{
+        (h, oc) =>
+          oc.rest.repos.getContent({ owner, repo, path: '', headers: h }) as Promise<{
             data: unknown;
             headers: Record<string, string | undefined>;
           }>,
@@ -261,8 +257,8 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
         try {
           const pkgFile = await githubRequest<{ content?: string; encoding?: string }>(
             `package.json:${repoKey}`,
-            (h) =>
-              octokit.rest.repos.getContent({
+            (h, oc) =>
+              oc.rest.repos.getContent({
                 owner,
                 repo,
                 path: 'package.json',
@@ -302,7 +298,7 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
 
     // README-parsed docs URL is the most targeted (e.g. links to API reference pages).
     // Homepage heuristic is a fallback for when README has no explicit docs link.
-    const readmeDocsUrl = await fetchReadmeDocsUrl(getOctokit(), owner, repo);
+    const readmeDocsUrl = await fetchReadmeDocsUrl(owner, repo);
     const homepageDocsUrl = homepage && !homepage.includes('github.com') ? homepage : undefined;
     const docsUrl = readmeDocsUrl ?? homepageDocsUrl;
 

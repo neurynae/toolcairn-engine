@@ -12,16 +12,15 @@
  * 3. Results cache (in-memory) for same topic searches
  */
 
-import { Octokit } from '@octokit/rest';
-import { config } from '@toolcairn/config';
 import pino from 'pino';
 import { setProgress } from '../progress.js';
 import {
+  getBestSearchSlot,
   getRateLimitStatus,
   refreshRateLimitsFromGitHub,
   searchPreFlight,
   sleep,
-  updateSearchRateState,
+  updateSlotFromHeaders,
 } from './rate-limit.js';
 
 export { getRateLimitStatus, refreshRateLimitsFromGitHub };
@@ -43,20 +42,9 @@ export interface DiscoveredRepo {
   license: string | null;
 }
 
-// ─── Octokit singleton ────────────────────────────────────────────────────────
-
-let _octokit: Octokit | undefined;
-
-function getOctokit(): Octokit {
-  if (!_octokit) {
-    _octokit = new Octokit({ auth: config.GITHUB_TOKEN || undefined });
-  }
-  return _octokit;
-}
-
 // ─── Discovery logic ─────────────────────────────────────────────────────────
 
-// No local rate state — all rate tracking is in rate-limit.ts (shared with github.ts)
+// Octokit is provided by the token pool in rate-limit.ts — no local singleton needed.
 
 /**
  * Search GitHub for repositories matching criteria.
@@ -72,7 +60,8 @@ export async function searchReposByTopic(
   pushedWithinDays = 90,
   maxResults = 50,
 ): Promise<DiscoveredRepo[]> {
-  const octokit = getOctokit();
+  // Pick the token with most remaining Search quota
+  const slot = getBestSearchSlot();
 
   // Calculate date cutoff
   const dateCutoff = new Date();
@@ -88,7 +77,7 @@ export async function searchReposByTopic(
   await searchPreFlight();
 
   try {
-    const response = await octokit.rest.search.repos({
+    const response = await slot.octokit.rest.search.repos({
       q: query,
       sort: 'stars',
       order: 'desc',
@@ -96,7 +85,7 @@ export async function searchReposByTopic(
       page: 1,
     });
 
-    updateSearchRateState(response.headers as Record<string, string | undefined>);
+    updateSlotFromHeaders(slot, 'search', response.headers as Record<string, string | undefined>);
 
     const repos: DiscoveredRepo[] = [];
 
@@ -131,7 +120,7 @@ export async function searchReposByTopic(
     const status = e.status ?? 0;
     const respHeaders = e.response?.headers ?? {};
 
-    updateSearchRateState(respHeaders as Record<string, string | undefined>);
+    updateSlotFromHeaders(slot, 'search', respHeaders as Record<string, string | undefined>);
 
     // Search API rate limit — sleep until reset window and return empty (retry on next cron)
     if ((status === 403 && respHeaders['x-ratelimit-remaining'] === '0') || status === 429) {

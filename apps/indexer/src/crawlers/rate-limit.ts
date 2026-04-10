@@ -1,74 +1,145 @@
+import { Octokit } from '@octokit/rest';
 import pino from 'pino';
 
 const logger = pino({ name: '@toolcairn/indexer:rate-limit' });
 
-// ─── Core API state ───────────────────────────────────────────────────────────
+// ─── Rate state ───────────────────────────────────────────────────────────────
 
 interface RateState {
   remaining: number;
   resetAt: number; // unix epoch seconds
-  limit: number; // total allowed per window (usually 5000)
+  limit: number;
 }
 
+// ─── Token slot ───────────────────────────────────────────────────────────────
+
+export interface TokenSlot {
+  octokit: Octokit;
+  core: RateState;
+  search: RateState;
+  label: string; // 'primary' | 'secondary'
+  token: string | undefined;
+}
+
+// ─── Slot pool (lazy init) ────────────────────────────────────────────────────
+
+/**
+ * Primary rate state — kept as a top-level export for backward compatibility
+ * with any code that reads coreRateState directly.
+ * After getSlots() is called, this object IS slots[0].core (same reference).
+ */
 export const coreRateState: RateState = { remaining: 5000, resetAt: 0, limit: 5000 };
 export const searchRateState: RateState = { remaining: 30, resetAt: 0, limit: 30 };
 
-// ─── LOW water marks ─────────────────────────────────────────────────────────
+let _slots: TokenSlot[] | undefined;
 
-/** Stop and wait for reset when Core API remaining drops below this. */
-export const CORE_LOW_WATER_MARK = 100;
-/** Slow down (add delay) when Core API remaining drops below this. */
-export const CORE_SLOW_WATER_MARK = 500;
-/** Stop discovery search when Search API remaining drops below this. */
-export const SEARCH_LOW_WATER_MARK = 3;
+/**
+ * Lazily initialize the token pool from environment variables.
+ * Always includes the primary GITHUB_TOKEN.
+ * Adds a secondary slot when GITHUB_TOKEN_2 is set and non-empty.
+ * Falls back gracefully to a single-slot pool if the secondary token is absent.
+ */
+export function getSlots(): TokenSlot[] {
+  if (_slots) return _slots;
+
+  // Primary slot — reuses the backward-compat coreRateState / searchRateState objects
+  const primaryToken = process.env.GITHUB_TOKEN || undefined;
+  const slots: TokenSlot[] = [
+    {
+      octokit: new Octokit({ auth: primaryToken }),
+      core: coreRateState,
+      search: searchRateState,
+      label: 'primary',
+      token: primaryToken,
+    },
+  ];
+
+  // Secondary slot — optional, zero-scope token from a different GitHub account
+  const secondaryToken = process.env.GITHUB_TOKEN_2 || undefined;
+  if (secondaryToken) {
+    slots.push({
+      octokit: new Octokit({ auth: secondaryToken }),
+      core: { remaining: 5000, resetAt: 0, limit: 5000 },
+      search: { remaining: 30, resetAt: 0, limit: 30 },
+      label: 'secondary',
+      token: secondaryToken,
+    });
+    logger.info('GitHub token pool: 2 tokens active (10k core req/hour combined)');
+  }
+
+  _slots = slots;
+  return _slots;
+}
+
+// ─── Best-slot selectors ─────────────────────────────────────────────────────
+
+/** Pick the slot with the most remaining Core API quota. */
+export function getBestCoreSlot(): TokenSlot {
+  return getSlots().reduce((best, curr) =>
+    curr.core.remaining > best.core.remaining ? curr : best,
+  );
+}
+
+/** Pick the slot with the most remaining Search API quota. */
+export function getBestSearchSlot(): TokenSlot {
+  return getSlots().reduce((best, curr) =>
+    curr.search.remaining > best.search.remaining ? curr : best,
+  );
+}
 
 // ─── State updaters ──────────────────────────────────────────────────────────
 
-export function updateCoreRateState(headers: Record<string, string | undefined>): void {
+/** Update a specific slot's rate state from response headers. */
+export function updateSlotFromHeaders(
+  slot: TokenSlot,
+  type: 'core' | 'search',
+  headers: Record<string, string | undefined>,
+): void {
+  const state = slot[type];
   const remaining = headers['x-ratelimit-remaining'];
   const reset = headers['x-ratelimit-reset'];
   const limit = headers['x-ratelimit-limit'];
-  if (remaining !== undefined) coreRateState.remaining = Number(remaining);
-  if (reset !== undefined) coreRateState.resetAt = Number(reset);
-  if (limit !== undefined) coreRateState.limit = Number(limit);
+  if (remaining !== undefined) state.remaining = Number(remaining);
+  if (reset !== undefined) state.resetAt = Number(reset);
+  if (limit !== undefined) state.limit = Number(limit);
 }
 
+/** Backward-compat: update primary slot's core state. */
+export function updateCoreRateState(headers: Record<string, string | undefined>): void {
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  updateSlotFromHeaders(getSlots()[0]!, 'core', headers);
+}
+
+/** Backward-compat: update primary slot's search state. */
 export function updateSearchRateState(headers: Record<string, string | undefined>): void {
-  const remaining = headers['x-ratelimit-remaining'];
-  const reset = headers['x-ratelimit-reset'];
-  const limit = headers['x-ratelimit-limit'];
-  if (remaining !== undefined) searchRateState.remaining = Number(remaining);
-  if (reset !== undefined) searchRateState.resetAt = Number(reset);
-  if (limit !== undefined) searchRateState.limit = Number(limit);
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  updateSlotFromHeaders(getSlots()[0]!, 'search', headers);
 }
 
 // ─── Startup refresh ─────────────────────────────────────────────────────────
 
 /**
- * Fetch the ACTUAL remaining quota from GitHub on indexer startup.
- *
- * Without this, coreRateState / searchRateState start at their theoretical
- * maximums (5000 / 30) even if the previous indexer run had already consumed
- * significant quota. The first 403/429 would eventually correct the state, but
- * by then we may have over-paced or made unnecessary requests.
- *
- * Calls GET /rate_limit (which does NOT consume Core quota) and writes the real
- * remaining + resetAt into coreRateState and searchRateState before any crawl
- * work begins.
- *
- * Non-fatal: if the request fails (no token, network issue) we log a warning
- * and continue with the defaults — the existing self-correction via response
- * headers still applies.
+ * Refresh rate limits for ALL token slots from the GitHub API on startup.
+ * Non-fatal per slot — a failed refresh just leaves the defaults in place.
  */
 export async function refreshRateLimitsFromGitHub(): Promise<void> {
-  const token = process.env.GITHUB_TOKEN;
+  const slots = getSlots();
+  for (const slot of slots) {
+    await refreshSlotRateLimit(slot);
+  }
+}
+
+async function refreshSlotRateLimit(slot: TokenSlot): Promise<void> {
   const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (slot.token) headers.Authorization = `Bearer ${slot.token}`;
 
   try {
     const res = await fetch('https://api.github.com/rate_limit', { headers });
     if (!res.ok) {
-      logger.warn({ status: res.status }, 'rate_limit fetch failed — using default state');
+      logger.warn(
+        { status: res.status, label: slot.label },
+        'rate_limit fetch failed — using defaults',
+      );
       return;
     }
 
@@ -79,28 +150,32 @@ export async function refreshRateLimitsFromGitHub(): Promise<void> {
       };
     };
 
-    const core = body.resources.core;
-    const search = body.resources.search;
-
-    coreRateState.remaining = core.remaining;
-    coreRateState.resetAt = core.reset;
-    coreRateState.limit = core.limit;
-
-    searchRateState.remaining = search.remaining;
-    searchRateState.resetAt = search.reset;
-    searchRateState.limit = search.limit;
+    const { core, search } = body.resources;
+    slot.core.remaining = core.remaining;
+    slot.core.resetAt = core.reset;
+    slot.core.limit = core.limit;
+    slot.search.remaining = search.remaining;
+    slot.search.resetAt = search.reset;
+    slot.search.limit = search.limit;
 
     logger.info(
       {
+        label: slot.label,
         core: `${core.remaining}/${core.limit}`,
         search: `${search.remaining}/${search.limit}`,
       },
-      'GitHub rate limits refreshed from API',
+      'Rate limits refreshed',
     );
   } catch (e) {
-    logger.warn({ err: e }, 'Failed to refresh rate limits from GitHub — using defaults');
+    logger.warn({ err: e, label: slot.label }, 'Failed to refresh rate limits — using defaults');
   }
 }
+
+// ─── Low water marks ─────────────────────────────────────────────────────────
+
+export const CORE_LOW_WATER_MARK = 100;
+export const CORE_SLOW_WATER_MARK = 500;
+export const SEARCH_LOW_WATER_MARK = 3;
 
 // ─── Sleep helpers ────────────────────────────────────────────────────────────
 
@@ -108,108 +183,106 @@ export async function sleep(ms: number): Promise<void> {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Wait until the soonest-resetting core slot becomes available.
+ * With two tokens, this is typically much shorter than a full hour wait.
+ */
 export async function sleepUntilCoreReset(): Promise<void> {
+  const slots = getSlots();
+  // Wait for the slot that resets soonest (earliest resetAt)
+  const soonest = slots.reduce((a, b) => (a.core.resetAt < b.core.resetAt ? a : b));
   const nowSec = Date.now() / 1000;
-  const waitSec = Math.max(0, coreRateState.resetAt - nowSec) + 5; // +5s safety buffer
+  const waitSec = Math.max(0, soonest.core.resetAt - nowSec) + 5;
   logger.warn(
-    { remaining: coreRateState.remaining, waitSec: Math.round(waitSec) },
-    'Core rate limit critical — sleeping until reset',
+    {
+      waitSec: Math.round(waitSec),
+      label: soonest.label,
+      slots: slots.length,
+      totalRemaining: slots.reduce((s, sl) => s + sl.core.remaining, 0),
+    },
+    'Core rate limit critical — sleeping until earliest reset',
   );
   await sleep(waitSec * 1000);
 }
 
 export async function sleepUntilSearchReset(): Promise<void> {
+  const slots = getSlots();
+  const soonest = slots.reduce((a, b) => (a.search.resetAt < b.search.resetAt ? a : b));
   const nowSec = Date.now() / 1000;
-  const waitSec = Math.max(0, searchRateState.resetAt - nowSec) + 2;
+  const waitSec = Math.max(0, soonest.search.resetAt - nowSec) + 2;
   logger.warn(
-    { remaining: searchRateState.remaining, waitSec: Math.round(waitSec) },
-    'Search rate limit low — sleeping until reset',
+    { waitSec: Math.round(waitSec), label: soonest.label },
+    'Search rate limit low — sleeping until earliest reset',
   );
   await sleep(waitSec * 1000);
 }
 
 // ─── Dynamic pacing ───────────────────────────────────────────────────────────
 
-/**
- * Return a recommended delay (ms) between Core API crawl operations based on
- * current rate-limit remaining. This maximizes throughput safely:
- * - Full speed when quota is high
- * - Gradual slowdown as quota decreases
- * - Hard stop at CORE_LOW_WATER_MARK
- */
 export function recommendedCrawlDelay(): number {
-  const { remaining } = coreRateState;
-
-  if (remaining > CORE_SLOW_WATER_MARK) return 0; // plenty left — full speed
-  if (remaining > CORE_LOW_WATER_MARK) return 1_000; // 500–1000: add 1s gap
-  return 3_000; // 100–500: add 3s gap
+  const { remaining } = getBestCoreSlot().core;
+  if (remaining > CORE_SLOW_WATER_MARK) return 0;
+  if (remaining > CORE_LOW_WATER_MARK) return 1_000;
+  return 3_000;
 }
 
-/**
- * Pre-flight check for Core API. Waits if quota is critical.
- * Should be called before every Core API request.
- */
 export async function corePreFlight(): Promise<void> {
-  if (coreRateState.remaining < CORE_LOW_WATER_MARK && coreRateState.resetAt > 0) {
+  const best = getBestCoreSlot();
+  if (best.core.remaining < CORE_LOW_WATER_MARK && best.core.resetAt > 0) {
     await sleepUntilCoreReset();
   }
-  // Apply dynamic pacing delay
   const delay = recommendedCrawlDelay();
   if (delay > 0) await sleep(delay);
 }
 
-/**
- * Pre-flight check for Search API. Waits if search quota is critical.
- */
 export async function searchPreFlight(): Promise<void> {
-  if (searchRateState.remaining < SEARCH_LOW_WATER_MARK && searchRateState.resetAt > 0) {
+  const best = getBestSearchSlot();
+  if (best.search.remaining < SEARCH_LOW_WATER_MARK && best.search.resetAt > 0) {
     await sleepUntilSearchReset();
   }
 }
 
-// ─── Budget estimation ────────────────────────────────────────────────────────
+// ─── Budget estimation (uses combined quota across all tokens) ────────────────
 
-/** Approximate Core API calls per full tool crawl (repo + languages + topics + contents + package.json). */
 const CORE_CALLS_PER_TOOL = 5;
 
-/**
- * Estimate whether there is enough Core API budget to index N tools.
- * Returns true if safe to proceed, false if not enough budget remains.
- */
 export function hasBudgetFor(toolCount: number): boolean {
-  const needed = toolCount * CORE_CALLS_PER_TOOL;
-  return coreRateState.remaining > needed + CORE_LOW_WATER_MARK;
+  const totalRemaining = getSlots().reduce((sum, s) => sum + s.core.remaining, 0);
+  return totalRemaining > toolCount * CORE_CALLS_PER_TOOL + CORE_LOW_WATER_MARK;
 }
 
-/**
- * How many tools can safely be indexed with the current remaining quota.
- */
 export function maxToolsWithCurrentBudget(): number {
-  const usable = Math.max(0, coreRateState.remaining - CORE_LOW_WATER_MARK);
+  const totalRemaining = getSlots().reduce((sum, s) => sum + s.core.remaining, 0);
+  const usable = Math.max(0, totalRemaining - CORE_LOW_WATER_MARK);
   return Math.floor(usable / CORE_CALLS_PER_TOOL);
 }
 
-/**
- * Full rate limit status — exposed to admin monitoring and cron decisions.
- */
 export function getRateLimitStatus(): {
   core: { remaining: number; limit: number; resetAt: number; pct: number };
   search: { remaining: number; limit: number; resetAt: number; pct: number };
   maxIndexableTools: number;
+  tokens: number;
 } {
+  const slots = getSlots();
+  const totalCore = slots.reduce((s, sl) => s + sl.core.remaining, 0);
+  const totalCoreLimit = slots.reduce((s, sl) => s + sl.core.limit, 0);
+  const bestCore = getBestCoreSlot().core;
+  const bestSearch = getBestSearchSlot().search;
+
   return {
     core: {
-      remaining: coreRateState.remaining,
-      limit: coreRateState.limit,
-      resetAt: coreRateState.resetAt,
-      pct: Math.round((coreRateState.remaining / Math.max(coreRateState.limit, 1)) * 100),
+      remaining: totalCore,
+      limit: totalCoreLimit,
+      resetAt: bestCore.resetAt,
+      pct: Math.round((totalCore / Math.max(totalCoreLimit, 1)) * 100),
     },
     search: {
-      remaining: searchRateState.remaining,
-      limit: searchRateState.limit,
-      resetAt: searchRateState.resetAt,
-      pct: Math.round((searchRateState.remaining / Math.max(searchRateState.limit, 1)) * 100),
+      remaining: bestSearch.remaining,
+      limit: bestSearch.limit,
+      resetAt: bestSearch.resetAt,
+      pct: Math.round((bestSearch.remaining / Math.max(bestSearch.limit, 1)) * 100),
     },
     maxIndexableTools: maxToolsWithCurrentBudget(),
+    tokens: slots.length,
   };
 }

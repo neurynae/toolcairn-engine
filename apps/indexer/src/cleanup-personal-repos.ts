@@ -14,13 +14,12 @@
  *   pnpm tsx src/cleanup-personal-repos.ts          # dry run (safe)
  *   pnpm tsx src/cleanup-personal-repos.ts --delete # actually delete
  *
- * Requires GITHUB_TOKEN in env for higher API rate limits.
+ * Uses the token pool from rate-limit.ts — works with one or two GITHUB_TOKEN(s).
  */
 
-import { Octokit } from '@octokit/rest';
-import { config } from '@toolcairn/config';
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import pino from 'pino';
+import { getBestCoreSlot } from './crawlers/rate-limit.js';
 
 const logger = pino({ name: '@toolcairn/indexer:cleanup-personal-repos' });
 const DRY_RUN = !process.argv.includes('--delete');
@@ -43,7 +42,6 @@ async function main() {
     logger.info('DRY RUN — pass --delete to actually remove tools');
   }
 
-  const octokit = new Octokit({ auth: config.GITHUB_TOKEN });
   const session = getMemgraphSession();
 
   try {
@@ -87,11 +85,17 @@ async function main() {
 
     logger.info({ uniqueOwners: ownerMap.size }, 'Unique owners to check');
 
-    // 3. Check remaining rate limit before starting — abort if < 500 requests left
-    const { data: rateData } = await octokit.rateLimit.get();
+    // 3. Check remaining rate limit before starting.
+    // Uses the token pool — with two tokens, combined limit is 10k/hour.
+    // Abort if the best available slot doesn't have enough headroom.
+    const slot = getBestCoreSlot();
+    const { data: rateData } = await slot.octokit.rateLimit.get();
     const remaining = rateData.resources.core.remaining;
     const resetAt = new Date(rateData.resources.core.reset * 1000).toISOString();
-    logger.info({ remaining, resetAt }, 'GitHub rate limit before owner lookups');
+    logger.info(
+      { remaining, resetAt, token: slot.label },
+      'Rate limit on best token before owner lookups',
+    );
     if (remaining < ownerMap.size + 100) {
       logger.error(
         { remaining, needed: ownerMap.size, resetAt },
@@ -100,13 +104,16 @@ async function main() {
       return;
     }
 
-    // 4. Query GitHub for each owner type — pause when rate limit drops below 200
+    // 4. Query GitHub for each owner type — re-pick best slot per request,
+    // pause automatically when rate limit drops below 200.
     const userOwners = new Set<string>();
     let checked = 0;
 
     for (const [owner] of ownerMap) {
+      // Always pick the freshest token for each request
+      const best = getBestCoreSlot();
       try {
-        const resp = await octokit.users.getByUsername({ username: owner });
+        const resp = await best.octokit.users.getByUsername({ username: owner });
         if (resp.data.type === 'User') {
           userOwners.add(owner);
         }
@@ -122,8 +129,8 @@ async function main() {
           if (limitRemaining < 200) {
             const waitMs = Math.max(0, limitReset * 1000 - Date.now()) + 5000;
             logger.warn(
-              { limitRemaining, waitMs: Math.round(waitMs / 1000) + 's' },
-              'Rate limit low — pausing until reset',
+              { limitRemaining, token: best.label, waitSecs: Math.round(waitMs / 1000) },
+              'Rate limit low on current token — pausing until reset (will switch tokens automatically)',
             );
             await new Promise((r) => setTimeout(r, waitMs));
           }
@@ -140,7 +147,7 @@ async function main() {
 
     logger.info({ personalOwners: userOwners.size }, 'Personal (User) owners found');
 
-    // 4. Collect tools to delete: owner is User AND stars < threshold
+    // 5. Collect tools to delete: owner is User AND stars < threshold
     const toDelete: string[] = [];
     for (const tool of candidates) {
       const owner = parseOwner(tool.github_url);
@@ -162,7 +169,7 @@ async function main() {
       return;
     }
 
-    // 5. Delete in batches of 100
+    // 6. Delete in batches of 100
     const BATCH = 100;
     let deleted = 0;
     for (let i = 0; i < toDelete.length; i += BATCH) {

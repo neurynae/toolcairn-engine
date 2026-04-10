@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import pino from 'pino';
-import { getOctokit, githubRequest } from './github.js';
+import { githubRequest } from './github.js';
 
 const logger = pino({ name: '@toolcairn/indexer:github-issues-crawler' });
 
@@ -89,15 +89,13 @@ function toGitHubIssue(raw: GitHubIssueRaw, toolName: string, repoUrl: string): 
 export async function fetchToolIssues(options: FetchIssuesOptions): Promise<GitHubIssue[]> {
   const { toolName, owner, repo, openLimit = 100, closedSinceDays = 90 } = options;
   const repoUrl = `https://github.com/${owner}/${repo}`;
-  const octokit = getOctokit();
-
   logger.debug({ toolName, owner, repo }, 'Fetching issues');
 
   // Open issues — one page up to openLimit
   const rawOpen = await githubRequest<GitHubIssueRaw[]>(
     `issues-open:${owner}/${repo}`,
-    (headers) =>
-      octokit.rest.issues.listForRepo({
+    (headers, oc) =>
+      oc.rest.issues.listForRepo({
         owner,
         repo,
         state: 'open',
@@ -111,8 +109,8 @@ export async function fetchToolIssues(options: FetchIssuesOptions): Promise<GitH
   const since = new Date(Date.now() - closedSinceDays * 86_400_000).toISOString();
   const rawClosed = await githubRequest<GitHubIssueRaw[]>(
     `issues-closed:${owner}/${repo}`,
-    (headers) =>
-      octokit.rest.issues.listForRepo({
+    (headers, oc) =>
+      oc.rest.issues.listForRepo({
         owner,
         repo,
         state: 'closed',
