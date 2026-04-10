@@ -50,8 +50,14 @@ function recencyScore(dateStr: string): number {
 /**
  * Calculate HealthSignals from a raw GitHub API response.
  * `raw` is the object returned from the GitHub REST API (as stored in CrawlerResult.raw).
+ *
+ * @param raw - Raw crawler response
+ * @param prev - Previous health snapshot from the last index run (for real velocity)
  */
-export function calculateHealth(raw: unknown): HealthSignals {
+export function calculateHealth(
+  raw: unknown,
+  prev?: { stars: number; updatedAt: string },
+): HealthSignals {
   const data = raw as RawGitHubData;
   const repo: GitHubRepoData =
     typeof data === 'object' && data !== null && 'repo' in data ? (data.repo ?? {}) : {};
@@ -62,8 +68,17 @@ export function calculateHealth(raw: unknown): HealthSignals {
   const lastReleaseDate = extractString(repo.updated_at) || new Date().toISOString();
   const contributorCount = extractNumber(repo.subscribers_count);
 
-  // Derived / approximated signals
-  const starsVelocity90d = Math.round(stars * 0.05); // approximate: 5% of total in last 90d
+  // Real stars_velocity_90d: if we have a previous snapshot, compute from actual delta.
+  // Falls back to the 5% estimate only on the very first index of a tool.
+  let starsVelocity90d: number;
+  if (prev && prev.stars >= 0) {
+    const prevDate = new Date(prev.updatedAt);
+    const daysElapsed = Math.max(1, (Date.now() - prevDate.getTime()) / 86_400_000);
+    const delta = Math.max(0, stars - prev.stars);
+    starsVelocity90d = Math.round((delta / daysElapsed) * 90);
+  } else {
+    starsVelocity90d = Math.round(stars * 0.05); // first-index estimate
+  }
   const commitVelocity30d =
     recencyScore(lastCommitDate) > 0.8 ? 10 : recencyScore(lastCommitDate) > 0.5 ? 3 : 1;
   const closedIssues30d = Math.round(openIssues * 0.2);

@@ -1,20 +1,22 @@
 /**
- * Cleanup: remove low-quality personal repos from Memgraph.
- * A "personal repo" is one owned by a GitHub User (not an Organization).
- * We only keep personal repos with >= 1000 stars.
+ * Cleanup: enforce quality standards for personal GitHub repos (owner.type = 'User').
  *
- * Since owner_type is not stored on existing Tool nodes, this script:
- *  1. Fetches all tools with < 1000 stars from Memgraph
- *  2. Parses the owner from github_url
- *  3. Batch-queries GitHub API for each unique owner's type
- *  4. Collects tools to delete (owner is User AND stars < 1000)
- *  5. Deletes them in batches (with --dry-run to preview first)
+ * Rules:
+ *  - Personal repos with >= 1000 stars: keep (they've proven themselves)
+ *  - Personal repos with 500-999 stars: grace period (up to 4 × 1-week retries = ~1 month)
+ *      - First detection: start 7-day window (grace_until = now+7d, grace_retries = 1)
+ *      - Window active: skip (check again later)
+ *      - Window expired + stars still < 1000 + retries < 4: extend another week
+ *      - Window expired + retries >= 4 + still < 1000: DELETE
+ *  - Personal repos with < 500 stars: DELETE immediately (too low quality to hold)
+ *  - Org repos: always keep, never touched here
  *
  * Usage:
- *   pnpm tsx src/cleanup-personal-repos.ts          # dry run (safe)
+ *   pnpm tsx src/cleanup-personal-repos.ts          # dry run (safe, default)
  *   pnpm tsx src/cleanup-personal-repos.ts --delete # actually delete
  *
- * Uses the token pool from rate-limit.ts — works with one or two GITHUB_TOKEN(s).
+ * Uses the dual-token pool — run with GITHUB_TOKEN + GITHUB_TOKEN_2 in .env.
+ * Designed to be run weekly (e.g. cron) so grace window checks stay accurate.
  */
 
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
@@ -23,166 +25,264 @@ import { getBestCoreSlot, getSlots } from './crawlers/rate-limit.js';
 
 const logger = pino({ name: '@toolcairn/indexer:cleanup-personal-repos' });
 const DRY_RUN = !process.argv.includes('--delete');
-const STAR_THRESHOLD = 1000;
 
-/** Parse owner login from a GitHub URL: https://github.com/owner/repo → owner */
+const STAR_THRESHOLD = 1000;
+const GRACE_FLOOR = 500; // below this: delete immediately, no grace
+const GRACE_DAYS = 7;
+const MAX_RETRIES = 4;
+
 function parseOwner(githubUrl: string): string | null {
   try {
     const url = new URL(githubUrl);
     if (!url.hostname.includes('github.com')) return null;
-    const parts = url.pathname.split('/').filter(Boolean);
-    return parts[0] ?? null;
+    return url.pathname.split('/').filter(Boolean)[0] ?? null;
   } catch {
     return null;
   }
 }
 
+function addDays(days: number): string {
+  return new Date(Date.now() + days * 86_400_000).toISOString();
+}
+
 async function main() {
-  if (DRY_RUN) {
-    logger.info('DRY RUN — pass --delete to actually remove tools');
-  }
+  if (DRY_RUN) logger.info('DRY RUN — pass --delete to commit changes');
 
   const session = getMemgraphSession();
 
   try {
-    // 1. Fetch all tools with < STAR_THRESHOLD stars
+    // ── 1. Fetch all GitHub tools with < STAR_THRESHOLD stars ──────────────────
     const result = await session.run(
       `MATCH (t:Tool)
-       WHERE t.health_stars < $threshold
-       RETURN t.name AS name, t.github_url AS github_url, t.health_stars AS stars`,
+       WHERE t.github_url CONTAINS 'github.com'
+         AND t.health_stars < $threshold
+       RETURN t.name AS name,
+              t.github_url AS github_url,
+              t.health_stars AS stars,
+              t.owner_type AS owner_type,
+              t.grace_until AS grace_until,
+              t.grace_retries AS grace_retries`,
       { threshold: STAR_THRESHOLD },
     );
 
-    const candidates = result.records.map((r) => {
+    const tools = result.records.map((r) => {
       const rawStars = r.get('stars') as unknown;
-      const stars =
-        typeof rawStars === 'object' && rawStars !== null && 'toNumber' in rawStars
-          ? (rawStars as { toNumber: () => number }).toNumber()
-          : (rawStars as number);
       return {
         name: r.get('name') as string,
         github_url: r.get('github_url') as string,
-        stars,
+        stars:
+          typeof rawStars === 'object' && rawStars !== null && 'toNumber' in rawStars
+            ? (rawStars as { toNumber: () => number }).toNumber()
+            : (rawStars as number),
+        owner_type: r.get('owner_type') as string | null,
+        grace_until: r.get('grace_until') as string | null,
+        grace_retries: (() => {
+          const v = r.get('grace_retries') as unknown;
+          if (typeof v === 'object' && v !== null && 'toNumber' in v)
+            return (v as { toNumber(): number }).toNumber();
+          return typeof v === 'number' ? v : 0;
+        })(),
       };
     });
 
-    logger.info({ count: candidates.length }, `Tools with < ${STAR_THRESHOLD} stars`);
+    logger.info({ total: tools.length }, `Tools with < ${STAR_THRESHOLD} stars`);
 
-    if (candidates.length === 0) {
-      logger.info('Nothing to clean up');
-      return;
+    // ── 2. Identify owners needing API check (no owner_type stored yet) ────────
+    const needsCheck = tools.filter((t) => !t.owner_type);
+    const ownerSet = new Set(
+      needsCheck.map((t) => parseOwner(t.github_url)).filter(Boolean) as string[],
+    );
+
+    if (ownerSet.size > 0) {
+      const allSlots = getSlots();
+      const combinedRemaining = allSlots.reduce((sum: number, s) => sum + s.core.remaining, 0);
+      logger.info(
+        {
+          combinedRemaining,
+          ownersToCheck: ownerSet.size,
+          slots: allSlots.map((s) => `${s.label}:${s.core.remaining}`).join(', '),
+        },
+        'Rate limit across token pool',
+      );
+      if (combinedRemaining < 500) {
+        logger.error({ combinedRemaining }, 'Rate limit critically low — aborting');
+        return;
+      }
+      if (combinedRemaining < ownerSet.size) {
+        logger.warn(
+          { combinedRemaining, needed: ownerSet.size },
+          'Combined quota < owners to check — will auto-pause at reset boundaries',
+        );
+      }
     }
 
-    // 2. Collect unique owners
-    const ownerMap = new Map<string, string[]>(); // owner → tool names
-    for (const tool of candidates) {
-      const owner = parseOwner(tool.github_url);
+    // ── 3. Resolve owner types via GitHub API ──────────────────────────────────
+    const personalOwners = new Set<string>();
+    const orgOwners = new Set<string>();
+
+    // Pre-populate from already-stored data
+    for (const t of tools) {
+      const owner = parseOwner(t.github_url);
       if (!owner) continue;
-      const existing = ownerMap.get(owner) ?? [];
-      existing.push(tool.name);
-      ownerMap.set(owner, existing);
+      if (t.owner_type === 'User') personalOwners.add(owner);
+      if (t.owner_type === 'Organization') orgOwners.add(owner);
     }
 
-    logger.info({ uniqueOwners: ownerMap.size }, 'Unique owners to check');
+    // API check only for unknowns
+    const unknownOwners = [...ownerSet].filter((o) => !personalOwners.has(o) && !orgOwners.has(o));
+    logger.info(
+      { knownPersonal: personalOwners.size, unknownOwners: unknownOwners.length },
+      'Owner type resolution',
+    );
 
-    // 3. Check combined rate limit across all tokens before starting.
-    // With two tokens, pool has up to 10k/hour. Sum all slots to get the full picture.
-    const allSlots = getSlots();
-    const combinedRemaining = allSlots.reduce((sum: number, s) => sum + s.core.remaining, 0);
-    const bestSlotLabel = allSlots.map((s) => `${s.label}:${s.core.remaining}`).join(', ');
-    logger.info({ combinedRemaining, slots: bestSlotLabel }, 'Rate limit across token pool');
-    // Abort only if nearly exhausted — the mid-loop auto-pause handles reset windows,
-    // so we can safely start even when combined < ownerMap.size (it'll pause and resume).
-    if (combinedRemaining < 500) {
-      logger.error(
-        { combinedRemaining, needed: ownerMap.size },
-        'Rate limit critically low — aborting. Wait for reset before starting.',
-      );
-      return;
-    }
-    if (combinedRemaining < ownerMap.size) {
-      logger.warn(
-        { combinedRemaining, needed: ownerMap.size },
-        'Combined quota < owners to check — will auto-pause at reset boundaries to finish.',
-      );
-    }
-
-    // 4. Query GitHub for each owner type — re-pick best slot per request,
-    // pause automatically when rate limit drops below 200.
-    const userOwners = new Set<string>();
     let checked = 0;
-
-    for (const [owner] of ownerMap) {
-      // Always pick the freshest token for each request
+    for (const owner of unknownOwners) {
       const best = getBestCoreSlot();
       try {
         const resp = await best.octokit.users.getByUsername({ username: owner });
-        if (resp.data.type === 'User') {
-          userOwners.add(owner);
-        }
+        if (resp.data.type === 'User') personalOwners.add(owner);
+        else orgOwners.add(owner);
 
-        // Check rate limit headers every 50 requests
         if (checked % 50 === 0) {
-          const limitRemaining = Number(
+          const rem = Number(
             (resp.headers as Record<string, string>)['x-ratelimit-remaining'] ?? 9999,
           );
-          const limitReset = Number(
-            (resp.headers as Record<string, string>)['x-ratelimit-reset'] ?? 0,
-          );
-          if (limitRemaining < 200) {
-            const waitMs = Math.max(0, limitReset * 1000 - Date.now()) + 5000;
+          const reset = Number((resp.headers as Record<string, string>)['x-ratelimit-reset'] ?? 0);
+          if (rem < 200) {
+            const waitMs = Math.max(0, reset * 1000 - Date.now()) + 5000;
             logger.warn(
-              { limitRemaining, token: best.label, waitSecs: Math.round(waitMs / 1000) },
-              'Rate limit low on current token — pausing until reset (will switch tokens automatically)',
+              { rem, token: best.label, waitSecs: Math.round(waitMs / 1000) },
+              'Rate limit low — pausing',
             );
             await new Promise((r) => setTimeout(r, waitMs));
           }
         }
       } catch (e) {
-        logger.warn({ owner, err: e }, 'Could not fetch owner info — skipping');
+        logger.warn({ owner, err: e }, 'Owner lookup failed — skipping');
       }
-
       checked++;
-      if (checked % 100 === 0) {
-        logger.info({ checked, total: ownerMap.size }, 'Owner lookup progress');
-      }
+      if (checked % 100 === 0)
+        logger.info({ checked, total: unknownOwners.length }, 'Owner lookup progress');
     }
 
-    logger.info({ personalOwners: userOwners.size }, 'Personal (User) owners found');
+    logger.info({ personalOwners: personalOwners.size }, 'Personal owners identified');
 
-    // 5. Collect tools to delete: owner is User AND stars < threshold
-    const toDelete: string[] = [];
-    for (const tool of candidates) {
+    // ── 4. Apply grace period rules ────────────────────────────────────────────
+    const toDeleteNow: string[] = []; // immediate delete
+    const toStartGrace: string[] = []; // first time in 500-999 range
+    const toExtendGrace: Array<{ name: string; retries: number }> = []; // window expired, extend
+    const toDeleteGrace: string[] = []; // exhausted retries
+    const stillInGrace: number[] = []; // window still active
+
+    const now = new Date();
+
+    for (const tool of tools) {
       const owner = parseOwner(tool.github_url);
-      if (owner && userOwners.has(owner)) {
-        toDelete.push(tool.name);
+      if (!owner || !personalOwners.has(owner)) continue; // org or unknown → skip
+
+      if (tool.stars >= GRACE_FLOOR && tool.stars < STAR_THRESHOLD) {
+        // Grace period candidate
+        if (!tool.grace_until) {
+          // First detection — start grace
+          toStartGrace.push(tool.name);
+        } else {
+          const expiresAt = new Date(tool.grace_until);
+          if (expiresAt > now) {
+            // Still in grace window
+            stillInGrace.push(tool.stars);
+          } else {
+            // Window expired
+            if (tool.grace_retries >= MAX_RETRIES) {
+              toDeleteGrace.push(tool.name);
+            } else {
+              toExtendGrace.push({ name: tool.name, retries: tool.grace_retries });
+            }
+          }
+        }
+      } else if (tool.stars < GRACE_FLOOR) {
+        // Below floor — delete immediately
+        toDeleteNow.push(tool.name);
       }
+      // stars >= STAR_THRESHOLD would not appear in this query
     }
 
-    logger.info({ count: toDelete.length }, `Tools to ${DRY_RUN ? 'delete (dry run)' : 'delete'}`);
-
-    if (toDelete.length === 0) {
-      logger.info('No personal repos to remove');
-      return;
-    }
+    logger.info(
+      {
+        immediateDelete: toDeleteNow.length,
+        startingGrace: toStartGrace.length,
+        extendingGrace: toExtendGrace.length,
+        graceExhaustedDelete: toDeleteGrace.length,
+        stillInGrace: stillInGrace.length,
+      },
+      'Grace period summary',
+    );
 
     if (DRY_RUN) {
-      logger.info({ sample: toDelete.slice(0, 20) }, 'Sample of tools that would be deleted');
-      logger.info('Re-run with --delete to remove them');
+      if (toDeleteNow.length)
+        logger.info({ sample: toDeleteNow.slice(0, 10) }, 'Would delete immediately (< 500 stars)');
+      if (toStartGrace.length)
+        logger.info(
+          { sample: toStartGrace.slice(0, 10) },
+          'Would start 7-day grace (500-999 stars, first time)',
+        );
+      if (toExtendGrace.length)
+        logger.info(
+          {
+            sample: toExtendGrace
+              .slice(0, 10)
+              .map((t) => `${t.name}(retry ${t.retries + 1}/${MAX_RETRIES})`),
+          },
+          'Would extend grace',
+        );
+      if (toDeleteGrace.length)
+        logger.info(
+          { sample: toDeleteGrace.slice(0, 10) },
+          'Would delete (grace exhausted after 4 retries)',
+        );
+      logger.info('Re-run with --delete to commit');
       return;
     }
 
-    // 6. Delete in batches of 100
-    const BATCH = 100;
-    let deleted = 0;
-    for (let i = 0; i < toDelete.length; i += BATCH) {
-      const batch = toDelete.slice(i, i + BATCH);
-      await session.run('MATCH (t:Tool) WHERE t.name IN $names DETACH DELETE t', { names: batch });
-      deleted += batch.length;
-      logger.info({ deleted, total: toDelete.length }, 'Deletion progress');
+    // ── 5. Commit changes ──────────────────────────────────────────────────────
+    const allToDelete = [...toDeleteNow, ...toDeleteGrace];
+
+    if (allToDelete.length > 0) {
+      const BATCH = 100;
+      let deleted = 0;
+      for (let i = 0; i < allToDelete.length; i += BATCH) {
+        const batch = allToDelete.slice(i, i + BATCH);
+        await session.run('MATCH (t:Tool) WHERE t.name IN $names DETACH DELETE t', {
+          names: batch,
+        });
+        deleted += batch.length;
+      }
+      logger.info({ deleted }, 'Tools deleted');
     }
 
-    logger.info({ deleted }, 'Cleanup complete');
+    if (toStartGrace.length > 0) {
+      const graceUntil = addDays(GRACE_DAYS);
+      const BATCH = 100;
+      for (let i = 0; i < toStartGrace.length; i += BATCH) {
+        const batch = toStartGrace.slice(i, i + BATCH);
+        await session.run(
+          'MATCH (t:Tool) WHERE t.name IN $names SET t.grace_until = $until, t.grace_retries = 1',
+          { names: batch, until: graceUntil },
+        );
+      }
+      logger.info({ count: toStartGrace.length, graceUntil }, 'Started grace period');
+    }
+
+    for (const { name, retries } of toExtendGrace) {
+      const graceUntil = addDays(GRACE_DAYS);
+      await session.run(
+        'MATCH (t:Tool { name: $name }) SET t.grace_until = $until, t.grace_retries = $retries',
+        { name, until: graceUntil, retries: retries + 1 },
+      );
+    }
+    if (toExtendGrace.length > 0)
+      logger.info({ count: toExtendGrace.length }, 'Extended grace periods');
+
+    logger.info('Cleanup complete');
   } finally {
     await session.close();
     await closeMemgraphDriver();

@@ -157,13 +157,14 @@ export function buildTopicEdges(topics: string[]): TopicEdge[] {
 export async function processTool(
   crawlerResult: CrawlerResult,
   toolRepository?: { getAllToolNames(): Promise<{ ok: boolean; data?: string[] }> },
+  prevHealth?: { stars: number; updatedAt: string },
 ): Promise<ProcessedTool> {
   const { extracted, raw } = crawlerResult;
   const now = new Date().toISOString();
 
   logger.info({ toolName: extracted.name }, 'Processing tool');
 
-  const health = calculateHealth(raw);
+  const health = calculateHealth(raw, prevHealth);
 
   // Fetch existing tools from Memgraph for dynamic relationship matching
   let existingTools: Set<string> | undefined;

@@ -104,6 +104,7 @@ export function buildUpsertEdgeQuery(params: UpsertEdgeParams): {
 
 export const CREATE_TOOL = {
   text: `MERGE (t:Tool { name: $name })
+   ON CREATE SET t.grace_until = NULL, t.grace_retries = 0
    SET t.id = $id,
        t.display_name = $display_name,
        t.description = $description,
@@ -454,6 +455,8 @@ export function mapRecordToToolNode(record: Record<string, unknown>): ToolNode {
       changelog_url: typeof t.docs_changelog_url === 'string' ? t.docs_changelog_url : undefined,
     },
     topics: Array.isArray(t.topics) ? (t.topics as string[]) : [],
+    grace_until: typeof t.grace_until === 'string' ? t.grace_until : undefined,
+    grace_retries: typeof t.grace_retries === 'number' ? t.grace_retries : 0,
     created_at: requireString(t.created_at, 't.created_at'),
     updated_at: requireString(t.updated_at, 't.updated_at'),
   };

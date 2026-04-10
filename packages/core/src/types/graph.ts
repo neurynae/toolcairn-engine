@@ -92,6 +92,17 @@ export interface ToolNode {
   docs: DocumentationLinks;
   /** GitHub topics / npm keywords — community-curated tags, persisted for graph mesh */
   topics: string[];
+  /**
+   * Grace period for personal repos (500-999 stars).
+   * ISO date when current grace window expires. Null = not in grace period.
+   * Set by cleanup script only — never overwritten by reindex.
+   */
+  grace_until?: string;
+  /**
+   * How many 1-week grace extensions have been given (max 4 = ~1 month total).
+   * After 4 retries still under 1k stars → tool is removed.
+   */
+  grace_retries?: number;
   created_at: string;
   updated_at: string;
 }

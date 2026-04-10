@@ -52,8 +52,22 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     const crawlerResult = await runCrawler(source, url);
     logger.info({ toolId, source, extractedName: crawlerResult.extracted.name }, 'Crawl complete');
 
+    // 1b. Fetch previous health snapshot for accurate stars_velocity_90d calculation.
+    // Non-fatal — falls back to first-index estimate if not found.
+    let prevHealth: { stars: number; updatedAt: string } | undefined;
+    try {
+      const { MemgraphToolRepository } = await import('@toolcairn/graph');
+      const repo = new MemgraphToolRepository();
+      const existing = await repo.findByName(crawlerResult.extracted.name);
+      if (existing.ok && existing.data) {
+        prevHealth = { stars: existing.data.health.stars, updatedAt: existing.data.updated_at };
+      }
+    } catch {
+      // Non-fatal — real velocity will be computed on next re-index cycle
+    }
+
     // 2. Process into ToolNode + vector + relationships
-    const processedTool = await processTool(crawlerResult);
+    const processedTool = await processTool(crawlerResult, undefined, prevHealth);
     logger.info({ toolId, nodeId: processedTool.node.id }, 'Processing complete');
 
     // 3. Write to all stores concurrently
