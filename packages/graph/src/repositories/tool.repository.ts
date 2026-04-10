@@ -39,6 +39,8 @@ export class MemgraphToolRepository implements ToolRepository {
       category: tool.category,
       github_url: tool.github_url,
       homepage_url: tool.homepage_url ?? null,
+      owner_name: tool.owner_name ?? null,
+      owner_type: tool.owner_type ?? null,
       license: tool.license,
       language: tool.language,
       languages: tool.languages,

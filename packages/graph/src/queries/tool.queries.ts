@@ -13,6 +13,8 @@ export interface CreateToolParams {
   category: string;
   github_url: string;
   homepage_url: string | null;
+  owner_name: string | null;
+  owner_type: string | null;
   license: string;
   language: string;
   languages: string[];
@@ -108,6 +110,8 @@ export const CREATE_TOOL = {
        t.category = $category,
        t.github_url = $github_url,
        t.homepage_url = $homepage_url,
+       t.owner_name = $owner_name,
+       t.owner_type = $owner_type,
        t.license = $license,
        t.language = $language,
        t.languages = $languages,
@@ -405,6 +409,9 @@ export function mapRecordToToolNode(record: Record<string, unknown>): ToolNode {
     category: requireString(t.category, 't.category') as ToolNode['category'],
     github_url: requireString(t.github_url, 't.github_url'),
     homepage_url: typeof t.homepage_url === 'string' ? t.homepage_url : undefined,
+    owner_name: typeof t.owner_name === 'string' ? t.owner_name : undefined,
+    owner_type:
+      t.owner_type === 'User' || t.owner_type === 'Organization' ? t.owner_type : undefined,
     license: requireString(t.license, 't.license'),
     language: requireString(t.language, 't.language'),
     languages: requireStringArray(t.languages, 't.languages'),

@@ -195,14 +195,17 @@ export async function processTool(
 
   const deploymentModels: DeploymentModel[] = extracted.deployment_models.map(toDeploymentModel);
 
+  const normalizedGithubUrl = normalizeGitHubUrl(extracted.github_url);
   const node: ToolNode = {
     id: deterministicId(extracted.github_url),
     name: extracted.name,
     display_name: extracted.display_name,
     description: extracted.description,
     category,
-    github_url: normalizeGitHubUrl(extracted.github_url),
+    github_url: normalizedGithubUrl,
     homepage_url: extracted.homepage_url,
+    owner_name: extracted.owner_name,
+    owner_type: extracted.owner_type,
     license: extracted.license,
     language: extracted.language,
     languages: extracted.languages,
@@ -210,7 +213,13 @@ export async function processTool(
     package_managers: extracted.package_managers,
     health,
     docs: {
-      readme_url: `${extracted.github_url}/blob/main/README.md`,
+      readme_url: `${normalizedGithubUrl}/blob/main/README.md`,
+      docs_url: extracted.docs_url,
+      changelog_url:
+        extracted.changelog_url ??
+        (normalizedGithubUrl.includes('github.com')
+          ? `${normalizedGithubUrl}/releases`
+          : undefined),
     },
     topics: meaningfulTopics,
     created_at: now,

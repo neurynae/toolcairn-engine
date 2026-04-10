@@ -80,6 +80,8 @@ export interface ToolNode {
   category: ToolCategory;
   github_url: string;
   homepage_url?: string;
+  owner_name?: string;
+  owner_type?: 'User' | 'Organization';
   license: string;
   language: string;
   languages: string[];

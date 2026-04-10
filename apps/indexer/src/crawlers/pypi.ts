@@ -8,6 +8,7 @@ interface PyPiInfo {
   name?: unknown;
   summary?: unknown;
   home_page?: unknown;
+  docs_url?: unknown;
   license?: unknown;
   project_urls?: unknown;
   author?: unknown;
@@ -31,6 +32,20 @@ function extractGitHubUrl(info: PyPiInfo): string {
     }
   }
   return extractString(info.home_page);
+}
+
+const DOC_KEYS = ['documentation', 'docs', 'doc'];
+const CHANGELOG_KEYS = ['changelog', 'changes', 'release notes', 'history', "what's new"];
+
+function extractProjectUrl(projectUrls: unknown, keys: string[]): string {
+  if (typeof projectUrls !== 'object' || projectUrls === null) return '';
+  const urls = projectUrls as Record<string, unknown>;
+  for (const key of Object.keys(urls)) {
+    if (keys.includes(key.toLowerCase())) {
+      return extractString(urls[key]);
+    }
+  }
+  return '';
 }
 
 export async function crawlPyPiPackage(name: string): Promise<CrawlerResult> {
@@ -61,12 +76,19 @@ export async function crawlPyPiPackage(name: string): Promise<CrawlerResult> {
     const license = extractString(info.license) || 'unknown';
     const githubUrl = extractGitHubUrl(info);
 
+    const pypiDocsUrl = extractString(info.docs_url);
+    const projectUrlsDocsUrl = extractProjectUrl(info.project_urls, DOC_KEYS);
+    const docsUrl = pypiDocsUrl || projectUrlsDocsUrl || undefined;
+    const changelogUrl = extractProjectUrl(info.project_urls, CHANGELOG_KEYS) || undefined;
+
     const extracted: ExtractedToolData = {
       name: pkgName,
       display_name: pkgName,
       description,
       github_url: githubUrl || `https://pypi.org/project/${name}`,
       homepage_url: homePage || undefined,
+      docs_url: docsUrl,
+      changelog_url: changelogUrl,
       license,
       language: 'Python',
       languages: ['Python'],

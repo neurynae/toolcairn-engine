@@ -60,6 +60,7 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
       description,
       github_url: githubUrl || `https://www.npmjs.com/package/${name}`,
       homepage_url: homepage || undefined,
+      docs_url: homepage && !homepage.includes('github.com') ? homepage : undefined,
       license,
       language: 'JavaScript',
       languages: ['JavaScript', 'TypeScript'],

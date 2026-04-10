@@ -101,11 +101,16 @@ export async function searchReposByTopic(
     const repos: DiscoveredRepo[] = [];
 
     for (const item of response.data.items ?? []) {
+      // Skip personal repos with fewer than 1000 stars — org repos always pass
+      const isPersonalRepo = item.owner?.type === 'User';
+      const stars = item.stargazers_count ?? 0;
+      if (isPersonalRepo && stars < 1000) continue;
+
       repos.push({
         owner: item.owner?.login ?? '',
         repo: item.name ?? '',
         fullName: item.full_name ?? '',
-        stars: item.stargazers_count ?? 0,
+        stars,
         forks: item.forks_count ?? 0,
         description: item.description,
         language: item.language,

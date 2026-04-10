@@ -275,12 +275,19 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     const deploymentModels = detectDeploymentModels(topics);
     const packageManagers = detectPackageManagers(rootFilenames);
 
+    const homepage = repoData.homepage ?? undefined;
+    const docsUrl = homepage && !homepage.includes('github.com') ? homepage : undefined;
+
     const extracted: ExtractedToolData = {
       name: repoData.name,
       display_name: repoData.name,
       description: repoData.description ?? '',
       github_url: repoData.html_url,
-      homepage_url: repoData.homepage ?? undefined,
+      homepage_url: homepage,
+      docs_url: docsUrl,
+      changelog_url: `${repoData.html_url}/releases`,
+      owner_name: repoData.owner?.login ?? undefined,
+      owner_type: (repoData.owner?.type as 'User' | 'Organization') ?? undefined,
       license: repoData.license?.spdx_id ?? 'unknown',
       language: primaryLanguage,
       languages: languageNames,

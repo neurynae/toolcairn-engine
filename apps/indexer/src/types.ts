@@ -6,6 +6,10 @@ export interface ExtractedToolData {
   description: string;
   github_url: string;
   homepage_url?: string;
+  docs_url?: string;
+  changelog_url?: string;
+  owner_name?: string;
+  owner_type?: 'User' | 'Organization';
   license: string;
   language: string;
   languages: string[];
