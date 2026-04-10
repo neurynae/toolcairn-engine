@@ -51,30 +51,7 @@ export function createRefineRequirementHandler(deps: Pick<ToolDeps, 'usecaseRepo
       const languageContext = language !== 'any' ? `\nTarget language/runtime: ${language}.` : '';
       const frameworkContext = framework ? `\nExisting framework: ${framework}.` : '';
 
-      /**
-       * CRITICAL INSTRUCTION FOR SEARCH QUALITY:
-       *
-       * The search system uses semantic vector embeddings, not keyword matching.
-       * search_query must be written in "tool capability language" — the vocabulary
-       * tools use to describe THEMSELVES in their README/description — not in
-       * "user intent language" (what the user wants to do).
-       *
-       * BAD search_query: "add authentication to my Next.js app"
-       *   (user intent — no tool describes itself this way)
-       *
-       * GOOD search_query: "Next.js authentication session management JWT OAuth middleware"
-       *   (capability language — matches how auth libraries describe themselves)
-       *
-       * BAD search_query: "build CLI tool in Node.js"
-       *   (intent — will match Node.js runtime itself, not CLI frameworks)
-       *
-       * GOOD search_query: "Node.js CLI framework argument parsing command builder"
-       *   (capability — matches how commander/yargs describe themselves)
-       *
-       * The semantic vector will find tools whose DESCRIPTIONS match the query meaning.
-       * Use technical nouns and capability verbs, not user intent phrases.
-       */
-      const decomposition_prompt = `You are a software architect decomposing a developer request into specific tool requirements for a semantic vector search system.
+      const decomposition_prompt = `You are a software architect. Decompose this developer request into specific, independent tool requirements.
 
 Developer request:
 """
@@ -82,40 +59,31 @@ ${args.prompt}
 """
 ${projectContext}${languageContext}${frameworkContext}
 
-CRITICAL: The search uses semantic vector embeddings. Each search_query must use "tool capability language" — the vocabulary tools use to describe themselves — NOT user intent language.
-
-Examples of the difference:
-- User says "add auth to Next.js" → search_query: "Next.js authentication session JWT OAuth library middleware"
-- User says "build CLI tool" → search_query: "Node.js CLI framework command argument parsing terminal"
-- User says "validate data" → search_query: "TypeScript schema validation runtime type inference library"
-
-For each distinct tool/library needed, output a JSON object with:
-- "need": short description of the capability needed (e.g., "CLI argument parser", "JWT authentication library")
+For each distinct tool/library category needed, output a JSON object with:
+- "need": precise technical description of the capability (e.g., "JWT authentication middleware", "CLI argument parser")
 - "use_cases": array of 1-3 relevant tags from [${categoryList}]
-- "constraints": object with: language (required), deployment_model (optional: self-hosted/cloud/serverless)
-- "search_query": 5-12 word query in capability language describing what the tool DOES, not what the user wants
-- "why": one sentence explaining why this specific library/tool category is needed
+- "constraints": object with: language (required if known), deployment_model (optional: self-hosted/cloud/serverless)
+- "search_query": a precise, technical query (5-12 words) that captures what this tool does and how it is typically described in the ecosystem
+- "why": one sentence on why this component is needed
 - "is_likely_proprietary": true if this is commonly a paid/managed service (${PROPRIETARY_PRONE_CATEGORIES.join(', ')})
 
-Output ONLY a valid JSON array. No explanation text.`;
+Output ONLY a valid JSON array. No explanation.`;
 
       const agent_instructions = [
         '## How to use refine_requirement output',
         '',
         '1. Send decomposition_prompt to yourself (the LLM) to get the JSON requirements array.',
-        '   The LLM decomposition transforms user intent into tool capability language.',
         '',
         '2. For each requirement in the array:',
         '   - If is_likely_proprietary is false: call search_tools({ query: req.search_query, context: { filters: req.constraints } })',
         '   - If is_likely_proprietary is true: note it may not be in the index; suggest well-known services',
         '',
-        '3. Pass the constraints directly as search_tools context filters:',
+        '3. Pass constraints directly as search_tools context filters:',
         '   { filters: { language: req.constraints.language, deployment_model: req.constraints.deployment_model } }',
         '',
-        '4. If classification is "stack_building": call get_stack after individual searches for a bundled recommendation.',
+        '4. If classification is "stack_building": call get_stack after individual searches.',
         '',
-        '5. The search_query is already in the correct format for semantic vector search — use it as-is.',
-        '   Do NOT rephrase it back into user intent language.',
+        '5. Update .toolpilot/config.json with confirmed tools using update_project_config.',
       ].join('\n');
 
       return okResult({
