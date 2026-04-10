@@ -7,9 +7,11 @@ const logger = pino({ name: '@toolcairn/search:stage2' });
 const STAGE2_TOP_N = 15;
 const MIN_RESULTS = 3;
 
-/** Weight for Stage 1 relevance rank vs credibility in Stage 2 scoring. */
-const RANK_WEIGHT = 0.7;
-const CREDIBILITY_WEIGHT = 0.3;
+/** Weight for Stage 1 relevance rank vs credibility in Stage 2 scoring.
+ * 50/50 gives credibility enough force to surface established tools
+ * even when lower-quality tools rank higher in BM25/vector. */
+const RANK_WEIGHT = 0.5;
+const CREDIBILITY_WEIGHT = 0.5;
 
 /**
  * Apply Qdrant payload filters from clarification context.

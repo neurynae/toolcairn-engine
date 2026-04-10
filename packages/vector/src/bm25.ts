@@ -5,8 +5,9 @@ const K1 = 1.5;
 const B = 0.75;
 
 const FIELD_WEIGHTS = {
-  name: 3.0,
-  packageNames: 2.5,
+  name: 3.0, // full compound name — exact match (e.g. "vue-router")
+  nameParts: 1.5, // split components — partial match (e.g. "vue", "router")
+  packageNames: 2.5, // npm/pip/cargo canonical name
   description: 1.0,
   topics: 0.5,
 } as const;
@@ -15,7 +16,8 @@ type Field = keyof typeof FIELD_WEIGHTS;
 
 interface DocTokens {
   id: string;
-  name: string[];
+  name: string[]; // [full compound name only]
+  nameParts: string[]; // [split name components, excluding the full name]
   packageNames: string[];
   description: string[];
   topics: string[];
@@ -36,22 +38,23 @@ function tokenize(text: string): string[] {
 }
 
 /**
- * Tokenize a tool name for BM25 indexing.
- * Returns the compound name AND its split parts so both exact and partial matches work.
+ * Tokenize a tool name into:
+ *   - `name` field: the full compound name (single token) — weight 3.0
+ *   - `nameParts` field: split components — weight 1.5
  *
- * "facebook/react"  → ["facebook/react", "facebook", "react"]
- * "vue-router"      → ["vue-router", "vue", "router"]
- * "socket.io"       → ["socket.io", "socket", "io"] (io filtered by length > 1)
- * "zod"             → ["zod"]
- *
- * IDF naturally handles the prefix-pollution concern: "node" appears in hundreds
- * of tool names → low IDF → small score contribution. "react" appears in ~10 → high IDF.
+ * Splitting compound names enables "react" to match "facebook/react" while
+ * using a lower weight for parts avoids over-boosting tools that merely
+ * contain a language name (e.g. "rust-rpxy" shouldn't dominate on "rust"
+ * queries when actix-web or axum are the canonical answers).
  */
-function tokenizeName(name: string): string[] {
+function tokenizeName(name: string): { full: string[]; parts: string[] } {
   const lower = name.toLowerCase().trim();
-  if (!lower) return [];
-  const parts = lower.split(/[-_./]+/).filter((t) => t.length > 1);
-  return [...new Set([lower, ...parts])];
+  if (!lower) return { full: [], parts: [] };
+
+  const split = lower.split(/[-_./]+/).filter((t) => t.length > 1);
+  const parts = split.filter((t) => t !== lower);
+
+  return { full: [lower], parts };
 }
 
 export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
@@ -60,17 +63,23 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
   let totalLen = 0;
 
   for (const tool of tools) {
-    const nameTokens = tokenizeName(tool.name);
+    const { full: nameTokens, parts: namePartTokens } = tokenizeName(tool.name);
     const pkgTokens = Object.values(tool.package_managers ?? {})
       .flatMap((n) => tokenize(n))
       .filter((t) => t.length > 1);
     const descTokens = tokenize(tool.description);
     const topicTokens = tokenize((tool.topics ?? []).join(' '));
-    const len = nameTokens.length + pkgTokens.length + descTokens.length + topicTokens.length;
+    const len =
+      nameTokens.length +
+      namePartTokens.length +
+      pkgTokens.length +
+      descTokens.length +
+      topicTokens.length;
 
     docs.set(tool.id, {
       id: tool.id,
       name: nameTokens,
+      nameParts: namePartTokens,
       packageNames: pkgTokens,
       description: descTokens,
       topics: topicTokens,
@@ -79,7 +88,13 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
     totalLen += len;
 
     const seen = new Set<string>();
-    for (const token of [...nameTokens, ...pkgTokens, ...descTokens, ...topicTokens]) {
+    for (const token of [
+      ...nameTokens,
+      ...namePartTokens,
+      ...pkgTokens,
+      ...descTokens,
+      ...topicTokens,
+    ]) {
       if (!seen.has(token)) {
         seen.add(token);
         df.set(token, (df.get(token) ?? 0) + 1);
