@@ -87,25 +87,54 @@ async function main() {
 
     logger.info({ uniqueOwners: ownerMap.size }, 'Unique owners to check');
 
-    // 3. Query GitHub for each owner type (with simple rate-limit spacing)
+    // 3. Check remaining rate limit before starting — abort if < 500 requests left
+    const { data: rateData } = await octokit.rateLimit.get();
+    const remaining = rateData.resources.core.remaining;
+    const resetAt = new Date(rateData.resources.core.reset * 1000).toISOString();
+    logger.info({ remaining, resetAt }, 'GitHub rate limit before owner lookups');
+    if (remaining < ownerMap.size + 100) {
+      logger.error(
+        { remaining, needed: ownerMap.size, resetAt },
+        'Insufficient rate limit — aborting. Wait until reset and ensure the daily indexer is not running.',
+      );
+      return;
+    }
+
+    // 4. Query GitHub for each owner type — pause when rate limit drops below 200
     const userOwners = new Set<string>();
     let checked = 0;
 
     for (const [owner] of ownerMap) {
       try {
-        const { data } = await octokit.users.getByUsername({ username: owner });
-        if (data.type === 'User') {
+        const resp = await octokit.users.getByUsername({ username: owner });
+        if (resp.data.type === 'User') {
           userOwners.add(owner);
+        }
+
+        // Check rate limit headers every 50 requests
+        if (checked % 50 === 0) {
+          const limitRemaining = Number(
+            (resp.headers as Record<string, string>)['x-ratelimit-remaining'] ?? 9999,
+          );
+          const limitReset = Number(
+            (resp.headers as Record<string, string>)['x-ratelimit-reset'] ?? 0,
+          );
+          if (limitRemaining < 200) {
+            const waitMs = Math.max(0, limitReset * 1000 - Date.now()) + 5000;
+            logger.warn(
+              { limitRemaining, waitMs: Math.round(waitMs / 1000) + 's' },
+              'Rate limit low — pausing until reset',
+            );
+            await new Promise((r) => setTimeout(r, waitMs));
+          }
         }
       } catch (e) {
         logger.warn({ owner, err: e }, 'Could not fetch owner info — skipping');
       }
 
       checked++;
-      if (checked % 10 === 0) {
+      if (checked % 100 === 0) {
         logger.info({ checked, total: ownerMap.size }, 'Owner lookup progress');
-        // Gentle throttle: GitHub allows ~30 unauthenticated req/min for user endpoints
-        await new Promise((r) => setTimeout(r, 200));
       }
     }
 
