@@ -49,14 +49,15 @@ function recencyScore(dateStr: string): number {
 
 /**
  * Calculate HealthSignals from a raw GitHub API response.
- * `raw` is the object returned from the GitHub REST API (as stored in CrawlerResult.raw).
  *
  * @param raw - Raw crawler response
  * @param prev - Previous health snapshot from the last index run (for real velocity)
+ * @param ownerType - 'User' or 'Organization' — used for credibility scoring
  */
 export function calculateHealth(
   raw: unknown,
   prev?: { stars: number; updatedAt: string },
+  ownerType?: 'User' | 'Organization',
 ): HealthSignals {
   const data = raw as RawGitHubData;
   const repo: GitHubRepoData =
@@ -90,7 +91,7 @@ export function calculateHealth(
   const starsVelocityScore = normalizeLog(starsVelocity90d, 1000);
   const issueResolutionRate =
     openIssues > 0 ? Math.min(1, closedIssues30d / (openIssues + closedIssues30d)) : 0.5;
-  const prResponseScore = Math.max(0, 1 - prResponseTimeHours / (24 * 14)); // ideal = 0h, worst = 14d
+  const prResponseScore = Math.max(0, 1 - prResponseTimeHours / (24 * 14));
   const contributorTrendScore = 0.5; // neutral
   const releaseRecency = recencyScore(lastReleaseDate);
 
@@ -101,6 +102,20 @@ export function calculateHealth(
     0.15 * prResponseScore +
     0.1 * contributorTrendScore +
     0.1 * releaseRecency;
+
+  // Credibility: composite trust signal for search ranking.
+  // Blends popularity (stars), trust (org vs personal), activity, and resilience.
+  const logStars = Math.min(1, Math.log10(stars + 1) / Math.log10(300_001));
+  const orgBonus = ownerType === 'Organization' ? 1.0 : stars >= 1000 ? 0.6 : 0.3;
+  const contribScore = normalizeLog(contributorCount, 500);
+  const velocityScore = normalizeLog(starsVelocity90d, 5000);
+
+  const credibilityScore =
+    0.35 * logStars +
+    0.2 * orgBonus +
+    0.2 * Math.max(0, Math.min(1, maintenanceScore)) +
+    0.15 * contribScore +
+    0.1 * velocityScore;
 
   return {
     stars,
@@ -114,5 +129,6 @@ export function calculateHealth(
     contributor_trend: contributorTrend,
     last_release_date: lastReleaseDate,
     maintenance_score: Math.max(0, Math.min(1, maintenanceScore)),
+    credibility_score: Math.max(0, Math.min(1, credibilityScore)),
   };
 }

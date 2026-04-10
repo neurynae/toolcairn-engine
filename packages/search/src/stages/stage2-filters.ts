@@ -4,9 +4,12 @@ import pino from 'pino';
 import type { SearchContext, Stage2Result } from '../types.js';
 
 const logger = pino({ name: '@toolcairn/search:stage2' });
-const STAGE2_TOP_N = 15; // Max results to return after filtering
-/** Minimum results before triggering next relaxation step. */
+const STAGE2_TOP_N = 15;
 const MIN_RESULTS = 3;
+
+/** Weight for Stage 1 relevance rank vs credibility in Stage 2 scoring. */
+const RANK_WEIGHT = 0.7;
+const CREDIBILITY_WEIGHT = 0.3;
 
 /**
  * Apply Qdrant payload filters from clarification context.
@@ -35,13 +38,16 @@ export async function stage2ApplyFilters(
     points as Array<{ id: string | number; payload: Record<string, unknown> | null }>
   )
     .filter((p) => p.payload != null)
-    .map((p) => ({
-      tool: p.payload as unknown as ToolNode,
-      score: (() => {
-        const rank = candidateIds.indexOf(String(p.id));
-        return rank >= 0 ? 1 / (rank + 1) : 0;
-      })(),
-    }))
+    .map((p) => {
+      const tool = p.payload as unknown as ToolNode;
+      const rank = candidateIds.indexOf(String(p.id));
+      const rankScore = rank >= 0 ? 1 / (rank + 1) : 0;
+      const credScore = tool.health.credibility_score ?? 0;
+      return {
+        tool,
+        score: RANK_WEIGHT * rankScore + CREDIBILITY_WEIGHT * credScore,
+      };
+    })
     .sort((a, b) => b.score - a.score);
 
   const applyFilters = (fns: Array<(t: ToolNode) => boolean>) =>

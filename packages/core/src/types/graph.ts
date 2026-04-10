@@ -61,6 +61,12 @@ export interface HealthSignals {
    * + 0.15 * pr_response_score + 0.10 * contributor_trend + 0.10 * release_recency
    */
   maintenance_score: number;
+  /**
+   * Composite credibility score 0–1 blending popularity, trust, and activity.
+   * Used as a ranking multiplier in search pipeline Stages 2–4.
+   * Formula: 0.35*log_stars + 0.20*org_bonus + 0.20*maintenance + 0.15*contributors + 0.10*velocity
+   */
+  credibility_score: number;
 }
 
 export interface DocumentationLinks {

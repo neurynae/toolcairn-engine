@@ -31,6 +31,7 @@ export interface CreateToolParams {
   health_contributor_trend: number;
   health_last_release_date: string;
   health_maintenance_score: number;
+  health_credibility_score: number;
   docs_readme_url: string | null;
   docs_docs_url: string | null;
   docs_api_url: string | null;
@@ -129,6 +130,7 @@ export const CREATE_TOOL = {
        t.health_contributor_trend = $health_contributor_trend,
        t.health_last_release_date = $health_last_release_date,
        t.health_maintenance_score = $health_maintenance_score,
+       t.health_credibility_score = $health_credibility_score,
        t.docs_readme_url = $docs_readme_url,
        t.docs_docs_url = $docs_docs_url,
        t.docs_api_url = $docs_api_url,
@@ -447,6 +449,8 @@ export function mapRecordToToolNode(record: Record<string, unknown>): ToolNode {
       contributor_trend: requireNumber(t.health_contributor_trend, 't.health_contributor_trend'),
       last_release_date: requireString(t.health_last_release_date, 't.health_last_release_date'),
       maintenance_score: requireNumber(t.health_maintenance_score, 't.health_maintenance_score'),
+      credibility_score:
+        typeof t.health_credibility_score === 'number' ? t.health_credibility_score : 0,
     },
     docs: {
       readme_url: typeof t.docs_readme_url === 'string' ? t.docs_readme_url : undefined,

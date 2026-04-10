@@ -164,7 +164,7 @@ export async function processTool(
 
   logger.info({ toolName: extracted.name }, 'Processing tool');
 
-  const health = calculateHealth(raw, prevHealth);
+  const health = calculateHealth(raw, prevHealth, extracted.owner_type);
 
   // Fetch existing tools from Memgraph for dynamic relationship matching
   let existingTools: Set<string> | undefined;

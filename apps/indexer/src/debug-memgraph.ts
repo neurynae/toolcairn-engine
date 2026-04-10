@@ -28,6 +28,7 @@ const tool: ToolNode = {
     contributor_trend: 0,
     last_release_date: new Date().toISOString(),
     maintenance_score: 0.75,
+    credibility_score: 0.8,
   },
   docs: { readme_url: 'https://github.com/colinhacks/zod/blob/main/README.md' },
   topics: [],

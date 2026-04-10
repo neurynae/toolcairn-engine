@@ -3,6 +3,7 @@ import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
 import pino from 'pino';
 import { ClarificationEngine } from './clarification/engine.js';
 import type { SearchSessionManager } from './session.js';
+import { buildExactLookupMaps, stage0ExactResolve } from './stages/stage0-exact.js';
 import { stage1HybridSearch } from './stages/stage1-hybrid.js';
 import { stage2ApplyFilters } from './stages/stage2-filters.js';
 import { stage3GraphRerank } from './stages/stage3-graph.js';
@@ -39,6 +40,30 @@ export class SearchPipeline {
     const allTools = await this.loadToolCorpus();
 
     logger.debug({ sessionId, query, toolCount: allTools.length }, 'Pipeline run started');
+
+    // Stage 0 — exact-match short-circuit for direct name/package queries
+    const lookupMaps = buildExactLookupMaps(allTools);
+    const stage0 = stage0ExactResolve(query, lookupMaps);
+    if (stage0.match) {
+      const total_ms = Date.now() - t0;
+      logger.info(
+        { sessionId, tool: stage0.match.name, total_ms },
+        'Stage 0 exact match — short-circuit',
+      );
+      const result: SearchPipelineResult = {
+        sessionId,
+        query,
+        results: [{ tool: stage0.match, score: 1.0 }],
+        is_two_option: false,
+        stage1_ms: 0,
+        stage2_ms: 0,
+        stage3_ms: 0,
+        stage4_ms: 0,
+        total_ms,
+      };
+      await this.sessionManager.saveResults(sessionId, result);
+      return result;
+    }
 
     // Stage 1 — hybrid retrieval
     const stage1 = await stage1HybridSearch(query, allTools);
@@ -143,14 +168,31 @@ export class SearchPipeline {
    * Public so callers (e.g. search_tools handler) can build the BM25 index themselves.
    */
   async loadToolCorpus(): Promise<ToolNode[]> {
-    const { points } = await qdrantClient().scroll(COLLECTION_NAME, {
-      limit: 10_000,
-      with_payload: true,
-      with_vector: false,
-    });
-    return (points as Array<{ payload: Record<string, unknown> | null }>)
-      .filter((p) => p.payload != null)
-      .map((p) => p.payload as unknown as ToolNode);
+    const tools: ToolNode[] = [];
+    let offset: string | number | null | undefined = undefined;
+
+    // Paginate through ALL Qdrant points — the old limit:10_000 only loaded
+    // the first page, making ~60% of tools invisible to search.
+    while (true) {
+      const result = await qdrantClient().scroll(COLLECTION_NAME, {
+        limit: 10_000,
+        offset,
+        with_payload: true,
+        with_vector: false,
+      });
+
+      const points = result.points as Array<{ payload: Record<string, unknown> | null }>;
+      tools.push(
+        ...points.filter((p) => p.payload != null).map((p) => p.payload as unknown as ToolNode),
+      );
+
+      const nextOffset = result.next_page_offset as string | number | null | undefined;
+      if (!nextOffset) break;
+      offset = nextOffset;
+    }
+
+    logger.info({ totalTools: tools.length }, 'Tool corpus loaded from Qdrant');
+    return tools;
   }
 }
 
@@ -159,10 +201,19 @@ async function loadUserPreferences(userId: string): Promise<Map<string, number> 
   if (!process.env.REDIS_URL) return undefined;
   try {
     const { Redis } = await import('ioredis');
-    const redis = new Redis(process.env.REDIS_URL, { lazyConnect: true, connectTimeout: 2000, maxRetriesPerRequest: 0 });
+    const redis = new Redis(process.env.REDIS_URL, {
+      lazyConnect: true,
+      connectTimeout: 2000,
+      maxRetriesPerRequest: 0,
+    });
     await redis.connect();
     try {
-      const raw = await redis.zrangebyscore(`user:${userId}:tool_prefs`, '-inf', '+inf', 'WITHSCORES');
+      const raw = await redis.zrangebyscore(
+        `user:${userId}:tool_prefs`,
+        '-inf',
+        '+inf',
+        'WITHSCORES',
+      );
       const prefs = new Map<string, number>();
       for (let i = 0; i < raw.length - 1; i += 2) {
         prefs.set(raw[i] as string, Number(raw[i + 1]));

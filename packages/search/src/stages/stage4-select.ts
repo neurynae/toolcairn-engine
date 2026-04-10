@@ -1,7 +1,11 @@
 import type { Stage3Result, Stage4Result, ToolScoredResult } from '../types.js';
 
-const TWO_OPTION_GAP_THRESHOLD = 1.2; // score[0] / score[1] < 1.2 triggers two-option
-const PREFERENCE_BOOST = 0.08; // max boost for a frequently-used tool
+const TWO_OPTION_GAP_THRESHOLD = 1.2;
+const PREFERENCE_BOOST = 0.08;
+
+/** Tools below these thresholds are filtered before final selection (unless nothing else remains). */
+const QUALITY_FLOOR_STARS = 50;
+const QUALITY_FLOOR_MAINTENANCE = 0.15;
 
 /**
  * Precision selection with optional user preference boost.
@@ -19,6 +23,17 @@ export function stage4Select(
 
   if (results.length === 0) {
     return { results: [], is_two_option: false, elapsed_ms: 0 };
+  }
+
+  // Quality floor: remove tools below minimum credibility thresholds.
+  // Only apply if it leaves at least one result — better to return something than nothing.
+  const qualityFiltered = results.filter(
+    (r) =>
+      r.tool.health.stars >= QUALITY_FLOOR_STARS &&
+      r.tool.health.maintenance_score >= QUALITY_FLOOR_MAINTENANCE,
+  );
+  if (qualityFiltered.length > 0) {
+    results = qualityFiltered;
   }
 
   // Apply preference boost if user history available

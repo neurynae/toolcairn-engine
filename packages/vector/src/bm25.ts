@@ -6,6 +6,7 @@ const B = 0.75;
 
 const FIELD_WEIGHTS = {
   name: 3.0,
+  packageNames: 2.5,
   description: 1.0,
   topics: 0.5,
 } as const;
@@ -15,6 +16,7 @@ type Field = keyof typeof FIELD_WEIGHTS;
 interface DocTokens {
   id: string;
   name: string[];
+  packageNames: string[];
   description: string[];
   topics: string[];
   len: number;
@@ -35,16 +37,21 @@ function tokenize(text: string): string[] {
 
 /**
  * Tokenize a tool name for BM25 indexing.
- * Uses the full identifier as a single token instead of splitting on word boundaries.
- * e.g. "node-bunyan" → ["node-bunyan"] — not ["node", "bunyan"]
+ * Returns the compound name AND its split parts so both exact and partial matches work.
  *
- * This prevents platform prefix tokens like "node" from matching unrelated tools
- * (node-bunyan, node-redis, node-cron) when a query mentions "Node.js" as context.
- * Semantic relevance is handled by vector search; BM25 handles exact name lookup.
+ * "facebook/react"  → ["facebook/react", "facebook", "react"]
+ * "vue-router"      → ["vue-router", "vue", "router"]
+ * "socket.io"       → ["socket.io", "socket", "io"] (io filtered by length > 1)
+ * "zod"             → ["zod"]
+ *
+ * IDF naturally handles the prefix-pollution concern: "node" appears in hundreds
+ * of tool names → low IDF → small score contribution. "react" appears in ~10 → high IDF.
  */
 function tokenizeName(name: string): string[] {
   const lower = name.toLowerCase().trim();
-  return lower.length > 0 ? [lower] : [];
+  if (!lower) return [];
+  const parts = lower.split(/[-_./]+/).filter((t) => t.length > 1);
+  return [...new Set([lower, ...parts])];
 }
 
 export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
@@ -54,13 +61,17 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
 
   for (const tool of tools) {
     const nameTokens = tokenizeName(tool.name);
+    const pkgTokens = Object.values(tool.package_managers ?? {})
+      .flatMap((n) => tokenize(n))
+      .filter((t) => t.length > 1);
     const descTokens = tokenize(tool.description);
     const topicTokens = tokenize((tool.topics ?? []).join(' '));
-    const len = nameTokens.length + descTokens.length + topicTokens.length;
+    const len = nameTokens.length + pkgTokens.length + descTokens.length + topicTokens.length;
 
     docs.set(tool.id, {
       id: tool.id,
       name: nameTokens,
+      packageNames: pkgTokens,
       description: descTokens,
       topics: topicTokens,
       len,
@@ -68,7 +79,7 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
     totalLen += len;
 
     const seen = new Set<string>();
-    for (const token of [...nameTokens, ...descTokens, ...topicTokens]) {
+    for (const token of [...nameTokens, ...pkgTokens, ...descTokens, ...topicTokens]) {
       if (!seen.has(token)) {
         seen.add(token);
         df.set(token, (df.get(token) ?? 0) + 1);

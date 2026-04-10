@@ -17,6 +17,7 @@ function makeHealth(maintenanceScore = 0.8) {
     contributor_trend: 2,
     last_release_date: '2024-01-01',
     maintenance_score: maintenanceScore,
+    credibility_score: maintenanceScore,
   };
 }
 

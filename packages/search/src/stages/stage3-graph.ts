@@ -5,12 +5,14 @@ import {
 } from '@toolcairn/graph';
 import type { Stage2Result, Stage3Result, ToolScoredResult } from '../types.js';
 
-const GRAPH_WEIGHT = 0.6;
+const GRAPH_WEIGHT = 0.4;
 const STAGE2_WEIGHT = 0.4;
+const CREDIBILITY_WEIGHT = 0.2;
 
 /**
- * Re-rank Stage 2 results using graph connectivity + temporal decay.
- * Final score = 0.6 × graphScore + 0.4 × stage2Score (both normalized to [0,1]).
+ * Re-rank Stage 2 results using graph connectivity, Stage 2 relevance, and credibility.
+ * Final score = 0.40 × graphScore + 0.40 × stage2Score + 0.20 × credibility
+ * (graph and stage2 normalized to [0,1], credibility already 0–1).
  */
 export async function stage3GraphRerank(stage2: Stage2Result): Promise<Stage3Result> {
   const t0 = Date.now();
@@ -45,7 +47,13 @@ export async function stage3GraphRerank(stage2: Stage2Result): Promise<Stage3Res
     const normalizedStage2 = hit.score / maxStage2;
     const rawGraph = graphScores.get(hit.tool.name) ?? 0;
     const normalizedGraph = maxGraph > 0 ? rawGraph / maxGraph : 0;
-    const score = GRAPH_WEIGHT * normalizedGraph + STAGE2_WEIGHT * normalizedStage2;
+    const credScore = hit.tool.health.credibility_score ?? 0;
+
+    const score =
+      GRAPH_WEIGHT * normalizedGraph +
+      STAGE2_WEIGHT * normalizedStage2 +
+      CREDIBILITY_WEIGHT * credScore;
+
     return { tool: hit.tool, score };
   });
 
