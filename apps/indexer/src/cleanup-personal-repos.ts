@@ -91,15 +91,20 @@ async function main() {
     const combinedRemaining = allSlots.reduce((sum: number, s) => sum + s.core.remaining, 0);
     const bestSlotLabel = allSlots.map((s) => `${s.label}:${s.core.remaining}`).join(', ');
     logger.info({ combinedRemaining, slots: bestSlotLabel }, 'Rate limit across token pool');
-    if (combinedRemaining < ownerMap.size + 100) {
-      const soonestReset = new Date(
-        Math.min(...allSlots.map((s) => s.core.resetAt)) * 1000,
-      ).toISOString();
+    // Abort only if nearly exhausted — the mid-loop auto-pause handles reset windows,
+    // so we can safely start even when combined < ownerMap.size (it'll pause and resume).
+    if (combinedRemaining < 500) {
       logger.error(
-        { combinedRemaining, needed: ownerMap.size + 100, soonestReset },
-        'Insufficient combined rate limit — aborting. Ensure the daily indexer is not running.',
+        { combinedRemaining, needed: ownerMap.size },
+        'Rate limit critically low — aborting. Wait for reset before starting.',
       );
       return;
+    }
+    if (combinedRemaining < ownerMap.size) {
+      logger.warn(
+        { combinedRemaining, needed: ownerMap.size },
+        'Combined quota < owners to check — will auto-pause at reset boundaries to finish.',
+      );
     }
 
     // 4. Query GitHub for each owner type — re-pick best slot per request,
