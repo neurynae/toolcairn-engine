@@ -234,6 +234,7 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     // Root contents for package manager detection (non-fatal if missing)
     let rootFilenames: string[] = [];
     let packageJsonDeps: string[] = [];
+    let npmPackageName: string | undefined;
     try {
       const contentsData = await githubRequest<unknown>(
         `contents:${repoKey}`,
@@ -270,6 +271,7 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
               'utf8',
             );
             const pkg = JSON.parse(decoded) as {
+              name?: string;
               dependencies?: Record<string, string>;
               devDependencies?: Record<string, string>;
               peerDependencies?: Record<string, string>;
@@ -279,6 +281,8 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
               ...Object.keys(pkg.devDependencies ?? {}),
               ...Object.keys(pkg.peerDependencies ?? {}),
             ];
+            // Capture actual npm package name (e.g. "prisma", "react") for Stage 0 exact match
+            if (pkg.name) npmPackageName = pkg.name;
           }
         } catch {
           // Non-fatal — just skip package.json dep mining
@@ -293,6 +297,10 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     const primaryLanguage = repoData.language ?? languageNames[0] ?? 'unknown';
     const deploymentModels = detectDeploymentModels(topics);
     const packageManagers = detectPackageManagers(rootFilenames);
+    // Override generic "npm" with actual package name from package.json
+    if (npmPackageName && packageManagers.npm) {
+      packageManagers.npm = npmPackageName;
+    }
 
     const homepage = repoData.homepage ?? undefined;
 

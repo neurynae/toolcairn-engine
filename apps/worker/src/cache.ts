@@ -4,9 +4,12 @@
  * Cloudflare doesn't cache POST by default — we use the Cache API to handle it.
  */
 
-/** Endpoints that are safe to cache and their TTL in seconds */
+/** Endpoints that are safe to cache and their TTL in seconds.
+ * /v1/search is intentionally excluded — responses are session-specific,
+ * state-dependent (Stage 0, clarification round), and must always reach
+ * the API to fire the exact-match short-circuit and credibility ranking.
+ */
 const CACHEABLE: Record<string, number> = {
-  '/v1/search': 3600, // 1 hour
   '/v1/graph/compatibility': 86_400, // 24 hours
   '/v1/graph/compare': 21_600, // 6 hours
   '/v1/graph/stack': 21_600, // 6 hours
