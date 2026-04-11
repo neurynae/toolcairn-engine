@@ -9,10 +9,10 @@
  *   0 2 * * * cd /path/to/ToolPilot && pnpm tsx apps/indexer/src/run-reindex.ts
  */
 
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { runReindexScheduler } from './schedulers/reindex-scheduler.js';
 
-const logger = pino({ name: '@toolcairn/indexer:run-reindex' });
+const logger = createLogger({ name: '@toolcairn/indexer:run-reindex' });
 
 async function main() {
   logger.info('Starting scheduled reindex run');

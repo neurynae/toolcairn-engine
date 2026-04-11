@@ -1,8 +1,8 @@
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult, resolveToolName } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:check-compatibility' });
+const logger = createLogger({ name: '@toolcairn/tools:check-compatibility' });
 
 const COMPATIBLE_TYPES = new Set(['COMPATIBLE_WITH', 'INTEGRATES_WITH', 'POPULAR_WITH']);
 const CONFLICT_TYPES = new Set(['CONFLICTS_WITH', 'BREAKS_FROM']);

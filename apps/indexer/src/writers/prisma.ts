@@ -1,8 +1,8 @@
 import { PrismaClient } from '@toolcairn/db';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 
-const logger = pino({ name: '@toolcairn/indexer:prisma-writer' });
+const logger = createLogger({ name: '@toolcairn/indexer:prisma-writer' });
 
 let _prisma: PrismaClient | undefined;
 
@@ -72,9 +72,9 @@ export async function upsertIndexedTool(
     );
     logger.info({ githubUrl, graphNodeId, status }, 'IndexedTool upserted in PostgreSQL');
   } catch (e) {
-    throw new IndexerError(
-      `Failed to upsert IndexedTool for ${githubUrl}: ${e instanceof Error ? e.message : String(e)}`,
-      e,
-    );
+    throw new IndexerError({
+      message: `Failed to upsert IndexedTool for ${githubUrl}: ${e instanceof Error ? e.message : String(e)}`,
+      cause: e,
+    });
   }
 }

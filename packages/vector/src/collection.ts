@@ -16,10 +16,10 @@ async function ensureCollectionByName(name: string): Promise<void> {
       });
     }
   } catch (e) {
-    throw new VectorError(
-      `Failed to ensure Qdrant collection '${name}': ${e instanceof Error ? e.message : String(e)}`,
-      e,
-    );
+    throw new VectorError({
+      message: `Failed to ensure Qdrant collection '${name}': ${e instanceof Error ? e.message : String(e)}`,
+      cause: e,
+    });
   }
 }
 

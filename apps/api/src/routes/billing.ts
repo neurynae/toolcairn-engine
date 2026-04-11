@@ -14,10 +14,10 @@ import crypto from 'node:crypto';
 import { config } from '@toolcairn/config';
 import type { PrismaClient } from '@toolcairn/db';
 import { Hono } from 'hono';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { z } from 'zod';
 
-const logger = pino({ name: '@toolcairn/api:billing' });
+const logger = createLogger({ name: '@toolcairn/api:billing' });
 
 /**
  * Derive payment mode from the Razorpay key prefix.

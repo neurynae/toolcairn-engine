@@ -9,9 +9,9 @@
 
 import { PrismaClient } from '@toolcairn/db';
 import { enqueueBatchReindex } from '@toolcairn/queue';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:reindex-scheduler' });
+const logger = createLogger({ name: '@toolcairn/indexer:reindex-scheduler' });
 
 const STALE_THRESHOLD_DAYS = 7;
 const BATCH_SIZE = 50;

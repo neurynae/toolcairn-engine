@@ -4,9 +4,9 @@
  */
 
 import { config } from '@toolcairn/config';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:resend' });
+const logger = createLogger({ name: '@toolcairn/indexer:resend' });
 
 const RESEND_API = 'https://api.resend.com/emails';
 const FROM = 'ToolCairn <digest@neurynae.com>';

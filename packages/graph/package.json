@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@toolcairn/config": "workspace:*",
+    "@toolcairn/errors": "workspace:*",
     "@toolcairn/core": "workspace:*",
     "neo4j-driver": "^5.27.0",
     "pino": "^9.6.0"

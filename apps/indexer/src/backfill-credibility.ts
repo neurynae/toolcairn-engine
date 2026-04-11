@@ -13,9 +13,9 @@
 
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:backfill-credibility' });
+const logger = createLogger({ name: '@toolcairn/indexer:backfill-credibility' });
 
 function normalizeLog(value: number, scale: number): number {
   if (value <= 0) return 0;

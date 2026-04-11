@@ -25,6 +25,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.7.0",
     "@toolcairn/config": "workspace:*",
+    "@toolcairn/errors": "workspace:*",
     "@toolcairn/core": "workspace:*",
     "@toolcairn/db": "workspace:*",
     "@toolcairn/graph": "workspace:*",

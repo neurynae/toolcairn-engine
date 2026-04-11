@@ -14,9 +14,9 @@
 import { PrismaClient } from '@toolcairn/db';
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:update-search-weights' });
+const logger = createLogger({ name: '@toolcairn/indexer:update-search-weights' });
 const WEIGHT_INCREMENT = 0.02;
 const MAX_WEIGHT = 2.0;
 

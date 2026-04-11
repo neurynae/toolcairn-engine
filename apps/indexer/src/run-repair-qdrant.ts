@@ -9,9 +9,9 @@
 import { getMemgraphSession } from '@toolcairn/graph';
 import { mapRecordToToolNode } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:repair-qdrant' });
+const logger = createLogger({ name: '@toolcairn/indexer:repair-qdrant' });
 const VECTOR_SIZE = 768;
 const BATCH_SIZE = 50;
 

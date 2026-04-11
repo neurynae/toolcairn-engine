@@ -1,11 +1,11 @@
 import { config } from '@toolcairn/config';
 import type { ToolNode } from '@toolcairn/core';
 import { COLLECTION_NAME, embedText, qdrantClient } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:verify-suggestion' });
+const logger = createLogger({ name: '@toolcairn/tools:verify-suggestion' });
 
 const P0_PRIORITY = 2;
 

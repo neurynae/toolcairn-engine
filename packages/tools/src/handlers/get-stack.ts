@@ -1,9 +1,9 @@
 import type { SearchContext } from '@toolcairn/search';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:get-stack' });
+const logger = createLogger({ name: '@toolcairn/tools:get-stack' });
 
 export function createGetStackHandler(deps: Pick<ToolDeps, 'pipeline'>) {
   return async function handleGetStack(args: {

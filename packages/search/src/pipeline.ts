@@ -1,6 +1,6 @@
 import type { ToolNode } from '@toolcairn/core';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { ClarificationEngine } from './clarification/engine.js';
 import type { SearchSessionManager } from './session.js';
 import { buildExactLookupMaps, stage0ExactResolve } from './stages/stage0-exact.js';
@@ -15,7 +15,7 @@ import type {
   ToolScoredResult,
 } from './types.js';
 
-const logger = pino({ name: '@toolcairn/search:pipeline' });
+const logger = createLogger({ name: '@toolcairn/search:pipeline' });
 
 export interface RunStages2to4Result {
   results: ToolScoredResult[];

@@ -1,9 +1,9 @@
 import type { EdgeType } from '@toolcairn/core';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:suggest-graph-update' });
+const logger = createLogger({ name: '@toolcairn/tools:suggest-graph-update' });
 
 const AUTO_GRADUATE_THRESHOLD = 0.8;
 

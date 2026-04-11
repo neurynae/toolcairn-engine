@@ -6,10 +6,10 @@
  */
 
 import { prisma } from '@toolcairn/db';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { processCoOccurrences } from '../processors/co-occurrence-processor.js';
 
-const logger = pino({ name: '@toolcairn/indexer:co-occurrence-scheduler' });
+const logger = createLogger({ name: '@toolcairn/indexer:co-occurrence-scheduler' });
 const MIN_SESSIONS_GATE = 1_000;
 
 export async function runCoOccurrenceScheduler(): Promise<void> {

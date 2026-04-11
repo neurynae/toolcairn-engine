@@ -1,9 +1,9 @@
 import { config } from '@toolcairn/config';
 import { Redis } from 'ioredis';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { QueueMessage } from './types.js';
 
-const logger = pino({ name: '@toolcairn/queue:consumer' });
+const logger = createLogger({ name: '@toolcairn/queue:consumer' });
 
 const INDEX_STREAM = 'toolpilot:index';
 const SEARCH_STREAM = 'toolpilot:search';

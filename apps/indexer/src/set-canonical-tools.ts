@@ -13,9 +13,9 @@
 
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:set-canonical-tools' });
+const logger = createLogger({ name: '@toolcairn/indexer:set-canonical-tools' });
 
 /** owner/repo → canonical tool name (as stored in Memgraph/Qdrant) */
 const CANONICAL_TOOLS: Array<{ githubUrl: string; name: string }> = [

@@ -18,11 +18,11 @@
 import { PrismaClient } from '@toolcairn/db';
 import { getMemgraphSession } from '@toolcairn/graph';
 import { enqueueIndexJob } from '@toolcairn/queue';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { discoverReposAcrossTopics } from '../crawlers/github-discovery.js';
 import { clearProgress, setProgress } from '../progress.js';
 
-const logger = pino({ name: '@toolcairn/indexer:discovery-scheduler' });
+const logger = createLogger({ name: '@toolcairn/indexer:discovery-scheduler' });
 
 export interface DiscoveryResult {
   found: number;

@@ -4,13 +4,30 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "references": [
-    { "path": "../../packages/config" },
-    { "path": "../../packages/tools" },
-    { "path": "../../packages/db" },
-    { "path": "../../packages/graph" },
-    { "path": "../../packages/vector" },
-    { "path": "../../packages/queue" }
+    {
+      "path": "../../packages/errors"
+    },
+    {
+      "path": "../../packages/config"
+    },
+    {
+      "path": "../../packages/tools"
+    },
+    {
+      "path": "../../packages/db"
+    },
+    {
+      "path": "../../packages/graph"
+    },
+    {
+      "path": "../../packages/vector"
+    },
+    {
+      "path": "../../packages/queue"
+    }
   ]
 }

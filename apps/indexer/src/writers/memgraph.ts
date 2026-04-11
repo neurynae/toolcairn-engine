@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { EdgeSource, EdgeType, ToolNode } from '@toolcairn/core';
+import { createLogger } from '@toolcairn/errors';
 import { MemgraphToolRepository, MemgraphUseCaseRepository } from '@toolcairn/graph';
-import pino from 'pino';
 import { IndexerError } from '../errors.js';
 import type { TopicEdge } from '../types.js';
 
-const logger = pino({ name: '@toolcairn/indexer:memgraph-writer' });
+const logger = createLogger({ name: '@toolcairn/indexer:memgraph-writer' });
 
 let _repository: MemgraphToolRepository | undefined;
 
@@ -25,17 +25,17 @@ export async function writeToolToMemgraph(tool: ToolNode): Promise<void> {
   try {
     const result = await repo.createTool(tool);
     if (!result.ok) {
-      throw new IndexerError(
-        `Failed to write tool to Memgraph: ${result.error.message} (code: ${result.error.code})`,
-      );
+      throw new IndexerError({
+        message: `Failed to write tool to Memgraph: ${result.error.message} (code: ${result.error.code})`,
+      });
     }
     logger.info({ toolId: tool.id, toolName: tool.name }, 'Tool written to Memgraph');
   } catch (e) {
     if (e instanceof IndexerError) throw e;
-    throw new IndexerError(
-      `Unexpected error writing tool to Memgraph: ${e instanceof Error ? e.message : String(e)}`,
-      e,
-    );
+    throw new IndexerError({
+      message: `Unexpected error writing tool to Memgraph: ${e instanceof Error ? e.message : String(e)}`,
+      cause: e,
+    });
   }
 }
 
@@ -119,9 +119,9 @@ export async function writeEdgeToMemgraph(
     });
 
     if (!upsertResult.ok) {
-      throw new IndexerError(
-        `Failed to upsert edge: ${upsertResult.error.message} (code: ${upsertResult.error.code})`,
-      );
+      throw new IndexerError({
+        message: `Failed to upsert edge: ${upsertResult.error.message} (code: ${upsertResult.error.code})`,
+      });
     }
 
     logger.info(
@@ -130,10 +130,10 @@ export async function writeEdgeToMemgraph(
     );
   } catch (e) {
     if (e instanceof IndexerError) throw e;
-    throw new IndexerError(
-      `Unexpected error writing edge to Memgraph: ${e instanceof Error ? e.message : String(e)}`,
-      e,
-    );
+    throw new IndexerError({
+      message: `Unexpected error writing edge to Memgraph: ${e instanceof Error ? e.message : String(e)}`,
+      cause: e,
+    });
   }
 }
 

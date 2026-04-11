@@ -1,9 +1,9 @@
 import type { ToolNode } from '@toolcairn/core';
 import { embedBatch, toolEmbedText } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 
-const logger = pino({ name: '@toolcairn/indexer:embedding-processor' });
+const logger = createLogger({ name: '@toolcairn/indexer:embedding-processor' });
 
 /**
  * Generate a vector embedding for a ToolNode using the canonical embed text format.
@@ -16,16 +16,16 @@ export async function generateEmbedding(tool: ToolNode): Promise<number[]> {
     const vectors = await embedBatch([text]);
     const vector = vectors[0];
     if (!vector || vector.length === 0) {
-      throw new IndexerError(`embedBatch returned no vector for tool: ${tool.name}`);
+      throw new IndexerError({ message: `embedBatch returned no vector for tool: ${tool.name}` });
     }
 
     return vector;
   } catch (e) {
     if (e instanceof IndexerError) throw e;
-    throw new IndexerError(
-      `Failed to generate embedding for tool ${tool.name}: ${e instanceof Error ? e.message : String(e)}`,
-      e,
-    );
+    throw new IndexerError({
+      message: `Failed to generate embedding for tool ${tool.name}: ${e instanceof Error ? e.message : String(e)}`,
+      cause: e,
+    });
   }
 }
 

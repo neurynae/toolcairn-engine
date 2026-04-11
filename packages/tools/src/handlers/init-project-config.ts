@@ -1,8 +1,8 @@
 import type { ConfirmedTool, ToolPilotProjectConfig, ToolSource } from '@toolcairn/core';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:init-project-config' });
+const logger = createLogger({ name: '@toolcairn/tools:init-project-config' });
 
 export async function handleInitProjectConfig(args: {
   project_name: string;

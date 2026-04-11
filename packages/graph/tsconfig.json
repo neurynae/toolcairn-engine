@@ -4,9 +4,18 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "references": [
-    { "path": "../config" },
-    { "path": "../core" }
+    {
+      "path": "../errors"
+    },
+    {
+      "path": "../config"
+    },
+    {
+      "path": "../core"
+    }
   ]
 }

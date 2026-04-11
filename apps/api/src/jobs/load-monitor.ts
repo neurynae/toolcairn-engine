@@ -9,9 +9,9 @@
 import { config } from '@toolcairn/config';
 import { prisma } from '@toolcairn/db';
 import { Redis } from 'ioredis';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/api:load-monitor' });
+const logger = createLogger({ name: '@toolcairn/api:load-monitor' });
 const INTERVAL_MS = 60_000;
 
 /** Rolling window of request latencies for p95 calculation (last 5 minutes). */

@@ -30,9 +30,12 @@ services:
       RAZORPAY_PLAN_SEMIANNUAL: ${RAZORPAY_PLAN_SEMIANNUAL:-}
       MCP_SERVER_PORT: "3001"
       LOG_LEVEL: info
+      LOG_DIR: /app/logs
     # No external port — Caddy proxies HTTPS → api:3001 internally
     expose:
       - "3001"
+    volumes:
+      - toolpilot_logs:/app/logs
     networks:
       - toolpilot
     depends_on:
@@ -68,6 +71,10 @@ services:
       NOMIC_API_KEY: ${NOMIC_API_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_TOKEN_2: ${GITHUB_TOKEN_2:-}
+      LOG_LEVEL: info
+      LOG_DIR: /app/logs
+    volumes:
+      - toolpilot_logs:/app/logs
     networks:
       - toolpilot
     depends_on:
@@ -218,3 +225,6 @@ volumes:
   redis_prod:
   caddy_data:
   caddy_config:
+  # Persistent error logs — shared between api + indexer containers.
+  # Mount: /app/logs — access via: docker exec api ls /app/logs
+  toolpilot_logs:

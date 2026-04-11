@@ -8,12 +8,14 @@
 import { serve } from '@hono/node-server';
 import { config } from '@toolcairn/config';
 import { prisma } from '@toolcairn/db';
+import { createLogger } from '@toolcairn/errors';
+import { createProdLogger } from '@toolcairn/errors/transports';
 import { createAllHandlers, createDeps } from '@toolcairn/tools';
 import { Hono } from 'hono';
 import { compress } from 'hono/compress';
-import pino from 'pino';
 import { recordLatency, startLoadMonitor } from './jobs/load-monitor.js';
 import { startUsageAggregator } from './jobs/usage-aggregator.js';
+import { createErrorHandler, requestIdMiddleware } from './middleware/error-handler.js';
 import { originAuth } from './middleware/origin-auth.js';
 import { adminRoutes } from './routes/admin.js';
 import { alertRoutes } from './routes/alerts.js';
@@ -30,16 +32,23 @@ import { scanRoutes } from './routes/scan.js';
 import { searchRoutes } from './routes/search.js';
 import { systemRoutes } from './routes/system.js';
 
-const logger = pino({ name: '@toolcairn/api' });
+const logger =
+  process.env.NODE_ENV === 'production'
+    ? createProdLogger({ name: '@toolcairn/api' })
+    : createLogger({ name: '@toolcairn/api' });
 
 // Create shared dependency container once at startup
 const deps = createDeps();
 const handlers = createAllHandlers(deps);
 
-const app = new Hono();
+type AppEnv = { Variables: { requestId: string } };
+const app = new Hono<AppEnv>();
 
 // Gzip all responses
 app.use('*', compress());
+
+// Assign a unique request ID to every request (reads X-Request-ID from CF Worker or generates one)
+app.use('*', requestIdMiddleware);
 
 // Request logging + latency recording for adaptive rate limiting
 app.use('*', async (c, next) => {
@@ -47,7 +56,16 @@ app.use('*', async (c, next) => {
   await next();
   const ms = Date.now() - t0;
   recordLatency(ms);
-  logger.info({ method: c.req.method, path: c.req.path, status: c.res.status, ms }, 'request');
+  logger.info(
+    {
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      ms,
+      requestId: c.get('requestId'),
+    },
+    'request',
+  );
 });
 
 // ── Public endpoints (no origin-auth) ────────────────────────────────────────
@@ -73,11 +91,8 @@ app.route('/v1/scan', scanRoutes());
 // 404 fallback
 app.notFound((c) => c.json({ error: 'not_found', path: c.req.path }, 404));
 
-// Global error handler
-app.onError((err, c) => {
-  logger.error({ err }, 'unhandled error');
-  return c.json({ error: 'internal_error', message: err.message }, 500);
-});
+// Global error handler — structured, code-bearing responses with request ID correlation
+app.onError(createErrorHandler(logger));
 
 const port = config.MCP_SERVER_PORT ?? 3001;
 

@@ -20,10 +20,10 @@
  */
 
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { getBestCoreSlot, getSlots } from './crawlers/rate-limit.js';
 
-const logger = pino({ name: '@toolcairn/indexer:cleanup-personal-repos' });
+const logger = createLogger({ name: '@toolcairn/indexer:cleanup-personal-repos' });
 const DRY_RUN = !process.argv.includes('--delete');
 
 const STAR_THRESHOLD = 1000;

@@ -1,11 +1,11 @@
 import { config } from '@toolcairn/config';
+import { createLogger } from '@toolcairn/errors';
 import { ISSUES_COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
 import { embedText } from '@toolcairn/vector';
-import pino from 'pino';
 import type { GitHubIssue } from '../crawlers/github-issues.js';
 import { IndexerError } from '../errors.js';
 
-const logger = pino({ name: '@toolcairn/indexer:qdrant-issues-writer' });
+const logger = createLogger({ name: '@toolcairn/indexer:qdrant-issues-writer' });
 
 const VECTOR_SIZE = 768;
 const BATCH_SIZE = 25;
@@ -42,10 +42,10 @@ export async function upsertIssueVectors(issues: GitHubIssue[]): Promise<void> {
         });
       } catch (e) {
         const detail = (e as { data?: unknown })?.data;
-        throw new IndexerError(
-          `Failed to upsert issue vectors (zero) batch ${i}: ${e instanceof Error ? e.message : String(e)}${detail ? ` | qdrant: ${JSON.stringify(detail)}` : ''}`,
-          e,
-        );
+        throw new IndexerError({
+          message: `Failed to upsert issue vectors (zero) batch ${i}: ${e instanceof Error ? e.message : String(e)}${detail ? ` | qdrant: ${JSON.stringify(detail)}` : ''}`,
+          cause: e,
+        });
       }
     }
     return;
@@ -70,10 +70,10 @@ export async function upsertIssueVectors(issues: GitHubIssue[]): Promise<void> {
         'Issue batch upserted',
       );
     } catch (e) {
-      throw new IndexerError(
-        `Failed to upsert issue vectors for batch starting at ${i}: ${e instanceof Error ? e.message : String(e)}`,
-        e,
-      );
+      throw new IndexerError({
+        message: `Failed to upsert issue vectors for batch starting at ${i}: ${e instanceof Error ? e.message : String(e)}`,
+        cause: e,
+      });
     }
   }
 }

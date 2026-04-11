@@ -179,6 +179,12 @@ export const FIND_TOOLS_BY_CATEGORIES = {
    ORDER BY t.health_maintenance_score DESC`,
 };
 
+export const FIND_ALL_TOOLS = {
+  text: `MATCH (t:Tool)
+   RETURN t
+   ORDER BY t.health_maintenance_score DESC`,
+};
+
 export const FIND_TOOLS_BY_TOPICS = {
   text: `MATCH (t:Tool)
    WHERE ANY(topic IN t.topics WHERE topic IN $topics)

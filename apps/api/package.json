@@ -15,6 +15,7 @@
   "dependencies": {
     "@hono/node-server": "^1.14.1",
     "@toolcairn/config": "workspace:*",
+    "@toolcairn/errors": "workspace:*",
     "@toolcairn/core": "workspace:*",
     "@toolcairn/db": "workspace:*",
     "@toolcairn/graph": "workspace:*",

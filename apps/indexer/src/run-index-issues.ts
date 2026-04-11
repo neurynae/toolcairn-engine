@@ -13,11 +13,11 @@
  */
 import { getMemgraphSession } from '@toolcairn/graph';
 import { ensureIssuesCollection } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { fetchToolIssues } from './crawlers/github-issues.js';
 import { upsertIssueVectors } from './writers/qdrant-issues.js';
 
-const logger = pino({ name: '@toolcairn/indexer:index-issues' });
+const logger = createLogger({ name: '@toolcairn/indexer:index-issues' });
 
 interface ToolRow {
   name: string;

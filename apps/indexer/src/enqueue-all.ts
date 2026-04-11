@@ -7,9 +7,9 @@
 
 import { PrismaClient } from '@toolcairn/db';
 import { enqueueIndexJob } from '@toolcairn/queue';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:enqueue-all' });
+const logger = createLogger({ name: '@toolcairn/indexer:enqueue-all' });
 
 async function main() {
   const prisma = new PrismaClient();

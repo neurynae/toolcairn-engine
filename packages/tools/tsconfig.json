@@ -4,14 +4,33 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "references": [
-    { "path": "../config" },
-    { "path": "../core" },
-    { "path": "../db" },
-    { "path": "../graph" },
-    { "path": "../queue" },
-    { "path": "../search" },
-    { "path": "../vector" }
+    {
+      "path": "../errors"
+    },
+    {
+      "path": "../config"
+    },
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../db"
+    },
+    {
+      "path": "../graph"
+    },
+    {
+      "path": "../queue"
+    },
+    {
+      "path": "../search"
+    },
+    {
+      "path": "../vector"
+    }
   ]
 }

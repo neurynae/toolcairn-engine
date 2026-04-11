@@ -12,9 +12,9 @@
  */
 
 import type { ToolNode } from '@toolcairn/core';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/search:stage0-exact' });
+const logger = createLogger({ name: '@toolcairn/search:stage0-exact' });
 
 export interface Stage0Result {
   match: ToolNode | null;

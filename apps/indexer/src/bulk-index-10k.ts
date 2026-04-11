@@ -25,7 +25,7 @@ import { Octokit } from '@octokit/rest';
 import { config } from '@toolcairn/config';
 import { PrismaClient } from '@toolcairn/db';
 import { enqueueIndexJob } from '@toolcairn/queue';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import {
   corePreFlight,
   getRateLimitStatus,
@@ -36,7 +36,7 @@ import {
 } from './crawlers/rate-limit.js';
 import { handleIndexJob } from './queue-consumers/index-consumer.js';
 
-const logger = pino({ name: '@toolcairn/indexer:bulk-10k', level: 'info' });
+const logger = createLogger({ name: '@toolcairn/indexer:bulk-10k', level: 'info' });
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 

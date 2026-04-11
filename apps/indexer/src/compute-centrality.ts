@@ -11,9 +11,9 @@
 
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:compute-centrality' });
+const logger = createLogger({ name: '@toolcairn/indexer:compute-centrality' });
 
 async function main() {
   const session = getMemgraphSession();

@@ -1,9 +1,9 @@
 import type { ToolNode } from '@toolcairn/core';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult, resolveToolName } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:compare-tools' });
+const logger = createLogger({ name: '@toolcairn/tools:compare-tools' });
 
 const POSITIVE_EDGE_TYPES = new Set(['COMPATIBLE_WITH', 'INTEGRATES_WITH', 'POPULAR_WITH']);
 const NEGATIVE_EDGE_TYPES = new Set(['CONFLICTS_WITH', 'BREAKS_FROM']);

@@ -1,9 +1,5 @@
-export class IndexerError extends Error {
-  constructor(
-    message: string,
-    public override readonly cause?: unknown,
-  ) {
-    super(message);
-    this.name = 'IndexerError';
-  }
-}
+/**
+ * @deprecated Import IndexerError from '@toolcairn/errors' instead.
+ * This file re-exports for backwards compatibility during migration.
+ */
+export { IndexerError } from '@toolcairn/errors';

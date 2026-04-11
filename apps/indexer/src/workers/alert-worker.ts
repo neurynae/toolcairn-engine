@@ -9,9 +9,9 @@
  */
 
 import { prisma } from '@toolcairn/db';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:alert-worker' });
+const logger = createLogger({ name: '@toolcairn/indexer:alert-worker' });
 
 export interface AlertPayload {
   event: 'tool.deprecation';

@@ -4,11 +4,11 @@ import {
   buildIncrementEdgeWeightQuery,
   getMemgraphSession,
 } from '@toolcairn/graph';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:report-outcome' });
+const logger = createLogger({ name: '@toolcairn/tools:report-outcome' });
 
 const WEIGHT_DELTA_SUCCESS = 0.05;
 const WEIGHT_DELTA_FAILURE = 0.05;

@@ -10,9 +10,9 @@
  */
 
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:backfill-docs-links' });
+const logger = createLogger({ name: '@toolcairn/indexer:backfill-docs-links' });
 
 async function main() {
   const session = getMemgraphSession();

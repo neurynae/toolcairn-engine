@@ -1,9 +1,9 @@
 import type { ToolNode } from '@toolcairn/core';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { SearchContext, Stage2Result } from '../types.js';
 
-const logger = pino({ name: '@toolcairn/search:stage2' });
+const logger = createLogger({ name: '@toolcairn/search:stage2' });
 const STAGE2_TOP_N = 25; // increased from 15 for better recall with 150-candidate Stage 1
 const MIN_RESULTS = 3;
 

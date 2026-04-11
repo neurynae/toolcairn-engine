@@ -1,4 +1,4 @@
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import {
   buildLowCredibilityWarning,
   buildNonIndexedGuidance,
@@ -7,7 +7,7 @@ import {
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:search-tools-respond' });
+const logger = createLogger({ name: '@toolcairn/tools:search-tools-respond' });
 
 export function createSearchToolsRespondHandler(
   deps: Pick<ToolDeps, 'pipeline' | 'sessionManager' | 'clarificationEngine'>,

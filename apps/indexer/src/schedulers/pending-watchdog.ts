@@ -15,9 +15,9 @@
 
 import type { PrismaClient } from '@toolcairn/db';
 import { enqueueIndexJob } from '@toolcairn/queue';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:pending-watchdog' });
+const logger = createLogger({ name: '@toolcairn/indexer:pending-watchdog' });
 
 const STUCK_THRESHOLD_MINUTES = 30;
 const BATCH_SIZE = 200;

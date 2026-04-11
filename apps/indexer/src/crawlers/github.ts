@@ -1,5 +1,5 @@
 import type { Octokit } from '@octokit/rest';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
@@ -13,7 +13,7 @@ import {
 } from './rate-limit.js';
 import { extractDocsUrl } from './readme-parser.js';
 
-const logger = pino({ name: '@toolcairn/indexer:github-crawler' });
+const logger = createLogger({ name: '@toolcairn/indexer:github-crawler' });
 
 /**
  * Fetch the README for a repo and extract the best documentation URL.
@@ -146,7 +146,7 @@ async function githubRequest<T>(
     }
   }
 
-  throw new IndexerError(`GitHub request failed after ${MAX_RETRIES} retries for key: ${cacheKey}`);
+  throw new IndexerError({ message: `GitHub request failed after ${MAX_RETRIES} retries for key: ${cacheKey}` });
 }
 
 export { githubRequest, getOctokit };
@@ -344,9 +344,9 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     return { source: 'github', url: repoData.html_url, raw, extracted };
   } catch (e) {
     if (e instanceof IndexerError) throw e;
-    throw new IndexerError(
-      `Failed to crawl GitHub repo ${owner}/${repo}: ${e instanceof Error ? e.message : String(e)}`,
-      e,
-    );
+    throw new IndexerError({
+      message: `Failed to crawl GitHub repo ${owner}/${repo}: ${e instanceof Error ? e.message : String(e)}`,
+      cause: e,
+    });
   }
 }

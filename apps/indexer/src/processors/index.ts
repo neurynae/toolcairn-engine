@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { DeploymentModel, ToolNode } from '@toolcairn/core';
 import { MemgraphToolRepository } from '@toolcairn/graph';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { CrawlerResult, ProcessedTool, TopicEdge } from '../types.js';
 import { generateEmbedding } from './embedding-processor.js';
 import { calculateHealth } from './health-calculator.js';
 import { extractRelationships } from './relationship-extractor.js';
 
-const logger = pino({ name: '@toolcairn/indexer:processor' });
+const logger = createLogger({ name: '@toolcairn/indexer:processor' });
 
 const VALID_DEPLOYMENT_MODELS: ReadonlySet<DeploymentModel> = new Set<DeploymentModel>([
   'self-hosted',

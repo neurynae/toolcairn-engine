@@ -10,9 +10,9 @@
 
 import { prisma } from '@toolcairn/db';
 import { getMemgraphSession } from '@toolcairn/graph';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:co-occurrence' });
+const logger = createLogger({ name: '@toolcairn/indexer:co-occurrence' });
 const MIN_SESSIONS = 3;
 
 interface SearchResult {

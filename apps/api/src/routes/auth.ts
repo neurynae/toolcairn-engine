@@ -6,9 +6,9 @@ import type { PrismaClient } from '@toolcairn/db';
 import bcrypt from 'bcryptjs';
 import { Hono } from 'hono';
 import { SignJWT } from 'jose';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/api/auth' });
+const logger = createLogger({ name: '@toolcairn/api/auth' });
 
 const USER_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const DEVICE_CODE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes

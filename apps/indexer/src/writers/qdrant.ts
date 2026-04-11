@@ -1,9 +1,9 @@
 import type { ToolNode } from '@toolcairn/core';
+import { createLogger } from '@toolcairn/errors';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import pino from 'pino';
 import { IndexerError } from '../errors.js';
 
-const logger = pino({ name: '@toolcairn/indexer:qdrant-writer' });
+const logger = createLogger({ name: '@toolcairn/indexer:qdrant-writer' });
 
 const VECTOR_SIZE = 768;
 
@@ -36,10 +36,10 @@ export async function upsertToolVector(tool: ToolNode, vector: number[]): Promis
     });
     logger.info({ toolId: tool.id, toolName: tool.name }, 'Tool vector upserted to Qdrant');
   } catch (e) {
-    throw new IndexerError(
-      `Failed to upsert tool vector to Qdrant for ${tool.name}: ${e instanceof Error ? e.message : String(e)}`,
-      e,
-    );
+    throw new IndexerError({
+      message: `Failed to upsert tool vector to Qdrant for ${tool.name}: ${e instanceof Error ? e.message : String(e)}`,
+      cause: e,
+    });
   }
 }
 
@@ -111,8 +111,8 @@ export async function upsertToolVectorBatch(
   );
 
   if (failureCount > 0) {
-    throw new IndexerError(
-      `upsertToolVectorBatch: ${failureCount} of ${tools.length} tools failed to upsert`,
-    );
+    throw new IndexerError({
+      message: `upsertToolVectorBatch: ${failureCount} of ${tools.length} tools failed to upsert`,
+    });
   }
 }

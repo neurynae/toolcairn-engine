@@ -1,7 +1,7 @@
 import { Octokit } from '@octokit/rest';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:rate-limit' });
+const logger = createLogger({ name: '@toolcairn/indexer:rate-limit' });
 
 // ─── Rate state ───────────────────────────────────────────────────────────────
 

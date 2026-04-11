@@ -7,11 +7,11 @@
  */
 
 import { prisma } from '@toolcairn/db';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { sendEmail } from '../email/resend-client.js';
 import { buildWeeklyDigestHtml } from '../email/templates/weekly-digest.js';
 
-const logger = pino({ name: '@toolcairn/indexer:digest-scheduler' });
+const logger = createLogger({ name: '@toolcairn/indexer:digest-scheduler' });
 
 /** Returns true if right now is Monday 06:00–06:59 UTC */
 function isMonday6am(): boolean {

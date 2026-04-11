@@ -1,9 +1,5 @@
-export class SearchError extends Error {
-  constructor(
-    message: string,
-    public override readonly cause?: unknown,
-  ) {
-    super(message);
-    this.name = 'SearchError';
-  }
-}
+/**
+ * @deprecated Import SearchError from '@toolcairn/errors' instead.
+ * This file re-exports for backwards compatibility during migration.
+ */
+export { SearchError } from '@toolcairn/errors';

@@ -1,9 +1,9 @@
 import { config } from '@toolcairn/config';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:check-issue' });
+const logger = createLogger({ name: '@toolcairn/tools:check-issue' });
 
 const DOCS_RETRY_THRESHOLD = 4;
 

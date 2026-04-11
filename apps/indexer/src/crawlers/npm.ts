@@ -1,10 +1,10 @@
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
 import { extractDocsUrl } from './readme-parser.js';
 
-const logger = pino({ name: '@toolcairn/indexer:npm-crawler' });
+const logger = createLogger({ name: '@toolcairn/indexer:npm-crawler' });
 
 interface NpmPackageResponse {
   name?: unknown;
@@ -37,7 +37,7 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
 
     const response = await fetch(url);
     if (!response.ok) {
-      throw new IndexerError(`npm registry returned ${response.status} for ${name}`);
+      throw new IndexerError({ message: `npm registry returned ${response.status} for ${name}` });
     }
 
     const raw: NpmPackageResponse = (await response.json()) as NpmPackageResponse;
@@ -101,9 +101,9 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
     };
   } catch (e) {
     if (e instanceof IndexerError) throw e;
-    throw new IndexerError(
-      `Failed to crawl npm package ${name}: ${e instanceof Error ? e.message : String(e)}`,
-      e,
-    );
+    throw new IndexerError({
+      message: `Failed to crawl npm package ${name}: ${e instanceof Error ? e.message : String(e)}`,
+      cause: e,
+    });
   }
 }

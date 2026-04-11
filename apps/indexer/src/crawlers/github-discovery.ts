@@ -12,7 +12,7 @@
  * 3. Results cache (in-memory) for same topic searches
  */
 
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { setProgress } from '../progress.js';
 import {
   getBestSearchSlot,
@@ -25,7 +25,7 @@ import {
 
 export { getRateLimitStatus, refreshRateLimitsFromGitHub };
 
-const logger = pino({ name: '@toolcairn/indexer:github-discovery' });
+const logger = createLogger({ name: '@toolcairn/indexer:github-discovery' });
 
 // ─── Types ───────────────────────────────────────────────────────────────────────
 

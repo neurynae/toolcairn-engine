@@ -14,10 +14,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { handleIndexJob } from './queue-consumers/index-consumer.js';
 
-const logger = pino({ name: '@toolcairn/indexer:run-seed' });
+const logger = createLogger({ name: '@toolcairn/indexer:run-seed' });
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

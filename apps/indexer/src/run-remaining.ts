@@ -2,10 +2,10 @@
  * Indexes all tools not yet in Memgraph from the full 120-tool list.
  * Run with: pnpm --filter @toolcairn/indexer exec tsx src/run-remaining.ts
  */
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { handleIndexJob } from './queue-consumers/index-consumer.js';
 
-const logger = pino({ name: '@toolcairn/indexer:run-remaining' });
+const logger = createLogger({ name: '@toolcairn/indexer:run-remaining' });
 
 const REMAINING_TOOLS = [
   // Missed from seed / extra-tools run

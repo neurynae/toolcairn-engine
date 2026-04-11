@@ -1,12 +1,12 @@
 import { MemgraphToolRepository } from '@toolcairn/graph';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { runCrawler } from '../crawlers/index.js';
 import { processTool } from '../processors/index.js';
 import { writeEdgeToMemgraph, writeToolToMemgraph, writeTopicNodes } from '../writers/memgraph.js';
 import { upsertIndexedTool } from '../writers/prisma.js';
 import { upsertToolVector } from '../writers/qdrant.js';
 
-const logger = pino({ name: '@toolcairn/indexer:index-consumer' });
+const logger = createLogger({ name: '@toolcairn/indexer:index-consumer' });
 
 function parseToolId(toolId: string): {
   source: 'github' | 'npm' | 'pypi' | 'crates.io';

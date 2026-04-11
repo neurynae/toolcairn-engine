@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@toolcairn/config": "workspace:*",
+    "@toolcairn/errors": "workspace:*",
     "@toolcairn/core": "workspace:*",
     "@toolcairn/db": "workspace:*",
     "@toolcairn/graph": "workspace:*",

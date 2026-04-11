@@ -2,10 +2,10 @@
  * Indexes the tools not yet in Memgraph (everything after the rate-limit cut-off).
  * Run with: pnpm --filter @toolcairn/indexer exec tsx src/run-missing.ts
  */
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { handleIndexJob } from './queue-consumers/index-consumer.js';
 
-const logger = pino({ name: '@toolcairn/indexer:run-missing' });
+const logger = createLogger({ name: '@toolcairn/indexer:run-missing' });
 
 const MISSING_TOOLS = [
   // React ecosystem (continued)

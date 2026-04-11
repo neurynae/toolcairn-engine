@@ -13,11 +13,11 @@
  */
 
 import { PrismaClient } from '@toolcairn/db';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { discoverReposAcrossTopics } from './crawlers/github-discovery.js';
 import { runDiscoveryScheduler } from './schedulers/discovery-scheduler.js';
 
-const logger = pino({ name: '@toolcairn/indexer:run-discovery' });
+const logger = createLogger({ name: '@toolcairn/indexer:run-discovery' });
 
 const DEFAULT_TOPICS = [
   'ai',

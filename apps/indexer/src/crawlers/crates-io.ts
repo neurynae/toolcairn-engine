@@ -1,9 +1,9 @@
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
 
-const logger = pino({ name: '@toolcairn/indexer:crates-io-crawler' });
+const logger = createLogger({ name: '@toolcairn/indexer:crates-io-crawler' });
 
 // crates.io requires a descriptive User-Agent per policy
 const USER_AGENT = 'ToolPilot-Indexer/0.0.1 (https://github.com/toolpilot/toolpilot)';
@@ -40,7 +40,7 @@ export async function crawlCratesIoPackage(name: string): Promise<CrawlerResult>
     });
 
     if (!response.ok) {
-      throw new IndexerError(`crates.io returned ${response.status} for ${name}`);
+      throw new IndexerError({ message: `crates.io returned ${response.status} for ${name}` });
     }
 
     const raw: CratesIoResponse = (await response.json()) as CratesIoResponse;
@@ -90,9 +90,9 @@ export async function crawlCratesIoPackage(name: string): Promise<CrawlerResult>
     };
   } catch (e) {
     if (e instanceof IndexerError) throw e;
-    throw new IndexerError(
-      `Failed to crawl crates.io package ${name}: ${e instanceof Error ? e.message : String(e)}`,
-      e,
-    );
+    throw new IndexerError({
+      message: `Failed to crawl crates.io package ${name}: ${e instanceof Error ? e.message : String(e)}`,
+      cause: e,
+    });
   }
 }

@@ -5,10 +5,10 @@
  * NOMIC_API_KEY optional (vector skipped if absent).
  * GITHUB_TOKEN required for >2 tools (unauthenticated = 60 req/hr).
  */
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { handleIndexJob } from './queue-consumers/index-consumer.js';
 
-const logger = pino({ name: '@toolcairn/indexer:run-direct' });
+const logger = createLogger({ name: '@toolcairn/indexer:run-direct' });
 
 // Original 20 seed tools
 const SEED_TOOLS = [

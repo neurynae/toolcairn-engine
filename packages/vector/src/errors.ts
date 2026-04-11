@@ -1,9 +1,5 @@
-export class VectorError extends Error {
-  constructor(
-    message: string,
-    public override readonly cause?: unknown,
-  ) {
-    super(message);
-    this.name = 'VectorError';
-  }
-}
+/**
+ * @deprecated Import VectorError from '@toolcairn/errors' instead.
+ * This file re-exports for backwards compatibility during migration.
+ */
+export { VectorError } from '@toolcairn/errors';

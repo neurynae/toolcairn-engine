@@ -1,4 +1,4 @@
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import {
   type AgentType,
   getInstructionsForAgent,
@@ -8,7 +8,7 @@ import {
 import { generateTrackerHtml } from '../templates/generate-tracker.js';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:toolpilot-init' });
+const logger = createLogger({ name: '@toolcairn/tools:toolpilot-init' });
 
 export async function handleToolpilotInit(args: {
   agent: AgentType;

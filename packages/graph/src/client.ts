@@ -1,8 +1,8 @@
 import { config } from '@toolcairn/config';
 import neo4j, { type Driver, type Session } from 'neo4j-driver';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/graph:client' });
+const logger = createLogger({ name: '@toolcairn/graph:client' });
 
 let driver: Driver | null = null;
 

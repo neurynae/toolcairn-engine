@@ -5,6 +5,7 @@ import {
   CREATE_TOOL,
   type CreateToolParams,
   DELETE_TOOL,
+  FIND_ALL_TOOLS,
   FIND_TOOLS_BY_CATEGORIES,
   FIND_TOOLS_BY_CATEGORY,
   FIND_TOOL_BY_GITHUB_URL,
@@ -110,6 +111,21 @@ export class MemgraphToolRepository implements ToolRepository {
     const session = this.session();
     try {
       const result = await session.run(FIND_TOOLS_BY_CATEGORY.text, { category });
+      const tools = result.records.map((r) => mapRecordToToolNode(r.toObject()));
+      return { ok: true, data: tools };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /** Fetch every Tool node with no filters — used for the "all tools" listing. */
+  async findAll(): Promise<ToolResult<ToolNode[]>> {
+    const session = this.session();
+    try {
+      const result = await session.run(FIND_ALL_TOOLS.text);
       const tools = result.records.map((r) => mapRecordToToolNode(r.toObject()));
       return { ok: true, data: tools };
     } catch (e) {
@@ -308,6 +324,28 @@ export class MemgraphToolRepository implements ToolRepository {
       const record = result.records[0];
       if (!record) return { ok: true, data: null };
       return { ok: true, data: mapRecordToToolNode(record.toObject()) };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /** Unfiltered count of all Tool nodes in Memgraph — used for the public landing page stat. */
+  async getTotalCount(): Promise<ToolResult<number>> {
+    const session = this.session();
+    try {
+      const result = await session.run('MATCH (t:Tool) RETURN count(t) AS total');
+      const record = result.records[0];
+      if (!record) return { ok: true, data: 0 };
+      const raw = record.get('total');
+      // neo4j-driver returns integers as { low, high } objects — unwrap with toNumber()
+      const total =
+        typeof raw === 'object' && raw !== null && 'low' in raw
+          ? (raw as { low: number; high: number }).low
+          : Number(raw);
+      return { ok: true, data: total };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return { ok: false, error: { code: 'DB_ERROR', message } };

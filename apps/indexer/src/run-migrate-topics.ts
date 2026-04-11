@@ -12,12 +12,12 @@
  */
 
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { crawlGitHubRepo } from './crawlers/github.js';
 import { NOISE_TOPICS, buildTopicEdges } from './processors/index.js';
 import { writeTopicNodes } from './writers/memgraph.js';
 
-const logger = pino({ name: '@toolcairn/indexer:migrate-topics' });
+const logger = createLogger({ name: '@toolcairn/indexer:migrate-topics' });
 
 // ─── Config from env ──────────────────────────────────────────────────────────
 

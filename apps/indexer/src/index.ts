@@ -1,10 +1,14 @@
 import { config } from '@toolcairn/config';
 import { ensureAllCollections } from '@toolcairn/vector';
 import { Redis } from 'ioredis';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
+import { createProdLogger } from '@toolcairn/errors/transports';
 import { startIndexWorker } from './workers/index-worker.js';
 
-const logger = pino({ name: '@toolcairn/indexer' });
+const logger =
+  process.env.NODE_ENV === 'production'
+    ? createProdLogger({ name: '@toolcairn/indexer' })
+    : createLogger({ name: '@toolcairn/indexer' });
 
 const LOCK_KEY = 'toolpilot:indexer:lock';
 const LOCK_TTL_SEC = 3600; // 1 hour — auto-expires if the process crashes

@@ -22,6 +22,7 @@
   "dependencies": {
     "@qdrant/js-client-rest": "^1.13.0",
     "@toolcairn/config": "workspace:*",
+    "@toolcairn/errors": "workspace:*",
     "@toolcairn/core": "workspace:*",
     "pino": "^9.6.0"
   },

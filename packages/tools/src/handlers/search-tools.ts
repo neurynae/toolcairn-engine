@@ -1,5 +1,5 @@
 import { buildExactLookupMaps, stage0ExactResolve, stage1HybridSearch } from '@toolcairn/search';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import {
   buildLowCredibilityWarning,
   buildNonIndexedGuidance,
@@ -8,7 +8,7 @@ import {
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:search-tools' });
+const logger = createLogger({ name: '@toolcairn/tools:search-tools' });
 
 const CLARIFICATION_THRESHOLD = 3;
 

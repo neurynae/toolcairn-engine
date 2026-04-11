@@ -6,14 +6,14 @@ import {
   startConsumer,
 } from '@toolcairn/queue';
 import type { QueueHandlers } from '@toolcairn/queue';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { getRateLimitStatus, refreshRateLimitsFromGitHub } from '../crawlers/github-discovery.js';
 import { handleIndexJob } from '../queue-consumers/index-consumer.js';
 import { runDiscoveryScheduler } from '../schedulers/discovery-scheduler.js';
 import { runPendingWatchdog } from '../schedulers/pending-watchdog.js';
 import { runReindexScheduler } from '../schedulers/reindex-scheduler.js';
 
-const logger = pino({ name: '@toolcairn/indexer:index-worker' });
+const logger = createLogger({ name: '@toolcairn/indexer:index-worker' });
 
 /** How often the cron loop wakes up to check whether schedulers are due. */
 const CRON_POLL_INTERVAL_MS = 60 * 60 * 1000; // 1 hour

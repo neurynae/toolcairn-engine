@@ -6,9 +6,9 @@
  */
 
 import { PrismaClient } from '@toolcairn/db';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:reset-for-reindex' });
+const logger = createLogger({ name: '@toolcairn/indexer:reset-for-reindex' });
 
 async function main() {
   const prisma = new PrismaClient();

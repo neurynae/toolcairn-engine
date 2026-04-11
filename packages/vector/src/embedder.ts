@@ -13,7 +13,7 @@ export async function embedText(
 ): Promise<number[]> {
   const results = await embedBatch([text], taskType);
   const result = results[0];
-  if (!result) throw new VectorError('embedText: no embedding returned');
+  if (!result) throw new VectorError({ message: 'embedText: no embedding returned' });
   return result;
 }
 
@@ -22,7 +22,7 @@ export async function embedBatch(
   taskType: EmbedTaskType = 'search_document',
 ): Promise<number[][]> {
   const apiKey = config.NOMIC_API_KEY;
-  if (!apiKey) throw new VectorError('NOMIC_API_KEY is not configured');
+  if (!apiKey) throw new VectorError({ message: 'NOMIC_API_KEY is not configured' });
 
   const embeddings: number[][] = [];
 
@@ -43,7 +43,7 @@ export async function embedBatch(
     });
 
     if (!response.ok) {
-      throw new VectorError(`Nomic API error: ${response.status} ${response.statusText}`);
+      throw new VectorError({ message: `Nomic API error: ${response.status} ${response.statusText}` });
     }
 
     const data = (await response.json()) as { embeddings: number[][] };

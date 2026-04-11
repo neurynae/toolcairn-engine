@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { githubRequest } from './github.js';
 
-const logger = pino({ name: '@toolcairn/indexer:github-issues-crawler' });
+const logger = createLogger({ name: '@toolcairn/indexer:github-issues-crawler' });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

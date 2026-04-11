@@ -149,7 +149,9 @@ export function dataRoutes() {
           if (topicsResult.ok) allTools = topicsResult.data;
         }
       } else {
-        const allResult = await repo.findByCategories(Array.from(ALL_CATEGORIES));
+        // Use findAll() — not findByCategories() — so tools without a recognised
+        // category slug are included. findByCategories was filtering to ~727 tools.
+        const allResult = await repo.findAll();
         if (allResult.ok) allTools = allResult.data;
       }
 
@@ -413,6 +415,22 @@ export function dataRoutes() {
           quality_score: computeQualityBreakdown(t.health),
         },
       });
+    } catch (e) {
+      return c.json(
+        { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
+        500,
+      );
+    }
+  });
+
+  // GET /v1/data/stats — unfiltered Memgraph tool count for public landing page
+  app.get('/stats', async (c) => {
+    try {
+      const result = await repo.getTotalCount();
+      if (!result.ok) {
+        return c.json({ ok: false, error: 'graph_error', message: result.error.message }, 500);
+      }
+      return c.json({ ok: true, data: { tool_count: result.data } });
     } catch (e) {
       return c.json(
         { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },

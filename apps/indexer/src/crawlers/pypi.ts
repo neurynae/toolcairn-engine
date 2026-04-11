@@ -1,9 +1,9 @@
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
 
-const logger = pino({ name: '@toolcairn/indexer:pypi-crawler' });
+const logger = createLogger({ name: '@toolcairn/indexer:pypi-crawler' });
 
 interface PyPiInfo {
   name?: unknown;
@@ -58,7 +58,7 @@ export async function crawlPyPiPackage(name: string): Promise<CrawlerResult> {
 
     const response = await fetch(url);
     if (!response.ok) {
-      throw new IndexerError(`PyPI returned ${response.status} for ${name}`);
+      throw new IndexerError({ message: `PyPI returned ${response.status} for ${name}` });
     }
 
     const raw: PyPiResponse = (await response.json()) as PyPiResponse;
@@ -128,9 +128,9 @@ export async function crawlPyPiPackage(name: string): Promise<CrawlerResult> {
     };
   } catch (e) {
     if (e instanceof IndexerError) throw e;
-    throw new IndexerError(
-      `Failed to crawl PyPI package ${name}: ${e instanceof Error ? e.message : String(e)}`,
-      e,
-    );
+    throw new IndexerError({
+      message: `Failed to crawl PyPI package ${name}: ${e instanceof Error ? e.message : String(e)}`,
+      cause: e,
+    });
   }
 }

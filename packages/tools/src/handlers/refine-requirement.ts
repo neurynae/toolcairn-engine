@@ -1,9 +1,9 @@
 import type { ToolCategory } from '@toolcairn/core';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:refine-requirement' });
+const logger = createLogger({ name: '@toolcairn/tools:refine-requirement' });
 
 const PROPRIETARY_PRONE_CATEGORIES: ToolCategory[] = [
   'monitoring',

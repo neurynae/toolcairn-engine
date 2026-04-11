@@ -7,9 +7,9 @@
  */
 
 import { prisma } from '@toolcairn/db';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/api:usage-aggregator' });
+const logger = createLogger({ name: '@toolcairn/api:usage-aggregator' });
 const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 function floorToHour(d: Date): Date {

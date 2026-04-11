@@ -1,7 +1,7 @@
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 import { errResult, okResult } from '../utils.js';
 
-const logger = pino({ name: '@toolcairn/tools:classify-prompt' });
+const logger = createLogger({ name: '@toolcairn/tools:classify-prompt' });
 
 // Categories a prompt can fall into
 export type PromptClassification =

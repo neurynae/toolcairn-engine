@@ -10,9 +10,9 @@
 
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import pino from 'pino';
+import { createLogger } from '@toolcairn/errors';
 
-const logger = pino({ name: '@toolcairn/indexer:compute-pagerank' });
+const logger = createLogger({ name: '@toolcairn/indexer:compute-pagerank' });
 
 async function main() {
   const session = getMemgraphSession();
