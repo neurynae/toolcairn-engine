@@ -1,9 +1,8 @@
 name: Daily Search Weights Update
 
 on:
-  schedule:
-    - cron: '0 6 * * *'   # 06:00 UTC daily (3 hours after indexer)
-  workflow_dispatch: {}    # manual trigger any time
+  # Cron moved to VPS system cron (/opt/toolcairn/scripts/run-search-weights.sh)
+  workflow_dispatch: {}    # manual trigger from GitHub UI any time
 
 jobs:
   update-weights:

@@ -1,9 +1,9 @@
 name: Daily Indexer
 
 on:
-  schedule:
-    - cron: '0 3 * * *'   # 03:00 UTC daily
-  workflow_dispatch: {}    # manual trigger any time
+  # Cron moved to VPS system cron (/opt/toolcairn/scripts/run-daily-indexer.sh)
+  # to avoid GitHub Actions 60-min SSH timeout on long indexer runs.
+  workflow_dispatch: {}    # manual trigger from GitHub UI any time
 
 jobs:
   trigger-indexer:

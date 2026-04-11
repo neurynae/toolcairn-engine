@@ -1,9 +1,9 @@
 name: Weekly Search Graph Refresh
 
 on:
-  schedule:
-    - cron: '0 5 * * 0'   # 05:00 UTC every Sunday
-  workflow_dispatch: {}    # manual trigger any time
+  # Cron moved to VPS system cron (/opt/toolcairn/scripts/run-weekly-graph.sh)
+  # PageRank + centrality can exceed the 60-min GitHub Actions SSH timeout.
+  workflow_dispatch: {}    # manual trigger from GitHub UI any time
 
 jobs:
   refresh-graph:
