@@ -19,8 +19,10 @@ RUN pnpm install --no-frozen-lockfile
 RUN pnpm --filter @toolcairn/db run db:generate
 
 # Build all packages in dependency order
+# errors must be built before vector/graph/queue/search which all import from it
 RUN pnpm --filter @toolcairn/config build && \
     pnpm --filter @toolcairn/core build && \
+    pnpm --filter @toolcairn/errors build && \
     pnpm --filter @toolcairn/db build && \
     pnpm --filter @toolcairn/vector build && \
     pnpm --filter @toolcairn/graph build && \
