@@ -423,14 +423,13 @@ export function dataRoutes() {
     }
   });
 
-  // GET /v1/data/stats — unfiltered Memgraph tool count for public landing page
+  // GET /v1/data/stats — total indexed tool count from PostgreSQL (IndexedTool table)
+  // Uses Prisma/Postgres not Memgraph — Postgres has the full indexer count (~39k+)
+  // whereas Memgraph only has tools that have been promoted to the graph (~28k).
   app.get('/stats', async (c) => {
     try {
-      const result = await repo.getTotalCount();
-      if (!result.ok) {
-        return c.json({ ok: false, error: 'graph_error', message: result.error.message }, 500);
-      }
-      return c.json({ ok: true, data: { tool_count: result.data } });
+      const tool_count = await prisma.indexedTool.count();
+      return c.json({ ok: true, data: { tool_count } });
     } catch (e) {
       return c.json(
         { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
