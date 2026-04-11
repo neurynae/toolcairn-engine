@@ -45,6 +45,15 @@ jobs:
               run --rm indexer node apps/indexer/dist/set-canonical-tools.js
             echo "=== Canonical flags done ($(date)) ==="
 
+            # Step 4: Personal repo quality cleanup
+            # Deletes personal repos with <500 stars immediately.
+            # Manages grace period for 500-999 star repos (4x1-week retries = ~1 month).
+            # After full re-index, owner_type is stored so GitHub API calls are minimal.
+            echo "=== Step 4: Personal repo cleanup ($(date)) ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.prod --profile indexer \
+              run --rm indexer node apps/indexer/dist/cleanup-personal-repos.js --delete
+            echo "=== Cleanup done ($(date)) ==="
+
             echo "Weekly graph refresh complete at $(date)"
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
