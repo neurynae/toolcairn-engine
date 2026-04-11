@@ -1,8 +1,8 @@
 import { config } from '@toolcairn/config';
-import { ensureAllCollections } from '@toolcairn/vector';
-import { Redis } from 'ioredis';
 import { createLogger } from '@toolcairn/errors';
 import { createProdLogger } from '@toolcairn/errors/transports';
+import { ensureAllCollections } from '@toolcairn/vector';
+import { Redis } from 'ioredis';
 import { startIndexWorker } from './workers/index-worker.js';
 
 const logger =

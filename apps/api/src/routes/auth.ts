@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@toolcairn/db';
+import { createLogger } from '@toolcairn/errors';
 /**
  * Auth routes — device code flow + user management for the web app.
  * These routes do NOT require origin-auth (called by Vercel public app + MCP CLI directly).
@@ -6,7 +7,6 @@ import type { PrismaClient } from '@toolcairn/db';
 import bcrypt from 'bcryptjs';
 import { Hono } from 'hono';
 import { SignJWT } from 'jose';
-import { createLogger } from '@toolcairn/errors';
 
 const logger = createLogger({ name: '@toolcairn/api/auth' });
 

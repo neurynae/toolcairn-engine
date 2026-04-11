@@ -16,9 +16,9 @@
  */
 
 import { PrismaClient } from '@toolcairn/db';
+import { createLogger } from '@toolcairn/errors';
 import { getMemgraphSession } from '@toolcairn/graph';
 import { enqueueIndexJob } from '@toolcairn/queue';
-import { createLogger } from '@toolcairn/errors';
 import { discoverReposAcrossTopics } from '../crawlers/github-discovery.js';
 import { clearProgress, setProgress } from '../progress.js';
 

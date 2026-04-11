@@ -43,7 +43,9 @@ export async function embedBatch(
     });
 
     if (!response.ok) {
-      throw new VectorError({ message: `Nomic API error: ${response.status} ${response.statusText}` });
+      throw new VectorError({
+        message: `Nomic API error: ${response.status} ${response.statusText}`,
+      });
     }
 
     const data = (await response.json()) as { embeddings: number[][] };

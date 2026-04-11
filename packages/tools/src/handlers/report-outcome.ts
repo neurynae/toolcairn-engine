@@ -1,10 +1,10 @@
 import type { EdgeType } from '@toolcairn/core';
+import { createLogger } from '@toolcairn/errors';
 import {
   buildDecrementEdgeWeightQuery,
   buildIncrementEdgeWeightQuery,
   getMemgraphSession,
 } from '@toolcairn/graph';
-import { createLogger } from '@toolcairn/errors';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 

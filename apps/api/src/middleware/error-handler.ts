@@ -1,5 +1,5 @@
-import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
 import { AppError } from '@toolcairn/errors';
+import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
 import type { Logger } from 'pino';
 
 /**
@@ -42,8 +42,7 @@ export function createErrorHandler(logger: Logger): ErrorHandler {
     const isProd = process.env.NODE_ENV === 'production';
 
     if (err instanceof AppError) {
-      const logLevel =
-        err.severity === 'critical' || err.severity === 'high' ? 'error' : 'warn';
+      const logLevel = err.severity === 'critical' || err.severity === 'high' ? 'error' : 'warn';
 
       logger[logLevel](
         {

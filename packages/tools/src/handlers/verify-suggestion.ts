@@ -1,7 +1,7 @@
 import { config } from '@toolcairn/config';
 import type { ToolNode } from '@toolcairn/core';
-import { COLLECTION_NAME, embedText, qdrantClient } from '@toolcairn/vector';
 import { createLogger } from '@toolcairn/errors';
+import { COLLECTION_NAME, embedText, qdrantClient } from '@toolcairn/vector';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 

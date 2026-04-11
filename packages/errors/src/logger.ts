@@ -59,7 +59,10 @@ export interface CreateLoggerOptions {
  *   pnpm dev | pnpm exec pino-pretty
  */
 export function createLogger(opts: CreateLoggerOptions): Logger {
-  const level = opts.level ?? process.env.LOG_LEVEL ?? (process.env.NODE_ENV !== 'production' ? 'debug' : 'info');
+  const level =
+    opts.level ??
+    process.env.LOG_LEVEL ??
+    (process.env.NODE_ENV !== 'production' ? 'debug' : 'info');
 
   const pinoOpts: LoggerOptions = {
     name: opts.name,

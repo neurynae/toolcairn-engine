@@ -12,9 +12,9 @@
  */
 
 import { PrismaClient } from '@toolcairn/db';
+import { createLogger } from '@toolcairn/errors';
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import { createLogger } from '@toolcairn/errors';
 
 const logger = createLogger({ name: '@toolcairn/indexer:update-search-weights' });
 const WEIGHT_INCREMENT = 0.02;

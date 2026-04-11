@@ -8,9 +8,9 @@
  * Run weekly via cron. Usage: pnpm tsx src/compute-pagerank.ts
  */
 
+import { createLogger } from '@toolcairn/errors';
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import { createLogger } from '@toolcairn/errors';
 
 const logger = createLogger({ name: '@toolcairn/indexer:compute-pagerank' });
 

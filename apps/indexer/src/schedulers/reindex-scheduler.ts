@@ -8,8 +8,8 @@
  */
 
 import { PrismaClient } from '@toolcairn/db';
-import { enqueueBatchReindex } from '@toolcairn/queue';
 import { createLogger } from '@toolcairn/errors';
+import { enqueueBatchReindex } from '@toolcairn/queue';
 
 const logger = createLogger({ name: '@toolcairn/indexer:reindex-scheduler' });
 

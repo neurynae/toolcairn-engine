@@ -26,9 +26,9 @@ async function cleanupLogs(): Promise<void> {
     return;
   }
 
-  let deleted = 0;
-  let skipped = 0;
-  let errors = 0;
+  let _deleted = 0;
+  let _skipped = 0;
+  let _errors = 0;
 
   for (const file of files) {
     if (!LOG_FILE_PATTERN.test(file)) continue;
@@ -38,20 +38,15 @@ async function cleanupLogs(): Promise<void> {
       const { mtime } = await stat(filePath);
       if (mtime < cutoff) {
         await unlink(filePath);
-        deleted++;
-        console.log(`[cleanup-logs] Deleted: ${filePath} (mtime: ${mtime.toISOString()})`);
+        _deleted++;
       } else {
-        skipped++;
+        _skipped++;
       }
     } catch (err) {
-      errors++;
+      _errors++;
       console.error(`[cleanup-logs] Failed to process ${filePath}:`, err);
     }
   }
-
-  console.log(
-    `[cleanup-logs] Done: ${deleted} deleted, ${skipped} kept, ${errors} errors. Cutoff: ${cutoff.toISOString()}`,
-  );
 }
 
 cleanupLogs().catch((err) => {

@@ -1,3 +1,4 @@
+import { createLogger } from '@toolcairn/errors';
 /**
  * Repairs the Qdrant tools collection by upserting every tool that exists in
  * Memgraph but is missing from Qdrant (e.g. tools indexed before the
@@ -9,7 +10,6 @@
 import { getMemgraphSession } from '@toolcairn/graph';
 import { mapRecordToToolNode } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import { createLogger } from '@toolcairn/errors';
 
 const logger = createLogger({ name: '@toolcairn/indexer:repair-qdrant' });
 const VECTOR_SIZE = 768;

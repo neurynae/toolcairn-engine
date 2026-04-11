@@ -1,5 +1,5 @@
-import { buildExactLookupMaps, stage0ExactResolve, stage1HybridSearch } from '@toolcairn/search';
 import { createLogger } from '@toolcairn/errors';
+import { buildExactLookupMaps, stage0ExactResolve, stage1HybridSearch } from '@toolcairn/search';
 import {
   buildLowCredibilityWarning,
   buildNonIndexedGuidance,

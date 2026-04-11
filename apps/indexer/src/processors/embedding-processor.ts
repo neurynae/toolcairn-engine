@@ -1,6 +1,6 @@
 import type { ToolNode } from '@toolcairn/core';
-import { embedBatch, toolEmbedText } from '@toolcairn/vector';
 import { createLogger } from '@toolcairn/errors';
+import { embedBatch, toolEmbedText } from '@toolcairn/vector';
 import { IndexerError } from '../errors.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:embedding-processor' });

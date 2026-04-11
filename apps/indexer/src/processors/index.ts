@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DeploymentModel, ToolNode } from '@toolcairn/core';
-import { MemgraphToolRepository } from '@toolcairn/graph';
 import { createLogger } from '@toolcairn/errors';
+import { MemgraphToolRepository } from '@toolcairn/graph';
 import type { CrawlerResult, ProcessedTool, TopicEdge } from '../types.js';
 import { generateEmbedding } from './embedding-processor.js';
 import { calculateHealth } from './health-calculator.js';

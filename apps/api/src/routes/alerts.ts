@@ -47,10 +47,7 @@ export function alertRoutes(prisma: PrismaClient): Hono {
             subscribed_at: s.created_at.toISOString(),
           })),
           webhook_url: user?.alertWebhookUrl ?? null,
-          is_pro:
-            user?.plan === 'pro' && user.planExpiresAt && user.planExpiresAt > new Date()
-              ? true
-              : false,
+          is_pro: !!(user?.plan === 'pro' && user.planExpiresAt && user.planExpiresAt > new Date()),
         },
       });
     } catch (e) {

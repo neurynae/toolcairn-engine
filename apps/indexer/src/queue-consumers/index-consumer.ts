@@ -1,5 +1,5 @@
-import { MemgraphToolRepository } from '@toolcairn/graph';
 import { createLogger } from '@toolcairn/errors';
+import { MemgraphToolRepository } from '@toolcairn/graph';
 import { runCrawler } from '../crawlers/index.js';
 import { processTool } from '../processors/index.js';
 import { writeEdgeToMemgraph, writeToolToMemgraph, writeTopicNodes } from '../writers/memgraph.js';

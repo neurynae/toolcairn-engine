@@ -1,5 +1,5 @@
-import type { SearchContext } from '@toolcairn/search';
 import { createLogger } from '@toolcairn/errors';
+import type { SearchContext } from '@toolcairn/search';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 

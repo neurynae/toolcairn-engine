@@ -24,8 +24,8 @@
 import { Octokit } from '@octokit/rest';
 import { config } from '@toolcairn/config';
 import { PrismaClient } from '@toolcairn/db';
-import { enqueueIndexJob } from '@toolcairn/queue';
 import { createLogger } from '@toolcairn/errors';
+import { enqueueIndexJob } from '@toolcairn/queue';
 import {
   corePreFlight,
   getRateLimitStatus,

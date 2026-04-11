@@ -9,8 +9,8 @@
  */
 
 import { prisma } from '@toolcairn/db';
-import { getMemgraphSession } from '@toolcairn/graph';
 import { createLogger } from '@toolcairn/errors';
+import { getMemgraphSession } from '@toolcairn/graph';
 
 const logger = createLogger({ name: '@toolcairn/indexer:co-occurrence' });
 const MIN_SESSIONS = 3;

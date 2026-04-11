@@ -19,8 +19,8 @@
  * Designed to be run weekly (e.g. cron) so grace window checks stay accurate.
  */
 
-import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { createLogger } from '@toolcairn/errors';
+import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { getBestCoreSlot, getSlots } from './crawlers/rate-limit.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:cleanup-personal-repos' });

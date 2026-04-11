@@ -6,8 +6,8 @@
  */
 
 import { PrismaClient } from '@toolcairn/db';
-import { enqueueIndexJob } from '@toolcairn/queue';
 import { createLogger } from '@toolcairn/errors';
+import { enqueueIndexJob } from '@toolcairn/queue';
 
 const logger = createLogger({ name: '@toolcairn/indexer:enqueue-all' });
 

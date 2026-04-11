@@ -22,7 +22,9 @@ export async function runCrawler(
       const owner = parts[0];
       const repo = parts[1];
       if (!owner || !repo) {
-        throw new IndexerError({ message: `Invalid GitHub URL format: "${url}" — expected "owner/repo"` });
+        throw new IndexerError({
+          message: `Invalid GitHub URL format: "${url}" — expected "owner/repo"`,
+        });
       }
       return crawlGitHubRepo(owner, repo);
     }

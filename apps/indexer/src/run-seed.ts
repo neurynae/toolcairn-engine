@@ -13,8 +13,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { createLogger } from '@toolcairn/errors';
+import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { handleIndexJob } from './queue-consumers/index-consumer.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:run-seed' });

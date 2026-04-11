@@ -8,8 +8,8 @@
 
 import { config } from '@toolcairn/config';
 import { prisma } from '@toolcairn/db';
-import { Redis } from 'ioredis';
 import { createLogger } from '@toolcairn/errors';
+import { Redis } from 'ioredis';
 
 const logger = createLogger({ name: '@toolcairn/api:load-monitor' });
 const INTERVAL_MS = 60_000;

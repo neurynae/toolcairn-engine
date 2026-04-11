@@ -11,9 +11,9 @@
  * Usage: pnpm tsx src/set-canonical-tools.ts
  */
 
+import { createLogger } from '@toolcairn/errors';
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import { createLogger } from '@toolcairn/errors';
 
 const logger = createLogger({ name: '@toolcairn/indexer:set-canonical-tools' });
 

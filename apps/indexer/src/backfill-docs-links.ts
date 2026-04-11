@@ -9,8 +9,8 @@
  * Usage: pnpm tsx src/backfill-docs-links.ts
  */
 
-import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { createLogger } from '@toolcairn/errors';
+import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 
 const logger = createLogger({ name: '@toolcairn/indexer:backfill-docs-links' });
 

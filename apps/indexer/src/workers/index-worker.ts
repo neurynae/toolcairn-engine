@@ -1,4 +1,5 @@
 import { PrismaClient } from '@toolcairn/db';
+import { createLogger } from '@toolcairn/errors';
 import {
   enqueueDiscoveryTrigger,
   enqueueReindexTrigger,
@@ -6,7 +7,6 @@ import {
   startConsumer,
 } from '@toolcairn/queue';
 import type { QueueHandlers } from '@toolcairn/queue';
-import { createLogger } from '@toolcairn/errors';
 import { getRateLimitStatus, refreshRateLimitsFromGitHub } from '../crawlers/github-discovery.js';
 import { handleIndexJob } from '../queue-consumers/index-consumer.js';
 import { runDiscoveryScheduler } from '../schedulers/discovery-scheduler.js';

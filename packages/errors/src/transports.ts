@@ -1,6 +1,6 @@
 import pino from 'pino';
-import { errorSerializer } from './serializers.js';
 import type { CreateLoggerOptions } from './logger.js';
+import { errorSerializer } from './serializers.js';
 
 const REDACT_PATHS = [
   'password',

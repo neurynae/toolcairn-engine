@@ -1,3 +1,4 @@
+import { createLogger } from '@toolcairn/errors';
 /**
  * Crawls GitHub Issues for all tools in Memgraph and upserts them into the
  * Qdrant 'issues' collection for semantic search by check_issue.
@@ -13,7 +14,6 @@
  */
 import { getMemgraphSession } from '@toolcairn/graph';
 import { ensureIssuesCollection } from '@toolcairn/vector';
-import { createLogger } from '@toolcairn/errors';
 import { fetchToolIssues } from './crawlers/github-issues.js';
 import { upsertIssueVectors } from './writers/qdrant-issues.js';
 

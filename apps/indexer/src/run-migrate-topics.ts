@@ -11,8 +11,8 @@
  *   BATCH_SIZE=10        — number of tools per batch (default: 5, rate-limit friendly)
  */
 
-import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { createLogger } from '@toolcairn/errors';
+import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { crawlGitHubRepo } from './crawlers/github.js';
 import { NOISE_TOPICS, buildTopicEdges } from './processors/index.js';
 import { writeTopicNodes } from './writers/memgraph.js';

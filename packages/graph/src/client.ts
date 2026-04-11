@@ -1,6 +1,6 @@
 import { config } from '@toolcairn/config';
-import neo4j, { type Driver, type Session } from 'neo4j-driver';
 import { createLogger } from '@toolcairn/errors';
+import neo4j, { type Driver, type Session } from 'neo4j-driver';
 
 const logger = createLogger({ name: '@toolcairn/graph:client' });
 

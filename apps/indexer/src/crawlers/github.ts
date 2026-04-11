@@ -146,7 +146,9 @@ async function githubRequest<T>(
     }
   }
 
-  throw new IndexerError({ message: `GitHub request failed after ${MAX_RETRIES} retries for key: ${cacheKey}` });
+  throw new IndexerError({
+    message: `GitHub request failed after ${MAX_RETRIES} retries for key: ${cacheKey}`,
+  });
 }
 
 export { githubRequest, getOctokit };

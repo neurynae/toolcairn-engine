@@ -1,6 +1,6 @@
 import type { ToolNode } from '@toolcairn/core';
-import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
 import { createLogger } from '@toolcairn/errors';
+import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
 import { ClarificationEngine } from './clarification/engine.js';
 import type { SearchSessionManager } from './session.js';
 import { buildExactLookupMaps, stage0ExactResolve } from './stages/stage0-exact.js';

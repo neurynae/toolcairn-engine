@@ -40,8 +40,8 @@ function extractMarkdownLinks(md: string): Array<{ text: string; url: string }> 
   const results: Array<{ text: string; url: string }> = [];
   // Match [text](url) — handles nested brackets in text, but not nested parens
   const re = /\[([^\]]{1,120})\]\((https?:\/\/[^)\s]{5,300})\)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(md)) !== null) {
+  // biome-ignore lint/suspicious/noAssignInExpressions: standard RegExp exec loop pattern
+  for (let m = re.exec(md); m !== null; m = re.exec(md)) {
     const text = (m[1] ?? '').toLowerCase().trim();
     const url = clean(m[2] ?? '');
     if (!isExcluded(url)) {

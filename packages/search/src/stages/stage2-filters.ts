@@ -1,6 +1,6 @@
 import type { ToolNode } from '@toolcairn/core';
-import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
 import { createLogger } from '@toolcairn/errors';
+import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
 import type { SearchContext, Stage2Result } from '../types.js';
 
 const logger = createLogger({ name: '@toolcairn/search:stage2' });
