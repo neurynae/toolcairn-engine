@@ -40,6 +40,7 @@ COPY packages/tsconfig ./packages/tsconfig/
 COPY packages/config/package.json ./packages/config/
 COPY packages/core/package.json ./packages/core/
 COPY packages/db/package.json ./packages/db/
+COPY packages/errors/package.json ./packages/errors/
 COPY packages/graph/package.json ./packages/graph/
 COPY packages/queue/package.json ./packages/queue/
 COPY packages/search/package.json ./packages/search/
@@ -56,6 +57,7 @@ COPY --from=builder /app/node_modules/.pnpm ./node_modules/.pnpm
 COPY --from=builder /app/packages/config/dist ./packages/config/dist
 COPY --from=builder /app/packages/core/dist ./packages/core/dist
 COPY --from=builder /app/packages/db/dist ./packages/db/dist
+COPY --from=builder /app/packages/errors/dist ./packages/errors/dist
 COPY --from=builder /app/packages/graph/dist ./packages/graph/dist
 COPY --from=builder /app/packages/queue/dist ./packages/queue/dist
 COPY --from=builder /app/packages/search/dist ./packages/search/dist
