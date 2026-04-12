@@ -1,13 +1,15 @@
 /**
- * Cron job status and manual trigger endpoints — /v1/admin/cron/*
+ * Cron job status, logs, and manual trigger endpoints — /v1/admin/cron/*
  *
  * Status is tracked via JSON files in /app/cron-status/ (bind-mounted from
  * /opt/toolcairn/cron-status/ on the VPS host). Wrapper scripts write the
- * JSON before/after each run. Triggers write a .trigger file that the
- * per-minute cron-trigger-watcher.sh picks up and executes.
+ * JSON before/after each run. Each script also writes a per-job .log file
+ * (truncated at run start) for real-time log streaming. Triggers write a
+ * .trigger file that the per-minute cron-trigger-watcher.sh picks up.
  *
  * Routes:
  *   GET  /v1/admin/cron              — status of all 3 jobs
+ *   GET  /v1/admin/cron/:job/logs    — last N lines of the per-job log file
  *   POST /v1/admin/cron/:job/trigger — write trigger file for manual run
  */
 
@@ -190,6 +192,28 @@ export function adminCronRoutes() {
     );
 
     return c.json({ ok: true, data: { jobs } });
+  });
+
+  // ── GET /v1/admin/cron/:job/logs — last N lines of the per-job log file ───
+  app.get('/:job/logs', async (c) => {
+    const jobId = c.req.param('job');
+    if (!(JOB_IDS as readonly string[]).includes(jobId)) {
+      return c.json({ ok: false, error: `Unknown job: ${jobId}` }, 400);
+    }
+
+    const linesParam = Number(c.req.query('lines') ?? '100');
+    const lines = Number.isFinite(linesParam) ? Math.min(Math.max(linesParam, 1), 500) : 100;
+
+    const logPath = path.join(CRON_STATUS_DIR, `${jobId}.log`);
+    try {
+      const raw = await fs.readFile(logPath, 'utf8');
+      const allLines = raw.split('\n').filter(Boolean);
+      const tail = allLines.slice(-lines);
+      return c.json({ ok: true, data: { lines: tail, total: allLines.length } });
+    } catch {
+      // File doesn't exist yet (job never ran)
+      return c.json({ ok: true, data: { lines: [], total: 0 } });
+    }
   });
 
   // ── POST /v1/admin/cron/:job/trigger — manual trigger ─────────────────────
