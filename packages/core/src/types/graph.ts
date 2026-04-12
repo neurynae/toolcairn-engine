@@ -14,7 +14,8 @@ export type EdgeSource =
   | 'manual'
   | 'co_occurrence'
   | 'changelog'
-  | 'declared_dependency';
+  | 'declared_dependency'
+  | 'vector_similarity';
 
 export type EdgeType =
   | 'SOLVES'

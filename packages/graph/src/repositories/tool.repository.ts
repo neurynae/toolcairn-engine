@@ -12,9 +12,13 @@ import {
   FIND_TOOL_BY_NAME,
   GET_ALL_TOOL_NAMES,
   GET_DIRECT_EDGES_BETWEEN,
+  GET_PAIRWISE_EDGES,
   GET_RELATED_TOOLS,
   GET_TOOL_NEIGHBORHOOD,
+  GET_TOOL_USE_CASES,
+  type PairwiseEdge,
   TOOL_EXISTS,
+  type ToolUseCases,
   type UpsertEdgeParams,
   buildUpsertEdgeQuery,
   mapNeighborhoodRecords,
@@ -324,6 +328,44 @@ export class MemgraphToolRepository implements ToolRepository {
       const record = result.records[0];
       if (!record) return { ok: true, data: null };
       return { ok: true, data: mapRecordToToolNode(record.toObject()) };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  async getPairwiseEdges(names: string[]): Promise<ToolResult<PairwiseEdge[]>> {
+    if (names.length < 2) return { ok: true, data: [] };
+    const session = this.session();
+    try {
+      const result = await session.run(GET_PAIRWISE_EDGES.text, { names });
+      const edges: PairwiseEdge[] = result.records.map((r) => ({
+        source: String(r.get('source')),
+        target: String(r.get('target')),
+        edgeType: String(r.get('edge_type')),
+        effectiveWeight: Number(r.get('effective_weight') ?? 0.5),
+      }));
+      return { ok: true, data: edges };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  async getToolUseCases(names: string[]): Promise<ToolResult<ToolUseCases[]>> {
+    if (names.length === 0) return { ok: true, data: [] };
+    const session = this.session();
+    try {
+      const result = await session.run(GET_TOOL_USE_CASES.text, { names });
+      const rows: ToolUseCases[] = result.records.map((r) => ({
+        toolName: String(r.get('tool_name')),
+        useCases: (r.get('use_cases') as string[]) ?? [],
+      }));
+      return { ok: true, data: rows };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return { ok: false, error: { code: 'DB_ERROR', message } };

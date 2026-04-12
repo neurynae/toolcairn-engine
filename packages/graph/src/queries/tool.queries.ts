@@ -536,3 +536,38 @@ export const UPSERT_CO_OCCURS_EDGE = {
                  e.last_seen = $now
   `,
 };
+
+// ─── Stack composition queries ───────────────────────────────────────────────
+
+/** Batch-fetch SOLVES→UseCase connections for a set of tools. */
+export interface ToolUseCases {
+  toolName: string;
+  useCases: string[];
+}
+
+export const GET_TOOL_USE_CASES = {
+  text: `MATCH (t:Tool)-[:SOLVES]->(u:UseCase)
+WHERE t.name IN $names
+RETURN t.name AS tool_name, collect(u.name) AS use_cases`,
+};
+
+/**
+ * Fetch all edges between a set of tools (undirected, deduplicated).
+ * Used by stack composition for integration affinity and REPLACES penalty.
+ */
+export interface PairwiseEdge {
+  source: string;
+  target: string;
+  edgeType: string;
+  effectiveWeight: number;
+}
+
+export const GET_PAIRWISE_EDGES = {
+  text: `MATCH (a:Tool)-[e:INTEGRATES_WITH|COMPATIBLE_WITH|POPULAR_WITH|REPLACES|CONFLICTS_WITH|CO_OCCURS_WITH]-(b:Tool)
+WHERE a.name IN $names AND b.name IN $names AND a.name < b.name
+RETURN a.name AS source, b.name AS target, type(e) AS edge_type,
+       CASE WHEN e.last_verified IS NULL THEN coalesce(e.weight, 0.5)
+            ELSE coalesce(e.weight, 0.5) * exp(-coalesce(e.decay_rate, 0.05) *
+                 (datetime() - datetime(e.last_verified)).day)
+       END AS effective_weight`,
+};

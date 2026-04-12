@@ -1,5 +1,5 @@
 import type { GraphEdge, Result, ToolCategory, ToolNode } from '@toolcairn/core';
-import type { ToolNeighborhood } from '../queries/tool.queries.js';
+import type { PairwiseEdge, ToolNeighborhood, ToolUseCases } from '../queries/tool.queries.js';
 
 export interface RepositoryError {
   code: string;
@@ -32,6 +32,8 @@ export interface ToolRepository {
     limit?: number,
   ): Promise<Result<ToolNode[], RepositoryError>>;
   findByGitHubUrl(urlFragment: string): Promise<Result<ToolNode | null, RepositoryError>>;
+  getPairwiseEdges(names: string[]): Promise<Result<PairwiseEdge[], RepositoryError>>;
+  getToolUseCases(names: string[]): Promise<Result<ToolUseCases[], RepositoryError>>;
 }
 
 export type TopicNodeType = 'UseCase' | 'Pattern' | 'Stack';

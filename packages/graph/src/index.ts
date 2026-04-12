@@ -17,10 +17,12 @@ export {
   FIND_TOOLS_BY_CATEGORY,
   GET_DIRECT_EDGES_BETWEEN,
   GET_INTEGRATION_NEIGHBORS,
+  GET_PAIRWISE_EDGES,
   GET_RELATED_TOOLS,
   GET_TOOL_CO_OCCURRENCES,
   GET_TOOL_GRAPH_RERANK,
   GET_TOOL_NEIGHBORHOOD,
+  GET_TOOL_USE_CASES,
   TOOL_EXISTS,
   buildDecrementEdgeWeightQuery,
   buildIncrementEdgeWeightQuery,
@@ -33,8 +35,10 @@ export {
   type FindByNameParams,
   type GetRelatedParams,
   type GetToolNeighborhoodParams,
+  type PairwiseEdge,
   type ToolNeighborEdge,
   type ToolNeighborhood,
+  type ToolUseCases,
   type UpsertEdgeParams,
 } from './queries/tool.queries.js';
 

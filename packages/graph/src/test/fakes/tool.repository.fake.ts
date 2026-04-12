@@ -1,5 +1,5 @@
 import type { GraphEdge, Result, ToolCategory, ToolNode } from '@toolcairn/core';
-import type { ToolNeighborhood } from '../../queries/tool.queries.js';
+import type { PairwiseEdge, ToolNeighborhood, ToolUseCases } from '../../queries/tool.queries.js';
 import type { DirectEdge, RepositoryError, ToolRepository } from '../../repositories/interfaces.js';
 
 type ToolResult<T> = { ok: true; data: T } | { ok: false; error: RepositoryError };
@@ -139,6 +139,18 @@ export class FakeToolRepository implements ToolRepository {
   async findByGitHubUrl(urlFragment: string): Promise<ToolResult<ToolNode | null>> {
     const found = Array.from(this.tools.values()).find((t) => t.github_url?.includes(urlFragment));
     return { ok: true, data: found ?? null };
+  }
+
+  async getPairwiseEdges(
+    _names: string[],
+  ): Promise<Result<PairwiseEdge[], RepositoryError>> {
+    return { ok: true, data: [] };
+  }
+
+  async getToolUseCases(
+    _names: string[],
+  ): Promise<Result<ToolUseCases[], RepositoryError>> {
+    return { ok: true, data: [] };
   }
 
   async getAllToolNames(): Promise<ToolResult<string[]>> {
