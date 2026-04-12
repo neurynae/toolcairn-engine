@@ -191,25 +191,38 @@ async function readFromPEL(
 async function reclaimStalePending(group: string, consumer: string): Promise<number> {
   const redis = getRedisClient();
   const IDLE_MS = 60_000; // reclaim messages idle > 1 minute
+  const BATCH = 500;
   let totalClaimed = 0;
 
   for (const stream of [INDEX_STREAM, SCHEDULER_STREAM]) {
     try {
-      // Transfer orphaned PEL entries to this consumer
-      const result = await redis.xautoclaim(
-        stream,
-        group,
-        consumer,
-        IDLE_MS,
-        '0-0',
-        'COUNT',
-        '500',
-      );
-      // ioredis returns [nextId, [[entryId, fields], ...], deletedIds]
-      const entries: [string, string[]][] = Array.isArray(result[1]) ? result[1] : [];
-      if (entries.length > 0) {
-        totalClaimed += entries.length;
-        logger.info({ stream, count: entries.length }, 'Reclaimed stale PEL messages — will drain');
+      // Loop with cursor until XAUTOCLAIM returns '0-0' (all PEL entries scanned).
+      // A single call with COUNT 500 only claims the first 500 messages — without
+      // the loop, thousands of orphaned messages from dead containers are never reclaimed.
+      let cursor = '0-0';
+      while (true) {
+        const result = await redis.xautoclaim(
+          stream,
+          group,
+          consumer,
+          IDLE_MS,
+          cursor,
+          'COUNT',
+          String(BATCH),
+        );
+        // ioredis returns [nextCursor, [[entryId, fields], ...], deletedIds]
+        const nextCursor = result[0] as string;
+        const entries: [string, string[]][] = Array.isArray(result[1]) ? result[1] : [];
+        if (entries.length > 0) {
+          totalClaimed += entries.length;
+          logger.info({ stream, count: entries.length, nextCursor }, 'Reclaimed stale PEL batch');
+        }
+        // '0-0' cursor means all PEL entries have been scanned
+        if (nextCursor === '0-0' || entries.length === 0) break;
+        cursor = nextCursor;
+      }
+      if (totalClaimed > 0) {
+        logger.info({ stream, totalClaimed }, 'PEL reclaim complete — will drain');
       }
     } catch (e) {
       logger.warn({ err: e, stream }, 'XAUTOCLAIM failed — skipping PEL recovery');
