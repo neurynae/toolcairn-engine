@@ -343,6 +343,7 @@ async function run() {
   for (let attempt = 1; attempt <= MAX; attempt++) {
     try {
       await main();
+      await closeMemgraphDriver().catch(() => {});
       return;
     } catch (e) {
       const isConflict =
