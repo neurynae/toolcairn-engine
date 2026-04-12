@@ -13,6 +13,7 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import { config } from '@toolcairn/config';
+import { adminCronRoutes } from './admin-cron.js';
 import { PrismaClient } from '@toolcairn/db';
 import {
   GET_EDGE_WEIGHT_SUMMARY,
@@ -779,6 +780,9 @@ RETURN edge.toolId AS toolId, topicId, topicNodeType, edge.edgeType AS edgeType
       return c.json(err(e instanceof Error ? e.message : 'Sessions error'), 500);
     }
   });
+
+  // ── Cron job status + manual triggers ─────────────────────────────────────
+  app.route('/cron', adminCronRoutes());
 
   return app;
 }
