@@ -163,7 +163,41 @@ async function readFromPEL(
           const type = map.type;
           const payload = map.payload;
           const timestamp = map.timestamp;
-          if (!appId || !type || !payload || !timestamp) continue;
+
+          if (!appId || !type || !payload || !timestamp) {
+            // Old single-field format: entire message serialised into 'data' key.
+            // Try to parse it so we can still process valid messages.
+            if (map.data) {
+              try {
+                const parsed = JSON.parse(map.data) as Record<string, unknown>;
+                if (parsed.id && parsed.type && parsed.payload && parsed.timestamp) {
+                  messages.push({
+                    id: String(parsed.id),
+                    type: String(parsed.type),
+                    payload: parsed.payload,
+                    timestamp: Number(parsed.timestamp),
+                    _streamKey: stream,
+                    _entryId: entryId,
+                  });
+                  continue;
+                }
+              } catch {
+                // fall through to stale placeholder
+              }
+            }
+            // Unrecognised format — push a placeholder so the drain loop
+            // still XACKs this entry and clears it from the PEL.
+            messages.push({
+              id: entryId,
+              type: '_stale',
+              payload: {},
+              timestamp: 0,
+              _streamKey: stream,
+              _entryId: entryId,
+            });
+            continue;
+          }
+
           messages.push({
             id: appId,
             type,
