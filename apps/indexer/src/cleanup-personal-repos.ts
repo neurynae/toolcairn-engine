@@ -325,12 +325,46 @@ async function main() {
 
     logger.info('Cleanup complete');
   } finally {
-    // session already closed above before writes; close driver regardless
-    await closeMemgraphDriver();
+    // session already closed above before writes (if it got that far);
+    // close driver — withRetry re-enters main() which calls getMemgraphSession()
+    // which creates a new session from the driver, so we only close the driver once
+    // at the outermost level (see run() below).
+    try {
+      await session.close();
+    } catch {
+      /* already closed */
+    }
   }
 }
 
-main().catch((e) => {
+/** Outer runner — retries the entire script on transient Memgraph conflicts. */
+async function run() {
+  const MAX = 6;
+  for (let attempt = 1; attempt <= MAX; attempt++) {
+    try {
+      await main();
+      return;
+    } catch (e) {
+      const isConflict =
+        e instanceof Error &&
+        (e.message.includes('Cannot resolve conflicting transactions') ||
+          e.message.includes('conflicting transaction'));
+      if (!isConflict || attempt === MAX) {
+        await closeMemgraphDriver().catch(() => {});
+        throw e;
+      }
+      const delay = 5000 * 2 ** (attempt - 1) + Math.random() * 2000;
+      logger.warn(
+        { attempt, maxAttempts: MAX, delayMs: Math.round(delay) },
+        'Memgraph transaction conflict on full run — retrying',
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  await closeMemgraphDriver().catch(() => {});
+}
+
+run().catch((e) => {
   console.error(e);
   process.exit(1);
 });
