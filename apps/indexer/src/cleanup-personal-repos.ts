@@ -45,6 +45,40 @@ function addDays(days: number): string {
   return new Date(Date.now() + days * 86_400_000).toISOString();
 }
 
+/** Retry a Memgraph write on transaction-conflict errors (serialization failures). */
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 6, baseDelayMs = 3000): Promise<T> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const isConflict =
+        e instanceof Error &&
+        (e.message.includes('Cannot resolve conflicting transactions') ||
+          e.message.includes('conflicting transaction'));
+      if (!isConflict || attempt === maxAttempts) throw e;
+      const delay = baseDelayMs * 2 ** (attempt - 1) + Math.random() * 1000;
+      logger.warn(
+        { attempt, maxAttempts, delayMs: Math.round(delay) },
+        'Memgraph transaction conflict — retrying after delay',
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error('Unreachable');
+}
+
+/** Run a single write query in its own fresh session with retry on conflict. */
+async function writeWithRetry(query: string, params: Record<string, unknown>): Promise<void> {
+  await withRetry(async () => {
+    const ws = getMemgraphSession();
+    try {
+      await ws.run(query, params);
+    } finally {
+      await ws.close();
+    }
+  });
+}
+
 async function main() {
   if (DRY_RUN) logger.info('DRY RUN — pass --delete to commit changes');
 
@@ -245,14 +279,21 @@ async function main() {
     }
 
     // ── 5. Commit changes ──────────────────────────────────────────────────────
+    // Close the long-running read session BEFORE starting writes so it doesn't
+    // hold any implicit read transaction that could block the write sessions.
+    await session.close();
+
     const allToDelete = [...toDeleteNow, ...toDeleteGrace];
 
+    // Smaller batches (50) reduce per-transaction lock scope and shorten the
+    // conflict window against the concurrent permanent indexer.
+    const BATCH = 50;
+
     if (allToDelete.length > 0) {
-      const BATCH = 100;
       let deleted = 0;
       for (let i = 0; i < allToDelete.length; i += BATCH) {
         const batch = allToDelete.slice(i, i + BATCH);
-        await session.run('MATCH (t:Tool) WHERE t.name IN $names DETACH DELETE t', {
+        await writeWithRetry('MATCH (t:Tool) WHERE t.name IN $names DETACH DELETE t', {
           names: batch,
         });
         deleted += batch.length;
@@ -262,10 +303,9 @@ async function main() {
 
     if (toStartGrace.length > 0) {
       const graceUntil = addDays(GRACE_DAYS);
-      const BATCH = 100;
       for (let i = 0; i < toStartGrace.length; i += BATCH) {
         const batch = toStartGrace.slice(i, i + BATCH);
-        await session.run(
+        await writeWithRetry(
           'MATCH (t:Tool) WHERE t.name IN $names SET t.grace_until = $until, t.grace_retries = 1',
           { names: batch, until: graceUntil },
         );
@@ -275,7 +315,7 @@ async function main() {
 
     for (const { name, retries } of toExtendGrace) {
       const graceUntil = addDays(GRACE_DAYS);
-      await session.run(
+      await writeWithRetry(
         'MATCH (t:Tool { name: $name }) SET t.grace_until = $until, t.grace_retries = $retries',
         { name, until: graceUntil, retries: retries + 1 },
       );
@@ -285,7 +325,7 @@ async function main() {
 
     logger.info('Cleanup complete');
   } finally {
-    await session.close();
+    // session already closed above before writes; close driver regardless
     await closeMemgraphDriver();
   }
 }
