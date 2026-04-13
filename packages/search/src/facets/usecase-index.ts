@@ -98,7 +98,47 @@ export function searchUseCaseBm25(
   }
 
   results.sort((a, b) => b.score - a.score);
-  return results.slice(0, limit);
+
+  // Diversity-aware selection: greedily pick facets whose tokens don't overlap
+  // heavily with already-selected facets. Without this, compound UseCase names
+  // like "real-time-chat", "real-time-chat-app", "real-time" consume all slots
+  // and crowd out distinct concepts like "authentication" and "database".
+  return diversifyFacets(results, limit);
+}
+
+/**
+ * Greedy diversity filter: from a BM25-ranked list, select facets that are
+ * tokenically distinct from each other. Two facets with >50% shared tokens
+ * are considered the same concept — keep the higher-scored one, skip the rest.
+ *
+ * Scans up to 5× limit candidates to find enough diverse facets.
+ */
+function diversifyFacets(ranked: UseCaseBm25Match[], limit: number): UseCaseBm25Match[] {
+  const selected: Array<{ match: UseCaseBm25Match; tokens: Set<string> }> = [];
+  const scanLimit = Math.min(ranked.length, limit * 5);
+
+  for (let i = 0; i < scanLimit && selected.length < limit; i++) {
+    // biome-ignore lint/style/noNonNullAssertion: loop bounds checked
+    const candidate = ranked[i]!;
+    const candidateTokens = new Set(tokenize(candidate.name));
+
+    // Check token overlap with every already-selected facet
+    let isDuplicate = false;
+    for (const { tokens: selectedTokens } of selected) {
+      const intersection = [...candidateTokens].filter((t) => selectedTokens.has(t));
+      const smaller = Math.min(candidateTokens.size, selectedTokens.size);
+      if (smaller > 0 && intersection.length / smaller > 0.5) {
+        isDuplicate = true;
+        break;
+      }
+    }
+
+    if (!isDuplicate) {
+      selected.push({ match: candidate, tokens: candidateTokens });
+    }
+  }
+
+  return selected.map((s) => s.match);
 }
 
 // ─── Cached singleton ───────────────────────────────────────────────────────

@@ -12,8 +12,8 @@ import { errResult, okResult } from '../utils.js';
 
 const logger = createLogger({ name: '@toolcairn/tools:get-stack' });
 
-/** Max primary facets extracted from the query via BM25. */
-const MAX_PRIMARY_FACETS = 4;
+/** Max primary facets extracted from the query via BM25 (after diversity dedup). */
+const MAX_PRIMARY_FACETS = 6;
 
 /** Tools fetched per expanded facet from the SOLVES graph. */
 const TOOLS_PER_FACET = 5;
