@@ -130,6 +130,48 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     const processedTool = await processTool(crawlerResult, undefined, changeCheck.prevHealth);
     logger.info({ toolId, nodeId: processedTool.node.id }, 'Processing complete');
 
+    // 3a. Gate: reject personal repos under 1000 stars.
+    //     The cleanup script handles this weekly, but we should block at indexing
+    //     time so low-star tools never enter the search index.
+    if (
+      processedTool.node.owner_type === 'User' &&
+      processedTool.node.health.stars < 1000 &&
+      !processedTool.node.grace_until
+    ) {
+      logger.info(
+        { toolId, stars: processedTool.node.health.stars, owner: processedTool.node.owner_type },
+        'Skipping personal repo under 1000 stars',
+      );
+      await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped');
+      return;
+    }
+
+    // 3b. Gate: name collision — if a tool with the same name already exists in
+    //     Memgraph with MORE stars, skip this one. Prevents wechaty/docusaurus
+    //     (119★) from overwriting facebook/docusaurus (56k★) via the MERGE query.
+    const repo = new MemgraphToolRepository();
+    const existingResult = await repo.findByName(processedTool.node.name);
+    if (
+      existingResult.ok &&
+      existingResult.data &&
+      existingResult.data.github_url !== processedTool.node.github_url &&
+      existingResult.data.health.stars > processedTool.node.health.stars
+    ) {
+      logger.info(
+        {
+          toolId,
+          name: processedTool.node.name,
+          existingUrl: existingResult.data.github_url,
+          existingStars: existingResult.data.health.stars,
+          newUrl: processedTool.node.github_url,
+          newStars: processedTool.node.health.stars,
+        },
+        'Skipping lower-star duplicate — existing tool with same name has more stars',
+      );
+      await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped');
+      return;
+    }
+
     // 4. Write to all stores concurrently
     const writeResults = await Promise.allSettled([
       writeToolToMemgraph(processedTool.node),

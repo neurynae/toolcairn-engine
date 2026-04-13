@@ -7,9 +7,17 @@ const logger = createLogger({ name: '@toolcairn/search:stage2' });
 const STAGE2_TOP_N = 25; // increased from 15 for better recall with 150-candidate Stage 1
 const MIN_RESULTS = 3;
 
-/** Weight for Stage 1 relevance rank vs credibility in Stage 2 scoring. */
-const RANK_WEIGHT = 0.5;
-const CREDIBILITY_WEIGHT = 0.5;
+/**
+ * Weight for Stage 1 relevance rank vs credibility in Stage 2 scoring.
+ *
+ * At 50/50 a BM25 rank-#1 tool with 14 stars beats a rank-#3 tool with 46k
+ * stars because rankScore(0)=1.0 vs rankScore(2)=0.333 — the 0.667 rank gap
+ * exceeds ANY credibility delta (max 1.0 × 0.5 = 0.5). At 20/80, credibility
+ * dominates: Prisma (cred 0.72) wins over typescript-orm-benchmark (cred 0.17)
+ * even when the benchmark ranks #1 and Prisma ranks #5.
+ */
+const RANK_WEIGHT = 0.2;
+const CREDIBILITY_WEIGHT = 0.8;
 
 /**
  * Apply Qdrant payload filters from clarification context.
