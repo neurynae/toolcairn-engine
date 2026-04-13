@@ -173,7 +173,20 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
       await writeTopicNodes(processedTool.node.id, processedTool.topicEdges);
     }
 
-    // 7. Deprecation check — fire-and-forget
+    // 7. Incremental REPLACES edges — fire-and-forget.
+    //    Requires both Memgraph and Qdrant writes to have succeeded.
+    const qdrantWriteSucceeded = writeResults[1]?.status === 'fulfilled';
+    if (memgraphWriteSucceeded && qdrantWriteSucceeded) {
+      import('../processors/replaces-processor.js')
+        .then(({ computeReplacesForTool }) =>
+          computeReplacesForTool(processedTool.node.id, processedTool.node.name),
+        )
+        .catch((e) =>
+          logger.warn({ toolId, err: e }, 'Incremental REPLACES computation failed (non-fatal)'),
+        );
+    }
+
+    // 8. Deprecation check — fire-and-forget
     {
       const { detectDeprecation } = await import('../processors/deprecation-detector.js');
       const { prisma } = await import('@toolcairn/db');
