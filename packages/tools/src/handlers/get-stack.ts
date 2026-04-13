@@ -11,7 +11,7 @@ import { errResult, okResult } from '../utils.js';
 
 const logger = createLogger({ name: '@toolcairn/tools:get-stack' });
 
-/** Tools fetched per sub-need via vector-only search. */
+/** Tools fetched per sub-need via full BM25+vector pipeline. */
 const TOOLS_PER_NEED = 5;
 
 /** Fallback pool size when no sub_needs — balanced BM25/vector. */
@@ -96,10 +96,10 @@ async function buildStackFromSubNeeds(
   limit: number,
   deps: Pick<ToolDeps, 'pipeline' | 'graphRepo'>,
 ) {
-  // 1. Search each sub-need
+  // 1. Search each sub-need using the full BM25+vector pipeline (cached BM25 index)
   const perNeedResults: Array<{ need: string; tools: ToolScoredResult[] }> = [];
   for (const need of subNeeds) {
-    const tools = await deps.pipeline.runVectorOnlyForStack(need, context, TOOLS_PER_NEED);
+    const tools = await deps.pipeline.runStages1to3ForStackBalanced(need, context, TOOLS_PER_NEED);
     perNeedResults.push({ need, tools });
   }
 

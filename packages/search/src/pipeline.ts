@@ -1,7 +1,6 @@
 import type { ToolNode } from '@toolcairn/core';
 import { createLogger } from '@toolcairn/errors';
-import { COLLECTION_NAME, embedText, qdrantClient } from '@toolcairn/vector';
-// embedText used in runVectorOnlyForStack below
+import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
 import { ClarificationEngine } from './clarification/engine.js';
 import type { SearchSessionManager } from './session.js';
 import { buildExactLookupMaps, stage0ExactResolve } from './stages/stage0-exact.js';
@@ -17,6 +16,44 @@ import type {
 } from './types.js';
 
 const logger = createLogger({ name: '@toolcairn/search:pipeline' });
+
+// ─── BM25 index cache ────────────────────────────────────────────────────────
+// Built once on first request, cached for process lifetime (~50MB for 30K tools).
+// Eliminates per-request corpus loading (~3s) and BM25 index building (~100ms).
+// Invalidated by server restart (every deploy restarts the container).
+
+// Dynamic import to avoid Biome stripping static import as "unused"
+async function loadBm25Deps() {
+  const { buildBm25Index: build } = await import('@toolcairn/vector');
+  return { build };
+}
+
+let _cachedBm25Index: import('@toolcairn/vector').Bm25IndexData | null = null;
+let _bm25CachePromise: Promise<import('@toolcairn/vector').Bm25IndexData> | null = null;
+
+/**
+ * Get or build the cached BM25 index. Thread-safe: concurrent callers share
+ * the same build promise. The corpus is freed after index creation.
+ */
+async function getCachedBm25Index(
+  pipeline: SearchPipeline,
+): Promise<import('@toolcairn/vector').Bm25IndexData> {
+  if (_cachedBm25Index) return _cachedBm25Index;
+  if (_bm25CachePromise) return _bm25CachePromise;
+
+  _bm25CachePromise = (async () => {
+    const corpus = await pipeline.loadToolCorpus();
+    const { build } = await loadBm25Deps();
+    const index = build(corpus);
+    logger.info({ toolCount: corpus.length }, 'BM25 index cached');
+    _cachedBm25Index = index;
+    _bm25CachePromise = null;
+    // corpus goes out of scope → GC frees ~100MB, only index (~50MB) remains
+    return index;
+  })();
+
+  return _bm25CachePromise;
+}
 
 export interface RunStages2to4Result {
   results: ToolScoredResult[];
@@ -152,57 +189,28 @@ export class SearchPipeline {
   /**
    * Stack-optimized search: BM25 and vector contribute equally (1:1).
    *
-   * Default use_case intent weights (BM25=0.1, vector=2.0) work for single-concept
-   * queries but destroy diversity for multi-concept stack queries — the single
-   * embedding is dominated by one concept (e.g. "authentication") and BM25's
-   * natural token-level diversity is suppressed.
+   * Uses a CACHED BM25 index (built once, ~50MB) instead of loading the full
+   * 30K+ tool corpus per request. No per-request corpus loading, no per-request
+   * BM25 index building. Scales to 100K+ tools and concurrent users.
    *
    * Balanced weights let BM25 find tools for EACH query token independently
-   * while vector still provides quality filtering. The result is a naturally
-   * diverse candidate pool — auth tools AND database tools AND chat tools —
-   * without needing facet detection, per-facet search, or magic constants.
+   * (e.g. "continuous integration" → Jenkins, "argument parser" → commander.js)
+   * while vector provides semantic quality filtering.
    */
   async runStages1to3ForStackBalanced(
     query: string,
     context: SearchContext | undefined,
     limit: number,
-    preloadedCorpus?: ToolNode[],
   ): Promise<ToolScoredResult[]> {
-    const allTools = preloadedCorpus ?? (await this.loadToolCorpus());
-    const stage1 = await stage1HybridSearch(query, allTools, undefined, {
-      bm25Weight: 1.0,
-      vectorWeight: 1.0,
-    });
+    const bm25Index = await getCachedBm25Index(this);
+    const stage1 = await stage1HybridSearch(
+      query,
+      [], // allTools not needed — BM25 uses cached index
+      undefined,
+      { bm25Weight: 1.0, vectorWeight: 1.0 },
+      bm25Index,
+    );
     const stage2 = await stage2ApplyFilters(stage1.ids, context);
-    const stage3 = await stage3GraphRerank(stage2);
-    return stage3.results.slice(0, limit);
-  }
-
-  /**
-   * Vector-only search for precise single-concept queries (e.g. from sub_needs).
-   *
-   * Skips BM25 entirely — no loadToolCorpus(), no 30K tools in memory, no BM25
-   * index build. Qdrant handles the vector search server-side. Uses ~0 extra
-   * memory, ~200ms per call. Designed for the sub_needs path where each query
-   * is already decomposed into a precise concept by the agent.
-   */
-  async runVectorOnlyForStack(
-    query: string,
-    context: SearchContext | undefined,
-    limit: number,
-  ): Promise<ToolScoredResult[]> {
-    const queryVector = await embedText(query, 'search_query');
-    if (!queryVector) return [];
-
-    const vectorResults = await qdrantClient().search(COLLECTION_NAME, {
-      vector: queryVector,
-      limit: 150,
-      with_payload: false,
-    });
-    const ids = (vectorResults as Array<{ id: string | number }>).map((r) => String(r.id));
-    if (ids.length === 0) return [];
-
-    const stage2 = await stage2ApplyFilters(ids, context);
     const stage3 = await stage3GraphRerank(stage2);
     return stage3.results.slice(0, limit);
   }

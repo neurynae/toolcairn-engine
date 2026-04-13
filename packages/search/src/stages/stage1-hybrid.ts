@@ -24,6 +24,7 @@ export async function stage1HybridSearch(
   allTools: ToolNode[],
   lookupMaps?: ExactLookupMaps,
   weightOverride?: Stage1WeightOverride,
+  prebuiltBm25Index?: Bm25IndexData,
 ): Promise<Stage1Result> {
   const t0 = Date.now();
 
@@ -35,7 +36,9 @@ export async function stage1HybridSearch(
   const expandedQuery = expandQueryAliases(query);
 
   // ── BM25 index + search ───────────────────────────────────────────────────
-  const bm25Index: Bm25IndexData = buildBm25Index(allTools);
+  // When a pre-built index is provided (cached singleton), skip the expensive
+  // buildBm25Index() call that tokenizes all 30K+ tools (~100ms + ~50MB).
+  const bm25Index: Bm25IndexData = prebuiltBm25Index ?? buildBm25Index(allTools);
   const bm25Results = bm25Search(expandedQuery, bm25Index);
   const bm25Ids = bm25Results.map((r) => r.id);
 
