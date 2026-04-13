@@ -1,6 +1,7 @@
 import type { ToolNode } from '@toolcairn/core';
 import { createLogger } from '@toolcairn/errors';
-import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
+import { COLLECTION_NAME, embedText, qdrantClient } from '@toolcairn/vector';
+// embedText used in runVectorOnlyForStack below
 import { ClarificationEngine } from './clarification/engine.js';
 import type { SearchSessionManager } from './session.js';
 import { buildExactLookupMaps, stage0ExactResolve } from './stages/stage0-exact.js';
@@ -173,6 +174,35 @@ export class SearchPipeline {
       vectorWeight: 1.0,
     });
     const stage2 = await stage2ApplyFilters(stage1.ids, context);
+    const stage3 = await stage3GraphRerank(stage2);
+    return stage3.results.slice(0, limit);
+  }
+
+  /**
+   * Vector-only search for precise single-concept queries (e.g. from sub_needs).
+   *
+   * Skips BM25 entirely — no loadToolCorpus(), no 30K tools in memory, no BM25
+   * index build. Qdrant handles the vector search server-side. Uses ~0 extra
+   * memory, ~200ms per call. Designed for the sub_needs path where each query
+   * is already decomposed into a precise concept by the agent.
+   */
+  async runVectorOnlyForStack(
+    query: string,
+    context: SearchContext | undefined,
+    limit: number,
+  ): Promise<ToolScoredResult[]> {
+    const queryVector = await embedText(query, 'search_query');
+    if (!queryVector) return [];
+
+    const vectorResults = await qdrantClient().search(COLLECTION_NAME, {
+      vector: queryVector,
+      limit: 150,
+      with_payload: false,
+    });
+    const ids = (vectorResults as Array<{ id: string | number }>).map((r) => String(r.id));
+    if (ids.length === 0) return [];
+
+    const stage2 = await stage2ApplyFilters(ids, context);
     const stage3 = await stage3GraphRerank(stage2);
     return stage3.results.slice(0, limit);
   }

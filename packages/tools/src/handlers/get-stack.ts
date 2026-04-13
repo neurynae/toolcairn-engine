@@ -11,10 +11,10 @@ import { errResult, okResult } from '../utils.js';
 
 const logger = createLogger({ name: '@toolcairn/tools:get-stack' });
 
-/** Tools fetched per sub-need when sub_needs are provided. */
+/** Tools fetched per sub-need via vector-only search. */
 const TOOLS_PER_NEED = 5;
 
-/** Fallback pool size when no sub_needs — balanced BM25/vector search. */
+/** Fallback pool size when no sub_needs — balanced BM25/vector. */
 const FALLBACK_POOL_SIZE = 25;
 
 export function createGetStackHandler(deps: Pick<ToolDeps, 'pipeline' | 'graphRepo'>) {
@@ -44,17 +44,17 @@ export function createGetStackHandler(deps: Pick<ToolDeps, 'pipeline' | 'graphRe
       let candidates: ToolScoredResult[];
 
       if (sub_needs && sub_needs.length > 0) {
-        // PRECISE PATH: agent called refine_requirement first and provided
-        // decomposed sub-needs like ["mobile backend framework", "push notification service"].
-        // Each sub-need is a single-concept query → the pipeline handles these well.
+        // PRECISE PATH: agent decomposed the query via refine_requirement.
+        // Each sub-need is a single-concept query → vector-only search is ideal.
+        // No BM25, no corpus loading, ~0 memory, ~200ms per sub-need.
         candidates = await searchPerSubNeed(sub_needs, context, deps);
         logger.info(
           { subNeedCount: sub_needs.length, candidateCount: candidates.length },
-          'per-sub-need search complete',
+          'per-sub-need vector search complete',
         );
       } else {
-        // FALLBACK PATH: raw query, no decomposition. Use balanced BM25/vector
-        // which provides reasonable diversity but can't match LLM decomposition.
+        // FALLBACK: raw compound query, no decomposition.
+        // Balanced BM25/vector provides reasonable diversity.
         candidates = await deps.pipeline.runStages1to3ForStackBalanced(
           use_case,
           context,
@@ -67,7 +67,7 @@ export function createGetStackHandler(deps: Pick<ToolDeps, 'pipeline' | 'graphRe
         return okResult({ use_case, stack: [] });
       }
 
-      // ── Graph enrichment + composition (same for both paths) ──────────────
+      // ── Graph enrichment + composition ─────────────────────────────────────
       const names = candidates.map((c) => c.tool.name);
 
       const ucResult = await deps.graphRepo.getToolUseCases(names);
@@ -88,7 +88,7 @@ export function createGetStackHandler(deps: Pick<ToolDeps, 'pipeline' | 'graphRe
 
       const stack = formatted.map((f, i) => ({
         ...f,
-        // biome-ignore lint/style/noNonNullAssertion: composed.tools and formatted are same length
+        // biome-ignore lint/style/noNonNullAssertion: same length
         role: composed.tools[i]!.role,
       }));
 
@@ -124,28 +124,19 @@ export function createGetStackHandler(deps: Pick<ToolDeps, 'pipeline' | 'graphRe
 // ─── Per-sub-need search ────────────────────────────────────────────────────
 
 /**
- * Run the search pipeline for EACH sub-need in parallel.
- * Each sub-need is a precise single-concept query — the pipeline handles these well.
- * Results are merged and deduplicated (highest score wins).
+ * Vector-only search for each sub-need, sequentially.
+ * No BM25, no corpus loading — Qdrant handles vector search server-side.
+ * Each call uses ~0 extra memory and ~200ms.
  */
 async function searchPerSubNeed(
   subNeeds: string[],
   context: SearchContext | undefined,
   deps: Pick<ToolDeps, 'pipeline'>,
 ): Promise<ToolScoredResult[]> {
-  // Load corpus ONCE and share across all parallel searches to avoid OOM.
-  // Without this, each search loads ~30K tools from Qdrant independently.
-  const corpus = await deps.pipeline.loadToolCorpus();
-
-  const searches = subNeeds.map((need) =>
-    deps.pipeline.runStages1to3ForStackBalanced(need, context, TOOLS_PER_NEED, corpus),
-  );
-
-  const results = await Promise.all(searches);
-
-  // Merge: deduplicate by tool name, keep highest score
   const pool = new Map<string, ToolScoredResult>();
-  for (const batch of results) {
+
+  for (const need of subNeeds) {
+    const batch = await deps.pipeline.runVectorOnlyForStack(need, context, TOOLS_PER_NEED);
     for (const candidate of batch) {
       const existing = pool.get(candidate.tool.name);
       if (!existing || existing.score < candidate.score) {
