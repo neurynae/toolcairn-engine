@@ -28,11 +28,7 @@ function makeHealth(maintenanceScore = 0.8) {
   };
 }
 
-function makeTool(
-  name: string,
-  category: string,
-  topics: string[] = [],
-): ToolNode {
+function makeTool(name: string, category: string, topics: string[] = []): ToolNode {
   return {
     id: name,
     name,
@@ -58,11 +54,21 @@ function makeTool(
   };
 }
 
-function scored(name: string, score: number, category: string, topics: string[] = []): ToolScoredResult {
+function scored(
+  name: string,
+  score: number,
+  category: string,
+  topics: string[] = [],
+): ToolScoredResult {
   return { tool: makeTool(name, category, topics), score };
 }
 
-function edge(source: string, target: string, edgeType: string, effectiveWeight = 0.5): PairwiseEdge {
+function edge(
+  source: string,
+  target: string,
+  edgeType: string,
+  effectiveWeight = 0.5,
+): PairwiseEdge {
   return { source, target, edgeType, effectiveWeight };
 }
 
@@ -201,10 +207,7 @@ describe('composeStack', () => {
   });
 
   it('derives role from first new UseCase covered', () => {
-    const candidates = [
-      scored('logto', 0.9, 'authentication'),
-      scored('prisma', 0.7, 'orm'),
-    ];
+    const candidates = [scored('logto', 0.9, 'authentication'), scored('prisma', 0.7, 'orm')];
     const useCases = new Map([
       ['logto', ['authentication', 'sso']],
       ['prisma', ['orm', 'database']],
@@ -216,10 +219,7 @@ describe('composeStack', () => {
   });
 
   it('builds integration notes from INTEGRATES_WITH edges between stack members', () => {
-    const candidates = [
-      scored('prisma', 0.9, 'orm'),
-      scored('postgresql', 0.7, 'database'),
-    ];
+    const candidates = [scored('prisma', 0.9, 'orm'), scored('postgresql', 0.7, 'database')];
     const useCases = new Map([
       ['prisma', ['orm', 'query-builder']],
       ['postgresql', ['database', 'sql']],
@@ -237,5 +237,38 @@ describe('composeStack', () => {
 
     const result = composeStack(candidates, useCases, [], 5);
     expect(result.tools).toHaveLength(1);
+  });
+
+  it('uses facet provenance for role label when provided', () => {
+    const candidates = [
+      scored('logto', 0.9, 'authentication'),
+      scored('postgresql', 0.7, 'postgresql'),
+    ];
+    const useCases = new Map([
+      ['logto', ['authentication', 'sso']],
+      ['postgresql', ['database', 'sql']],
+    ]);
+    const provenance = new Map([
+      ['logto', 'authentication'],
+      ['postgresql', 'database'],
+    ]);
+
+    const result = composeStack(candidates, useCases, [], 2, provenance);
+    expect(result.tools[0]?.role).toBe('Authentication');
+    expect(result.tools[1]?.role).toBe('Database');
+  });
+
+  it('falls back to UseCase when no facet provenance for a tool', () => {
+    const candidates = [scored('logto', 0.9, 'authentication'), scored('prisma', 0.7, 'orm')];
+    const useCases = new Map([
+      ['logto', ['authentication', 'sso']],
+      ['prisma', ['orm', 'database']],
+    ]);
+    // Only logto has provenance, prisma doesn't (came from backup search)
+    const provenance = new Map([['logto', 'authentication']]);
+
+    const result = composeStack(candidates, useCases, [], 2, provenance);
+    expect(result.tools[0]?.role).toBe('Authentication'); // from provenance
+    expect(result.tools[1]?.role).toBe('Orm'); // from UseCase fallback
   });
 });

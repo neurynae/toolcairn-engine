@@ -102,3 +102,19 @@ WITH u, count(t) AS tool_count
 RETURN u.name AS name, u.description AS description, tool_count
 ORDER BY tool_count DESC`,
 };
+
+/**
+ * Batch query: find UseCases that co-occur with the given UseCases on the same tools.
+ * Used by the multi-facet stack builder to discover IMPLICIT layers.
+ * E.g. "ecommerce" primary facet → co-occurring: "payments", "stripe", "shopping-cart".
+ */
+export const GET_USECASE_COOCCURRENCES = {
+  text: `MATCH (t:Tool)-[:SOLVES]->(u:UseCase)
+WHERE u.name IN $names
+MATCH (t)-[:SOLVES]->(other:UseCase)
+WHERE NOT other.name IN $names
+WITH other.name AS cooccurring, count(DISTINCT t) AS shared_tools
+ORDER BY shared_tools DESC
+LIMIT $limit
+RETURN cooccurring, shared_tools`,
+};

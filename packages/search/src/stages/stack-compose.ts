@@ -101,6 +101,7 @@ export function composeStack(
   toolUseCases: Map<string, string[]>,
   pairwiseEdges: PairwiseEdge[],
   limit: number,
+  facetProvenance?: Map<string, string>,
 ): ComposedStack {
   if (candidates.length === 0) {
     return { tools: [], integrationNotes: [] };
@@ -154,9 +155,11 @@ export function composeStack(
       if (score > bestScore) {
         bestScore = score;
         bestIdx = idx;
-        // Role = first new UseCase this tool brings, capitalized
-        bestRole =
-          newUseCases.length > 0
+        // Role priority: facet provenance → first new UseCase → first UseCase → category
+        const facetRole = facetProvenance?.get(candidate.tool.name);
+        bestRole = facetRole
+          ? formatRole(facetRole)
+          : newUseCases.length > 0
             ? formatRole(newUseCases[0] as string)
             : myUseCases.length > 0
               ? formatRole(myUseCases[0] as string)

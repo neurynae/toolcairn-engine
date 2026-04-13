@@ -5,12 +5,14 @@ import { mapRecordToToolNode } from '../queries/tool.queries.js';
 import {
   FIND_TOOLS_BY_USE_CASES,
   GET_ALL_USE_CASES,
+  GET_USECASE_COOCCURRENCES,
   MERGE_TOPIC_NODE,
   type TopicNodeType,
   UPSERT_BELONGS_TO_EDGE,
   UPSERT_FOLLOWS_EDGE,
   UPSERT_SOLVES_EDGE,
 } from '../queries/usecase.queries.js';
+// Force keep: GET_USECASE_COOCCURRENCES is used in getCooccurringUseCases() below
 import type { RepositoryError, TopicEdgeParams, UseCaseRepository } from './interfaces.js';
 
 type UseCaseResult<T> = { ok: true; data: T } | { ok: false; error: RepositoryError };
@@ -116,6 +118,68 @@ export class MemgraphUseCaseRepository implements UseCaseRepository {
         };
       });
       return { ok: true, data: useCases };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  async findToolsByUseCasesScored(
+    names: string[],
+    limit = 5,
+  ): Promise<UseCaseResult<Array<{ tool: ToolNode; score: number }>>> {
+    if (names.length === 0) return { ok: true, data: [] };
+    const session = this.session();
+    try {
+      const result = await session.run(FIND_TOOLS_BY_USE_CASES.text, {
+        names,
+        limit: neo4j.int(Math.floor(Number(limit))),
+      });
+      const scored = result.records.map((r) => {
+        const relevanceRaw = r.get('relevance');
+        const score =
+          relevanceRaw != null &&
+          typeof relevanceRaw === 'object' &&
+          'toNumber' in relevanceRaw &&
+          typeof (relevanceRaw as { toNumber: () => number }).toNumber === 'function'
+            ? (relevanceRaw as { toNumber: () => number }).toNumber()
+            : Number(relevanceRaw ?? 0);
+        return { tool: mapRecordToToolNode(r.toObject()), score };
+      });
+      return { ok: true, data: scored };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  async getCooccurringUseCases(
+    names: string[],
+    limit = 15,
+  ): Promise<UseCaseResult<Array<{ name: string; count: number }>>> {
+    if (names.length === 0) return { ok: true, data: [] };
+    const session = this.session();
+    try {
+      const result = await session.run(GET_USECASE_COOCCURRENCES.text, {
+        names,
+        limit: neo4j.int(Math.floor(Number(limit))),
+      });
+      const rows = result.records.map((r) => {
+        const countRaw = r.get('shared_tools');
+        const count =
+          countRaw != null &&
+          typeof countRaw === 'object' &&
+          'toNumber' in countRaw &&
+          typeof (countRaw as { toNumber: () => number }).toNumber === 'function'
+            ? (countRaw as { toNumber: () => number }).toNumber()
+            : Number(countRaw ?? 0);
+        return { name: String(r.get('cooccurring') ?? ''), count };
+      });
+      return { ok: true, data: rows };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return { ok: false, error: { code: 'DB_ERROR', message } };

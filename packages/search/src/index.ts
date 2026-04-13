@@ -26,6 +26,14 @@ export {
 export type { ExactLookupMaps, Stage0Result } from './stages/stage0-exact.js';
 export { expandQueryAliases, ALIAS_MAP } from './aliases.js';
 export { composeStack, type ComposedStack } from './stages/stack-compose.js';
+export {
+  buildUseCaseBm25Index,
+  getUseCaseBm25Index,
+  searchUseCaseBm25,
+  type UseCaseBm25Index,
+  type UseCaseBm25Match,
+} from './facets/usecase-index.js';
+export { expandWithCooccurrence } from './facets/expand.js';
 export { classifyQueryIntent, getIntentWeights } from './query-intent.js';
 export type { QueryIntent, IntentWeights } from './query-intent.js';
 export { expandQueryWithGraphEntities } from './query-expander.js';

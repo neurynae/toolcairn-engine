@@ -72,4 +72,12 @@ export interface UseCaseRepository {
   getAllUseCases(): Promise<
     Result<Array<{ name: string; description: string; tool_count: number }>, RepositoryError>
   >;
+  findToolsByUseCasesScored(
+    names: string[],
+    limit?: number,
+  ): Promise<Result<Array<{ tool: ToolNode; score: number }>, RepositoryError>>;
+  getCooccurringUseCases(
+    names: string[],
+    limit?: number,
+  ): Promise<Result<Array<{ name: string; count: number }>, RepositoryError>>;
 }
