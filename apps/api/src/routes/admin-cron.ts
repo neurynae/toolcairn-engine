@@ -16,6 +16,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createLogger } from '@toolcairn/errors';
+import { enqueueDiscoveryTrigger, enqueueReindexTrigger } from '@toolcairn/queue';
 import { Hono } from 'hono';
 import { z } from 'zod';
 
@@ -231,6 +232,30 @@ export function adminCronRoutes() {
     }
 
     try {
+      // daily-indexer: enqueue both discovery + reindex to the Redis stream
+      // so the running indexer container processes them immediately.
+      // Other jobs still use the .trigger file approach for the VPS cron watcher.
+      if (jobId === 'daily-indexer') {
+        const [discResult, reidxResult] = await Promise.all([
+          enqueueDiscoveryTrigger(),
+          enqueueReindexTrigger(),
+        ]);
+        if (!discResult.ok) {
+          logger.warn({ error: discResult.error }, 'Failed to enqueue discovery trigger');
+        }
+        if (!reidxResult.ok) {
+          logger.warn({ error: reidxResult.error }, 'Failed to enqueue reindex trigger');
+        }
+        logger.info({ jobId }, 'Daily indexer triggered via Redis queue');
+        return c.json({
+          ok: true,
+          data: {
+            message: 'Daily indexer triggered — discovery + reindex enqueued',
+            jobId,
+          },
+        });
+      }
+
       await writeTriggerFile(jobId as JobId);
       logger.info({ jobId }, 'Cron trigger file written');
       return c.json({
@@ -241,9 +266,9 @@ export function adminCronRoutes() {
         },
       });
     } catch (e) {
-      logger.error({ err: e, jobId }, 'Failed to write trigger file');
+      logger.error({ err: e, jobId }, 'Failed to trigger job');
       return c.json(
-        { ok: false, error: e instanceof Error ? e.message : 'Failed to write trigger' },
+        { ok: false, error: e instanceof Error ? e.message : 'Failed to trigger' },
         500,
       );
     }

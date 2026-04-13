@@ -558,11 +558,9 @@ export async function runDiscoveryScheduler(): Promise<DiscoveryResult> {
     await setProgress('Checking discovery settings…');
     const settings = await getSettings(prisma);
 
-    if (!settings.enabled) {
-      logger.info('Discovery scheduler is disabled — skipping run');
-      await clearProgress();
-      return { found: 0, newToSystem: 0, enqueued: 0, errors: [] };
-    }
+    // NOTE: We do NOT check settings.enabled here. The caller is responsible
+    // for gating on discovery_scheduler_enabled (the cron loop already does).
+    // Manual triggers (admin UI, CLI) should always run regardless of the toggle.
 
     logger.info(
       {

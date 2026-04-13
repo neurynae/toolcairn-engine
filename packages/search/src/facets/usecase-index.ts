@@ -17,6 +17,7 @@ const B = 0.75;
 interface UseCaseEntry {
   name: string;
   tokens: string[];
+  toolCount: number;
 }
 
 export interface UseCaseBm25Index {
@@ -24,6 +25,18 @@ export interface UseCaseBm25Index {
   idf: Map<string, number>;
   avgLen: number;
 }
+
+/**
+ * Minimum tool_count for a UseCase to be eligible as a facet.
+ *
+ * Validated against production data (2026-04-13):
+ * - Every garbage facet has ≤3 tools: "building"=2, "full"=1, "q-and-a"=3,
+ *   "wsa-with-gapps-and-magisk"=1, "search-and-rescue"=1
+ * - Every facet that produced good results has ≥11 tools: "chat-application"=11,
+ *   "etl-pipeline"=14, "user-management"=16, "billing"=22, "alerting"=28
+ * - Threshold 10 eliminates ALL observed garbage while keeping ALL productive facets.
+ */
+const MIN_FACET_TOOL_COUNT = 10;
 
 export interface UseCaseBm25Match {
   name: string;
@@ -41,10 +54,13 @@ function tokenize(text: string): string[] {
 
 // ─── Index builder ──────────────────────────────────────────────────────────
 
-export function buildUseCaseBm25Index(useCases: Array<{ name: string }>): UseCaseBm25Index {
+export function buildUseCaseBm25Index(
+  useCases: Array<{ name: string; tool_count?: number }>,
+): UseCaseBm25Index {
   const entries: UseCaseEntry[] = useCases.map((uc) => ({
     name: uc.name,
     tokens: tokenize(uc.name),
+    toolCount: uc.tool_count ?? 0,
   }));
 
   // Compute IDF: log((N - df + 0.5) / (df + 0.5) + 1)
@@ -81,6 +97,9 @@ export function searchUseCaseBm25(
   const results: UseCaseBm25Match[] = [];
 
   for (const entry of index.entries) {
+    // Skip niche UseCases — too few tools to represent a real stack layer
+    if (entry.toolCount < MIN_FACET_TOOL_COUNT) continue;
+
     let score = 0;
     const dl = entry.tokens.length;
 
@@ -188,6 +207,7 @@ function ensureTokenCoverage(
     let bestMatch: UseCaseBm25Match | null = null;
     for (const entry of index.entries) {
       if (usedNames.has(entry.name)) continue;
+      if (entry.toolCount < MIN_FACET_TOOL_COUNT) continue;
       if (!entry.tokens.includes(token)) continue;
 
       // Prefer exact single-token match (UseCase name IS the token)

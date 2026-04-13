@@ -4,26 +4,26 @@ import { buildUseCaseBm25Index, searchUseCaseBm25 } from './usecase-index.js';
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const SAMPLE_USECASES = [
-  { name: 'authentication' },
-  { name: 'database' },
-  { name: 'realtime' },
-  { name: 'websocket' },
-  { name: 'chat' },
-  { name: 'postgresql' },
-  { name: 'browser-extension' },
-  { name: 'machine-learning' },
-  { name: 'docker' },
-  { name: 'kubernetes' },
-  { name: 'ecommerce' },
-  { name: 'payments' },
-  { name: 'react' },
-  { name: 'typescript' },
-  { name: 'orm' },
-  { name: 'testing' },
-  { name: 'monitoring' },
-  { name: 'ci-cd' },
-  { name: 'push-notifications' },
-  { name: 'mobile' },
+  { name: 'authentication', tool_count: 500 },
+  { name: 'database', tool_count: 490 },
+  { name: 'realtime', tool_count: 100 },
+  { name: 'websocket', tool_count: 150 },
+  { name: 'chat', tool_count: 200 },
+  { name: 'postgresql', tool_count: 428 },
+  { name: 'browser-extension', tool_count: 120 },
+  { name: 'machine-learning', tool_count: 743 },
+  { name: 'docker', tool_count: 818 },
+  { name: 'kubernetes', tool_count: 697 },
+  { name: 'ecommerce', tool_count: 80 },
+  { name: 'payments', tool_count: 60 },
+  { name: 'react', tool_count: 1314 },
+  { name: 'typescript', tool_count: 300 },
+  { name: 'orm', tool_count: 50 },
+  { name: 'testing', tool_count: 379 },
+  { name: 'monitoring', tool_count: 200 },
+  { name: 'ci-cd', tool_count: 100 },
+  { name: 'push-notifications', tool_count: 80 },
+  { name: 'mobile', tool_count: 300 },
 ];
 
 describe('UseCase BM25 Index', () => {
@@ -64,10 +64,10 @@ describe('UseCase BM25 Index', () => {
     // Build an index where "tool" appears in many names
     const manyToolUCs = [
       { name: 'tool-a' },
-      { name: 'tool-b' },
-      { name: 'tool-c' },
-      { name: 'tool-d' },
-      { name: 'auth-special' },
+      { name: 'tool-b', tool_count: 100 },
+      { name: 'tool-c', tool_count: 100 },
+      { name: 'tool-d', tool_count: 100 },
+      { name: 'auth-special', tool_count: 100 },
     ];
     const idx = buildUseCaseBm25Index(manyToolUCs);
     // Searching "auth special" should rank auth-special higher than any tool-X
