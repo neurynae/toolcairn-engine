@@ -24,6 +24,14 @@ export const reportOutcomeSchema = {
 
 export const getStackSchema = {
   use_case: z.string().min(1),
+  sub_needs: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(8)
+    .optional()
+    .describe(
+      'Decomposed sub-queries from refine_requirement. Each is a precise 2-8 word search query for one stack layer (e.g. "mobile backend API framework", "push notification service"). When provided, get_stack runs a targeted search per sub-need instead of a single broad search — dramatically improving accuracy for multi-concept queries.',
+    ),
   constraints: z
     .object({
       deployment_model: z.enum(['self-hosted', 'cloud', 'embedded', 'serverless']).optional(),
