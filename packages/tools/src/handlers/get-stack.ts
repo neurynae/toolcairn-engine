@@ -96,10 +96,12 @@ async function buildStackFromSubNeeds(
   limit: number,
   deps: Pick<ToolDeps, 'pipeline' | 'graphRepo'>,
 ) {
-  // 1. Search each sub-need using the full BM25+vector pipeline (cached BM25 index)
+  // 1. Search each sub-need: BM25 + vector (Stage 1) → credibility (Stage 2).
+  //    Stage 3 graph rerank is SKIPPED for sub-needs — it amplifies popular
+  //    generic tools via graph connectivity, which is noise for precise queries.
   const perNeedResults: Array<{ need: string; tools: ToolScoredResult[] }> = [];
   for (const need of subNeeds) {
-    const tools = await deps.pipeline.runStages1to3ForStackBalanced(need, context, TOOLS_PER_NEED);
+    const tools = await deps.pipeline.runStages1to2ForSubNeed(need, context, TOOLS_PER_NEED);
     perNeedResults.push({ need, tools });
   }
 

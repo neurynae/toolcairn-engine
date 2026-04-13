@@ -216,6 +216,34 @@ export class SearchPipeline {
   }
 
   /**
+   * Per-sub-need search: Stage 1 (BM25+vector) → Stage 2 (credibility) only.
+   * Skips Stage 3 graph rerank — which amplifies popular generic tools via
+   * graph connectivity regardless of domain relevance. For precise single-concept
+   * sub-needs like "continuous integration server", BM25 token precision + vector
+   * semantics are sufficient. Stage 3's graph popularity is pure noise here.
+   *
+   * Uses cached BM25 index — zero per-request corpus loading.
+   */
+  async runStages1to2ForSubNeed(
+    query: string,
+    context: SearchContext | undefined,
+    limit: number,
+  ): Promise<ToolScoredResult[]> {
+    const bm25Index = await getCachedBm25Index(this);
+    const stage1 = await stage1HybridSearch(
+      query,
+      [],
+      undefined,
+      { bm25Weight: 1.0, vectorWeight: 1.0 },
+      bm25Index,
+    );
+    const stage2 = await stage2ApplyFilters(stage1.ids, context);
+    // Stage 2 returns hits with score = rankScore × credibility.
+    // Convert to ToolScoredResult format.
+    return stage2.hits.slice(0, limit).map((h) => ({ tool: h.tool, score: h.score }));
+  }
+
+  /**
    * Determine which clarification round we're on based on previously asked dimensions.
    * Round 1: topic/usecase clarification
    * Round 2: constraint clarification (deployment, language)
