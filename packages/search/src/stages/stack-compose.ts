@@ -23,6 +23,14 @@ const REPLACES_PENALTY = 0.15;
 /** Penalty for CONFLICTS_WITH edges — tools that conflict. */
 const CONFLICTS_PENALTY = 0.05;
 
+/**
+ * Bonus for covering a PRIMARY FACET (query-derived layer) not yet in the stack.
+ * This is the key to diversity: "database" (new layer) must beat "ldap" (sub-feature
+ * of already-covered "authentication" layer). Without this, tools with many
+ * fine-grained UseCases in the same domain always outscore tools from new domains.
+ */
+const PRIMARY_LAYER_BONUS = 4.0;
+
 // ─── Edge affinity multipliers ──────────────────────────────────────────────
 
 const EDGE_MULTIPLIERS: Record<string, number> = {
@@ -102,6 +110,7 @@ export function composeStack(
   pairwiseEdges: PairwiseEdge[],
   limit: number,
   facetProvenance?: Map<string, string>,
+  primaryFacets?: string[],
 ): ComposedStack {
   if (candidates.length === 0) {
     return { tools: [], integrationNotes: [] };
@@ -109,6 +118,8 @@ export function composeStack(
 
   const edgeMap = buildEdgeMap(pairwiseEdges);
   const coveredUseCases = new Set<string>();
+  const coveredPrimaryFacets = new Set<string>();
+  const primaryFacetSet = new Set(primaryFacets ?? []);
   const stack: Array<ToolScoredResult & { role: string }> = [];
   const remaining = new Set(candidates.map((_, i) => i));
 
@@ -122,18 +133,27 @@ export function composeStack(
       const candidate = candidates[idx]!;
       let score = candidate.score;
 
-      // ── UseCase coverage ──
+      // ── Two-tier coverage: primary facets first, then UseCase sub-features ──
       const myUseCases = resolveUseCases(candidate.tool.name, candidate.tool.topics, toolUseCases);
-      const newUseCases = myUseCases.filter((uc) => !coveredUseCases.has(uc));
 
-      if (newUseCases.length > 0) {
-        // Candidate brings new functionality — boost proportionally
-        score *= 1 + COVERAGE_BONUS * (newUseCases.length / myUseCases.length);
-      } else if (myUseCases.length > 0) {
-        // ALL UseCases already covered — duplicate
-        score *= DUPLICATE_PENALTY;
+      // Tier 1: Does this tool cover a PRIMARY LAYER the stack doesn't have yet?
+      // "database" (new layer) is worth massively more than "ldap" (sub-feature of auth).
+      const newPrimaryLayers = myUseCases.filter(
+        (uc) => primaryFacetSet.has(uc) && !coveredPrimaryFacets.has(uc),
+      );
+
+      if (newPrimaryLayers.length > 0) {
+        // Covers a required stack layer — strong boost
+        score *= PRIMARY_LAYER_BONUS;
+      } else {
+        // Tier 2: No new primary layer — fall back to UseCase-level coverage
+        const newUseCases = myUseCases.filter((uc) => !coveredUseCases.has(uc));
+        if (newUseCases.length > 0) {
+          score *= 1 + COVERAGE_BONUS * (newUseCases.length / myUseCases.length);
+        } else if (myUseCases.length > 0) {
+          score *= DUPLICATE_PENALTY;
+        }
       }
-      // If myUseCases is empty → no coverage modifier (neutral)
 
       // ── Graph edge signals ──
       for (const member of stack) {
@@ -155,15 +175,16 @@ export function composeStack(
       if (score > bestScore) {
         bestScore = score;
         bestIdx = idx;
-        // Role priority: facet provenance → first new UseCase → first UseCase → category
+        // Role priority: primary facet covered → facet provenance → first UseCase → category
         const facetRole = facetProvenance?.get(candidate.tool.name);
-        bestRole = facetRole
-          ? formatRole(facetRole)
-          : newUseCases.length > 0
-            ? formatRole(newUseCases[0] as string)
-            : myUseCases.length > 0
-              ? formatRole(myUseCases[0] as string)
-              : formatRole(candidate.tool.category);
+        bestRole =
+          newPrimaryLayers.length > 0
+            ? formatRole(newPrimaryLayers[0] as string)
+            : facetRole
+              ? formatRole(facetRole)
+              : myUseCases.length > 0
+                ? formatRole(myUseCases[0] as string)
+                : formatRole(candidate.tool.category);
       }
     }
 
@@ -178,6 +199,7 @@ export function composeStack(
     );
     for (const uc of selectedUseCases) {
       coveredUseCases.add(uc);
+      if (primaryFacetSet.has(uc)) coveredPrimaryFacets.add(uc);
     }
 
     stack.push({ ...selected, role: bestRole });

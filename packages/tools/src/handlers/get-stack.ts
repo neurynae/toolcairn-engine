@@ -101,6 +101,7 @@ export function createGetStackHandler(
         pairwiseEdges,
         limit,
         facetProvenance,
+        expandedFacets,
       );
 
       // ── PHASE 7: Format + warnings ──
