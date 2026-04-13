@@ -133,8 +133,12 @@ async function searchPerSubNeed(
   context: SearchContext | undefined,
   deps: Pick<ToolDeps, 'pipeline'>,
 ): Promise<ToolScoredResult[]> {
+  // Load corpus ONCE and share across all parallel searches to avoid OOM.
+  // Without this, each search loads ~30K tools from Qdrant independently.
+  const corpus = await deps.pipeline.loadToolCorpus();
+
   const searches = subNeeds.map((need) =>
-    deps.pipeline.runStages1to3ForStackBalanced(need, context, TOOLS_PER_NEED),
+    deps.pipeline.runStages1to3ForStackBalanced(need, context, TOOLS_PER_NEED, corpus),
   );
 
   const results = await Promise.all(searches);

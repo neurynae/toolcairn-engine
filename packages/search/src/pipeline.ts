@@ -165,8 +165,9 @@ export class SearchPipeline {
     query: string,
     context: SearchContext | undefined,
     limit: number,
+    preloadedCorpus?: ToolNode[],
   ): Promise<ToolScoredResult[]> {
-    const allTools = await this.loadToolCorpus();
+    const allTools = preloadedCorpus ?? (await this.loadToolCorpus());
     const stage1 = await stage1HybridSearch(query, allTools, undefined, {
       bm25Weight: 1.0,
       vectorWeight: 1.0,
