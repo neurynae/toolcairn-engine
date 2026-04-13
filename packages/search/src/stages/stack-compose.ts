@@ -133,20 +133,28 @@ export function composeStack(
       const candidate = candidates[idx]!;
       let score = candidate.score;
 
-      // ── Two-tier coverage: primary facets first, then UseCase sub-features ──
+      // ── Coverage: primary-facet-aware deduplication ──
       const myUseCases = resolveUseCases(candidate.tool.name, candidate.tool.topics, toolUseCases);
+      const isPerFacetTool = facetProvenance?.has(candidate.tool.name) ?? false;
 
-      // Tier 1: Does this tool cover a PRIMARY LAYER the stack doesn't have yet?
-      // "database" (new layer) is worth massively more than "ldap" (sub-feature of auth).
-      const newPrimaryLayers = myUseCases.filter(
-        (uc) => primaryFacetSet.has(uc) && !coveredPrimaryFacets.has(uc),
-      );
+      // Primary layers this tool addresses and whether they're new or covered.
+      const myPrimaryLayers = myUseCases.filter((uc) => primaryFacetSet.has(uc));
+      const newPrimaryLayers = myPrimaryLayers.filter((uc) => !coveredPrimaryFacets.has(uc));
+      const allPrimaryAlreadyCovered = myPrimaryLayers.length > 0 && newPrimaryLayers.length === 0;
 
-      if (newPrimaryLayers.length > 0) {
-        // Covers a required stack layer — strong boost
+      if (allPrimaryAlreadyCovered) {
+        // ALL of this tool's stack layers are already served by existing stack members.
+        // It's a duplicate even if it brings new sub-feature UseCases (e.g. authelia's
+        // ldap/webauthn/totp after zitadel already covers authentication).
+        score *= DUPLICATE_PENALTY;
+      } else if (newPrimaryLayers.length > 0 && isPerFacetTool) {
+        // Per-facet tool covering a new required layer — strong boost.
+        // Needed because per-facet tools have low base scores (cap 0.25) and must
+        // compete with high-scoring backup tools that accumulate secondary UseCases.
         score *= PRIMARY_LAYER_BONUS;
       } else {
-        // Tier 2: No new primary layer — fall back to UseCase-level coverage
+        // No primary-facet data available, or backup tool covering new layer.
+        // Use standard UseCase-level coverage.
         const newUseCases = myUseCases.filter((uc) => !coveredUseCases.has(uc));
         if (newUseCases.length > 0) {
           score *= 1 + COVERAGE_BONUS * (newUseCases.length / myUseCases.length);
