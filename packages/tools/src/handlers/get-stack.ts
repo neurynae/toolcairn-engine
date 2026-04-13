@@ -1,12 +1,7 @@
 import type { ToolNode } from '@toolcairn/core';
 import { createLogger } from '@toolcairn/errors';
 import type { SearchContext, ToolScoredResult } from '@toolcairn/search';
-import {
-  composeStack,
-  expandWithCooccurrence,
-  getUseCaseBm25Index,
-  searchUseCaseBm25,
-} from '@toolcairn/search';
+import { composeStack, getUseCaseBm25Index, searchUseCaseBm25 } from '@toolcairn/search';
 import {
   buildLowCredibilityWarning,
   buildNonIndexedGuidance,
@@ -58,13 +53,13 @@ export function createGetStackHandler(
 
       logger.info({ primaryFacets: primaryFacetNames }, 'detected primary facets');
 
-      // ── PHASE 2: Co-occurrence expansion ──
-      const expandedFacets = await expandWithCooccurrence(primaryFacetNames, deps.usecaseRepo);
+      // ── PHASE 2: Co-occurrence expansion (disabled — adds noise with current data quality)
+      // TODO: re-enable once UseCase graph quality improves. Co-occurrence currently pulls
+      // in noisy secondary facets (e.g. "streaming" from "realtime" → asciinema appears).
+      // const expandedFacets = await expandWithCooccurrence(primaryFacetNames, deps.usecaseRepo);
+      const expandedFacets = primaryFacetNames;
 
-      logger.info(
-        { expanded: expandedFacets.length, facets: expandedFacets.slice(0, 8) },
-        'expanded facets',
-      );
+      logger.info({ facets: expandedFacets }, 'using primary facets only');
 
       // ── PHASE 3: Parallel search — per-facet + backup ──
       const [facetResults, backupResults] = await Promise.all([
@@ -188,21 +183,29 @@ async function discoverToolsPerFacet(
  * Cap for per-facet tool scores. Keeps them competitive with backup tools
  * for high-quality tools, but ensures junk tools with low health stay low.
  */
-const FACET_SCORE_CAP = 0.55;
+/**
+ * Per-facet tool score cap. Must stay BELOW typical backup scores (0.4–0.8)
+ * so per-facet tools only win slots when backup tools are genuine duplicates
+ * (DUPLICATE_PENALTY × 0.6 = 0.09 < per-facet with coverage bonus 0.25 × 2.0 = 0.50).
+ */
+const FACET_SCORE_CAP = 0.25;
+
+/**
+ * Minimum quality gate for per-facet injection. Tools below this threshold
+ * (maintenance × credibility < 0.35) are excluded entirely — they're likely
+ * tutorial repos, demos, or abandoned projects that happen to have a UseCase tag.
+ */
+const MIN_FACET_QUALITY = 0.35;
 
 /**
  * Merge per-facet tool discoveries with backup pipeline results into a single
  * diverse candidate pool. Tracks which facet discovered each tool (for role labels).
  *
- * Per-facet tools are scored by QUALITY (maintenance × credibility), not raw
- * SOLVES edge weight. SOLVES edge weights are all 0.8 (uniform from indexer),
- * so normalizing them produces identical scores and allows irrelevant tools
- * (e.g. a game tagged "real-time") to beat backup candidates. Quality scoring
- * ensures well-maintained, credible tools win within each facet.
- *
- * Backup pipeline tools keep their Stage 3 scores, which reflect full-query
- * relevance. A tool found by BOTH per-facet AND backup gets the higher of the
- * two scores (dual-discovery bonus).
+ * Per-facet tools are scored conservatively (capped at 0.25) so the backup
+ * pipeline's quality-ranked candidates are always preferred in direct competition.
+ * Per-facet tools only win when they cover a layer genuinely absent from the
+ * backup (no backup tool covers that UseCase → no duplicate penalty → per-facet
+ * with coverage bonus 0.25×2 = 0.50 beats backup duplicates at 0.6×0.15 = 0.09).
  */
 function mergePool(
   facetResults: FacetToolResult[],
@@ -211,12 +214,16 @@ function mergePool(
   const pool = new Map<string, ToolScoredResult>();
   const provenance = new Map<string, string>();
 
-  // Per-facet tools: score by health quality (maintenance × credibility)
-  // This filters out low-quality tools that happen to match a UseCase tag
+  // Per-facet tools: score by health quality, cap low, skip junk
   for (const { facet, tool } of facetResults) {
     const maintenance = tool.health.maintenance_score ?? 0;
     const credibility = tool.health.credibility_score ?? 0.5;
-    const qualityScore = Math.min(maintenance * credibility, FACET_SCORE_CAP);
+    const rawQuality = maintenance * credibility;
+
+    // Minimum quality gate: filter tutorial repos, demos, abandoned projects
+    if (rawQuality < MIN_FACET_QUALITY) continue;
+
+    const qualityScore = Math.min(rawQuality, FACET_SCORE_CAP);
 
     const existing = pool.get(tool.name);
     if (!existing || existing.score < qualityScore) {
