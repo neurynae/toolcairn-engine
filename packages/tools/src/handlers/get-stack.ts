@@ -185,8 +185,24 @@ async function discoverToolsPerFacet(
 // ─── Pool merge ─────────────────────────────────────────────────────────────
 
 /**
+ * Cap for per-facet tool scores. Keeps them competitive with backup tools
+ * for high-quality tools, but ensures junk tools with low health stay low.
+ */
+const FACET_SCORE_CAP = 0.55;
+
+/**
  * Merge per-facet tool discoveries with backup pipeline results into a single
  * diverse candidate pool. Tracks which facet discovered each tool (for role labels).
+ *
+ * Per-facet tools are scored by QUALITY (maintenance × credibility), not raw
+ * SOLVES edge weight. SOLVES edge weights are all 0.8 (uniform from indexer),
+ * so normalizing them produces identical scores and allows irrelevant tools
+ * (e.g. a game tagged "real-time") to beat backup candidates. Quality scoring
+ * ensures well-maintained, credible tools win within each facet.
+ *
+ * Backup pipeline tools keep their Stage 3 scores, which reflect full-query
+ * relevance. A tool found by BOTH per-facet AND backup gets the higher of the
+ * two scores (dual-discovery bonus).
  */
 function mergePool(
   facetResults: FacetToolResult[],
@@ -195,28 +211,29 @@ function mergePool(
   const pool = new Map<string, ToolScoredResult>();
   const provenance = new Map<string, string>();
 
-  // Normalize facet scores to 0-1 range
-  const maxFacetScore = facetResults.reduce((max, r) => Math.max(max, r.score), 0);
-  const normalizer = maxFacetScore > 0 ? maxFacetScore : 1;
+  // Per-facet tools: score by health quality (maintenance × credibility)
+  // This filters out low-quality tools that happen to match a UseCase tag
+  for (const { facet, tool } of facetResults) {
+    const maintenance = tool.health.maintenance_score ?? 0;
+    const credibility = tool.health.credibility_score ?? 0.5;
+    const qualityScore = Math.min(maintenance * credibility, FACET_SCORE_CAP);
 
-  // Per-facet tools: these guarantee diversity across facets
-  for (const { facet, tool, score } of facetResults) {
-    const normalized = score / normalizer;
     const existing = pool.get(tool.name);
-    if (!existing || existing.score < normalized) {
-      pool.set(tool.name, { tool, score: normalized });
+    if (!existing || existing.score < qualityScore) {
+      pool.set(tool.name, { tool, score: qualityScore });
     }
-    // First facet discovery wins for provenance (most specific)
     if (!provenance.has(tool.name)) {
       provenance.set(tool.name, facet);
     }
   }
 
-  // Backup tools: fill gaps with pipeline-ranked candidates
+  // Backup tools keep their Stage 3 scores (full-query relevance signal).
+  // If a tool is in both per-facet and backup, take the higher score.
   for (const candidate of backupResults) {
-    if (!pool.has(candidate.tool.name)) {
-      pool.set(candidate.tool.name, candidate);
-      // No facet provenance — role will fall back to UseCase/category
+    const existing = pool.get(candidate.tool.name);
+    if (!existing || existing.score < candidate.score) {
+      pool.set(candidate.tool.name, { ...candidate });
+      // Keep existing facet provenance if it was set by per-facet discovery
     }
   }
 
