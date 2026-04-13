@@ -14,16 +14,22 @@ import { classifyQueryIntent, getIntentWeights } from '../query-intent.js';
 import type { Stage1Result } from '../types.js';
 import type { ExactLookupMaps } from './stage0-exact.js';
 
+export interface Stage1WeightOverride {
+  bm25Weight: number;
+  vectorWeight: number;
+}
+
 export async function stage1HybridSearch(
   query: string,
   allTools: ToolNode[],
   lookupMaps?: ExactLookupMaps,
+  weightOverride?: Stage1WeightOverride,
 ): Promise<Stage1Result> {
   const t0 = Date.now();
 
   // ── Intent classification ─────────────────────────────────────────────────
   const intent = classifyQueryIntent(query);
-  const weights = getIntentWeights(intent);
+  const weights = weightOverride ?? getIntentWeights(intent);
 
   // ── Alias expansion (BM25 only — embeddings handle semantics natively) ────
   const expandedQuery = expandQueryAliases(query);

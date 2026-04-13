@@ -149,6 +149,34 @@ export class SearchPipeline {
   }
 
   /**
+   * Stack-optimized search: BM25 and vector contribute equally (1:1).
+   *
+   * Default use_case intent weights (BM25=0.1, vector=2.0) work for single-concept
+   * queries but destroy diversity for multi-concept stack queries — the single
+   * embedding is dominated by one concept (e.g. "authentication") and BM25's
+   * natural token-level diversity is suppressed.
+   *
+   * Balanced weights let BM25 find tools for EACH query token independently
+   * while vector still provides quality filtering. The result is a naturally
+   * diverse candidate pool — auth tools AND database tools AND chat tools —
+   * without needing facet detection, per-facet search, or magic constants.
+   */
+  async runStages1to3ForStackBalanced(
+    query: string,
+    context: SearchContext | undefined,
+    limit: number,
+  ): Promise<ToolScoredResult[]> {
+    const allTools = await this.loadToolCorpus();
+    const stage1 = await stage1HybridSearch(query, allTools, undefined, {
+      bm25Weight: 1.0,
+      vectorWeight: 1.0,
+    });
+    const stage2 = await stage2ApplyFilters(stage1.ids, context);
+    const stage3 = await stage3GraphRerank(stage2);
+    return stage3.results.slice(0, limit);
+  }
+
+  /**
    * Determine which clarification round we're on based on previously asked dimensions.
    * Round 1: topic/usecase clarification
    * Round 2: constraint clarification (deployment, language)
