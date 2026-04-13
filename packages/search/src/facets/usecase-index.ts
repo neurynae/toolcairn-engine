@@ -99,11 +99,14 @@ export function searchUseCaseBm25(
 
   results.sort((a, b) => b.score - a.score);
 
-  // Diversity-aware selection: greedily pick facets whose tokens don't overlap
-  // heavily with already-selected facets. Without this, compound UseCase names
-  // like "real-time-chat", "real-time-chat-app", "real-time" consume all slots
-  // and crowd out distinct concepts like "authentication" and "database".
-  return diversifyFacets(results, limit);
+  // Step 1: Diversity-aware selection — collapse compound duplicates.
+  const diverse = diversifyFacets(results, limit);
+
+  // Step 2: Token coverage guarantee — ensure every high-IDF query token has
+  // at least one facet representing it. Without this, single-token concepts
+  // like "authentication" and "database" get crowded out by compound names
+  // ("real-time-chat" scores higher because it matches 3 query tokens).
+  return ensureTokenCoverage(diverse, queryTokens, index, limit);
 }
 
 /**
@@ -139,6 +142,84 @@ function diversifyFacets(ranked: UseCaseBm25Match[], limit: number): UseCaseBm25
   }
 
   return selected.map((s) => s.match);
+}
+
+/**
+ * Ensure every distinctive query token is represented by at least one facet.
+ *
+ * BM25 ranks compound UseCase names ("real-time-chat") above simple ones
+ * ("authentication") because compound names match more query tokens. After
+ * diversity filtering, "authentication" (1 token match) may still be absent
+ * if too many compound names filled the slots.
+ *
+ * This step finds uncovered high-IDF query tokens and force-adds the
+ * best-matching UseCase for each, replacing the weakest existing facet
+ * if at capacity.
+ */
+function ensureTokenCoverage(
+  facets: UseCaseBm25Match[],
+  queryTokens: string[],
+  index: UseCaseBm25Index,
+  limit: number,
+): UseCaseBm25Match[] {
+  // Collect all tokens already covered by selected facets
+  const coveredTokens = new Set<string>();
+  for (const f of facets) {
+    for (const t of tokenize(f.name)) {
+      coveredTokens.add(t);
+    }
+  }
+
+  // Find high-IDF query tokens not covered by any selected facet
+  const uncoveredTokens = queryTokens.filter(
+    (t) => !coveredTokens.has(t) && (index.idf.get(t) ?? 0) > 0,
+  );
+
+  if (uncoveredTokens.length === 0) return facets;
+
+  // Sort by IDF descending — most distinctive uncovered tokens first
+  uncoveredTokens.sort((a, b) => (index.idf.get(b) ?? 0) - (index.idf.get(a) ?? 0));
+
+  const result = [...facets];
+  const usedNames = new Set(facets.map((f) => f.name));
+
+  for (const token of uncoveredTokens) {
+    // Find the best UseCase containing this token
+    let bestMatch: UseCaseBm25Match | null = null;
+    for (const entry of index.entries) {
+      if (usedNames.has(entry.name)) continue;
+      if (!entry.tokens.includes(token)) continue;
+
+      // Prefer exact single-token match (UseCase name IS the token)
+      // over compound names that happen to contain it
+      const score = entry.tokens.length === 1 ? 2.0 : 1.0 / entry.tokens.length;
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = { name: entry.name, score };
+      }
+    }
+
+    if (!bestMatch) continue;
+
+    if (result.length < limit) {
+      // Room available — just add
+      result.push(bestMatch);
+    } else {
+      // At capacity — replace the weakest facet (lowest BM25 score)
+      let weakestIdx = 0;
+      for (let i = 1; i < result.length; i++) {
+        // biome-ignore lint/style/noNonNullAssertion: bounds checked
+        if (result[i]!.score < result[weakestIdx]!.score) {
+          weakestIdx = i;
+        }
+      }
+      result[weakestIdx] = bestMatch;
+    }
+
+    usedNames.add(bestMatch.name);
+    coveredTokens.add(token);
+  }
+
+  return result;
 }
 
 // ─── Cached singleton ───────────────────────────────────────────────────────
