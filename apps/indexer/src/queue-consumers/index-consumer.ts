@@ -130,17 +130,14 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     const processedTool = await processTool(crawlerResult, undefined, changeCheck.prevHealth);
     logger.info({ toolId, nodeId: processedTool.node.id }, 'Processing complete');
 
-    // 3a. Gate: reject personal repos under 1000 stars.
-    //     The cleanup script handles this weekly, but we should block at indexing
-    //     time so low-star tools never enter the search index.
-    if (
-      processedTool.node.owner_type === 'User' &&
-      processedTool.node.health.stars < 1000 &&
-      !processedTool.node.grace_until
-    ) {
+    // 3a. Gate: reject ANY repo under 1000 stars.
+    //     Prevents low-quality tools from entering the search index regardless
+    //     of owner type. Without this, name squatters (e.g. mortylabs/kubernetes
+    //     at 26★) can steal name slots from canonical tools after cleanup.
+    if (processedTool.node.health.stars < 1000 && !processedTool.node.grace_until) {
       logger.info(
         { toolId, stars: processedTool.node.health.stars, owner: processedTool.node.owner_type },
-        'Skipping personal repo under 1000 stars',
+        'Skipping repo under 1000 stars',
       );
       await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped');
       return;
