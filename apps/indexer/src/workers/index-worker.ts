@@ -201,5 +201,12 @@ export async function startIndexWorker(): Promise<void> {
     logger.info({ idleExitMinutes }, 'Idle-exit mode enabled — will stop when queue is empty');
   }
 
-  await startConsumer(handlers, { idleExitMs });
+  // Concurrency: number of index jobs processed in parallel per consumer instance.
+  // Driven by INDEXER_CONCURRENCY env var so it can be tuned per deployment.
+  // Default: 2 (conservative for single-token setups).
+  // With 3 GitHub tokens on 2 vCPU: 6 (2 jobs per token, saturates API budget).
+  // Keep ≤ Postgres max_connections / expected_containers (VPS has ~20, 1 container).
+  const concurrency = process.env.INDEXER_CONCURRENCY ? Number(process.env.INDEXER_CONCURRENCY) : 2;
+
+  await startConsumer(handlers, { idleExitMs, concurrency });
 }
