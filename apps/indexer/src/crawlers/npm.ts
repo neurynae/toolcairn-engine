@@ -65,6 +65,9 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
     const homepageDocsUrl = homepage && !homepage.includes('github.com') ? homepage : undefined;
     const docsUrl = readmeDocsUrl ?? homepageDocsUrl;
 
+    // Fetch weekly downloads via unified REGISTRY_CONFIGS (non-fatal)
+    const weeklyDownloads = await fetchPackageDownloads('npm', name);
+
     const extracted: ExtractedToolData = {
       name: pkgName,
       display_name: pkgName,
@@ -76,13 +79,15 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
       language: 'JavaScript',
       languages: ['JavaScript', 'TypeScript'],
       package_managers: [
-        { registry: 'npm', packageName: name, installCommand: `npm install ${name}` },
+        {
+          registry: 'npm',
+          packageName: name,
+          installCommand: `npm install ${name}`,
+          weeklyDownloads,
+        },
       ],
       deployment_models: ['self-hosted'],
     };
-
-    // Fetch weekly downloads via unified REGISTRY_CONFIGS (non-fatal)
-    const weeklyDownloads = await fetchPackageDownloads('npm', name);
 
     return {
       source: 'npm',
@@ -90,7 +95,6 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
       raw: {
         ...raw,
         topics: keywords,
-        weekly_downloads: weeklyDownloads,
       },
       extracted,
     };

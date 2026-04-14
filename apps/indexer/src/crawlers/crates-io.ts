@@ -69,6 +69,9 @@ export async function crawlCratesIoPackage(name: string): Promise<CrawlerResult>
         ? homepage
         : repository || `https://crates.io/crates/${name}`;
 
+    // Fetch downloads via unified REGISTRY_CONFIGS (non-fatal)
+    const weeklyDownloads = await fetchPackageDownloads('crates', name);
+
     const extracted: ExtractedToolData = {
       name: pkgName,
       display_name: pkgName,
@@ -80,18 +83,20 @@ export async function crawlCratesIoPackage(name: string): Promise<CrawlerResult>
       language: 'Rust',
       languages: ['Rust'],
       package_managers: [
-        { registry: 'crates', packageName: name, installCommand: `cargo add ${name}` },
+        {
+          registry: 'crates',
+          packageName: name,
+          installCommand: `cargo add ${name}`,
+          weeklyDownloads,
+        },
       ],
       deployment_models: ['self-hosted'],
     };
 
-    // Fetch downloads via unified REGISTRY_CONFIGS (non-fatal)
-    const weeklyDownloads = await fetchPackageDownloads('crates', name);
-
     return {
       source: 'crates.io',
       url,
-      raw: { ...raw, topics, weekly_downloads: weeklyDownloads },
+      raw: { ...raw, topics },
       extracted,
     };
   } catch (e) {

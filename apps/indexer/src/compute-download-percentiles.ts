@@ -1,3 +1,4 @@
+import type { PackageChannel } from '@toolcairn/core';
 import { PrismaClient } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
@@ -44,8 +45,7 @@ interface ToolDownloadData {
   pointId: string;
   name: string;
   githubUrl: string;
-  weeklyDownloads: number;
-  downloadRegistry: string | null;
+  channels: PackageChannel[];
   health: {
     stars: number;
     forks_count: number;
@@ -53,7 +53,6 @@ interface ToolDownloadData {
     contributor_count: number;
     stars_velocity_30d: number;
     credibility_score: number;
-    weekly_downloads: number;
   };
   ownerType: string | null;
   isFork: boolean;
@@ -118,7 +117,7 @@ async function main() {
   let offset: string | number | null | undefined = undefined;
   const PAGE_SIZE = 500;
 
-  // Phase 1: Collect all tools with download data
+  // Phase 1: Collect all tools
   const allTools: ToolDownloadData[] = [];
 
   while (true) {
@@ -140,12 +139,24 @@ async function main() {
       const health = p.health as Record<string, unknown> | undefined;
       if (!health) continue;
 
+      // Parse package_managers channels (stored as JSON string or array in Qdrant payload)
+      let channels: PackageChannel[] = [];
+      try {
+        const raw = p.package_managers;
+        if (typeof raw === 'string') {
+          channels = JSON.parse(raw) as PackageChannel[];
+        } else if (Array.isArray(raw)) {
+          channels = raw as PackageChannel[];
+        }
+      } catch {
+        channels = [];
+      }
+
       allTools.push({
         pointId: String(point.id),
         name: p.name as string,
         githubUrl: p.github_url as string,
-        weeklyDownloads: (health.weekly_downloads as number) ?? 0,
-        downloadRegistry: (health.download_registry as string) ?? null,
+        channels,
         health: {
           stars: (health.stars as number) ?? 0,
           forks_count: (health.forks_count as number) ?? 0,
@@ -153,7 +164,6 @@ async function main() {
           contributor_count: (health.contributor_count as number) ?? 0,
           stars_velocity_30d: (health.stars_velocity_30d as number) ?? 0,
           credibility_score: (health.credibility_score as number) ?? 0,
-          weekly_downloads: (health.weekly_downloads as number) ?? 0,
         },
         ownerType: (p.owner_type as string) ?? null,
         isFork: (p.is_fork as boolean) ?? false,
@@ -167,34 +177,41 @@ async function main() {
 
   logger.info({ totalTools: allTools.length }, 'Scanned all tools');
 
-  // Phase 2: Group by registry and compute percentiles
-  const withDownloads = allTools.filter((t) => t.weeklyDownloads > 0 && t.downloadRegistry);
-  const withoutDownloads = allTools.filter((t) => t.weeklyDownloads <= 0 || !t.downloadRegistry);
+  // Phase 2: Group by registry and compute percentiles per registry.
+  // Each tool can appear in MULTIPLE registries — collect (toolId, weeklyDownloads)
+  // pairs per registry, compute percentile rank within the registry group, then
+  // assign each tool its MAX percentile across all its channels.
+
+  // Collect per-registry entries: registry → [(pointId, weeklyDownloads)]
+  const byRegistry = new Map<string, Array<{ pointId: string; weeklyDownloads: number }>>();
+
+  for (const tool of allTools) {
+    for (const ch of tool.channels) {
+      if (ch.weeklyDownloads <= 0) continue;
+      const group = byRegistry.get(ch.registry) ?? [];
+      group.push({ pointId: tool.pointId, weeklyDownloads: ch.weeklyDownloads });
+      byRegistry.set(ch.registry, group);
+    }
+  }
 
   logger.info(
-    { withDownloads: withDownloads.length, withoutDownloads: withoutDownloads.length },
+    {
+      registries: byRegistry.size,
+      withChannels: allTools.filter((t) => t.channels.some((c) => c.weeklyDownloads > 0)).length,
+    },
     'Download distribution',
   );
 
-  // Group by registry
-  const byRegistry = new Map<string, ToolDownloadData[]>();
-  for (const tool of withDownloads) {
-    const reg = tool.downloadRegistry as string;
-    const group = byRegistry.get(reg) ?? [];
-    group.push(tool);
-    byRegistry.set(reg, group);
-  }
-
-  // Compute dlScore per tool
-  const dlScores = new Map<string, number>();
+  // Compute dlScore per (toolId, registry) pair
+  const dlScoreByToolRegistry = new Map<string, number>(); // key: `${pointId}:${registry}`
 
   for (const [registry, group] of byRegistry) {
     if (group.length >= MIN_GROUP_SIZE) {
       // Percentile-based: rank within registry
       group.sort((a, b) => a.weeklyDownloads - b.weeklyDownloads);
       for (let i = 0; i < group.length; i++) {
-        const percentile = (i + 1) / group.length; // 0→1, higher = more downloads
-        dlScores.set(group[i]!.pointId, percentile);
+        const percentile = (i + 1) / group.length;
+        dlScoreByToolRegistry.set(`${group[i]!.pointId}:${registry}`, percentile);
       }
       logger.info(
         { registry, count: group.length, method: 'percentile' },
@@ -203,14 +220,28 @@ async function main() {
     } else {
       // Fallback: log normalization with registry-specific scale
       const scale = REGISTRY_SCALES[registry] ?? DEFAULT_SCALE;
-      for (const tool of group) {
-        dlScores.set(tool.pointId, normalizeLog(tool.weeklyDownloads, scale));
+      for (const entry of group) {
+        dlScoreByToolRegistry.set(
+          `${entry.pointId}:${registry}`,
+          normalizeLog(entry.weeklyDownloads, scale),
+        );
       }
       logger.info(
         { registry, count: group.length, scale, method: 'log-scale' },
         'Computed log-scale scores (group too small for percentile)',
       );
     }
+  }
+
+  // For each tool: dlScore = MAX percentile across all its channels
+  const dlScores = new Map<string, number>();
+  for (const tool of allTools) {
+    let maxScore = 0;
+    for (const ch of tool.channels) {
+      const score = dlScoreByToolRegistry.get(`${tool.pointId}:${ch.registry}`) ?? 0;
+      if (score > maxScore) maxScore = score;
+    }
+    if (maxScore > 0) dlScores.set(tool.pointId, maxScore);
   }
 
   if (DRY_RUN) {
@@ -220,7 +251,11 @@ async function main() {
       .slice(0, 15)
       .map(([id, score]) => {
         const tool = allTools.find((t) => t.pointId === id);
-        return `${tool?.name} (${tool?.downloadRegistry}): dl=${tool?.weeklyDownloads}/wk → dlScore=${score.toFixed(3)}`;
+        const chSummary = tool?.channels
+          .filter((c) => c.weeklyDownloads > 0)
+          .map((c) => `${c.registry}:${c.weeklyDownloads}`)
+          .join(', ');
+        return `${tool?.name} [${chSummary}]: dlScore=${score.toFixed(3)}`;
       });
     logger.info({ samples }, 'Top dlScores');
     logger.info('Re-run with --write to commit');

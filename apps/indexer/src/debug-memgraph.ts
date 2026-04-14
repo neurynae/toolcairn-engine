@@ -15,7 +15,9 @@ const tool: ToolNode = {
   language: 'TypeScript',
   languages: ['TypeScript'],
   deployment_models: ['self-hosted'],
-  package_managers: [{ registry: 'npm', packageName: 'npm', installCommand: 'npm install npm' }],
+  package_managers: [
+    { registry: 'npm', packageName: 'npm', installCommand: 'npm install npm', weeklyDownloads: 0 },
+  ],
   health: {
     stars: 35000,
     stars_velocity_90d: 1750,
@@ -30,7 +32,6 @@ const tool: ToolNode = {
     maintenance_score: 0.75,
     credibility_score: 0.8,
     forks_count: 0,
-    weekly_downloads: 0,
     stars_snapshot_at: '',
     stars_velocity_7d: 0,
     stars_velocity_30d: 0,

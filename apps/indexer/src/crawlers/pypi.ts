@@ -91,6 +91,9 @@ export async function crawlPyPiPackage(name: string): Promise<CrawlerResult> {
     const docsUrl = pypiDocsUrl || projectUrlsDocsUrl || undefined;
     const changelogUrl = extractProjectUrl(info.project_urls, CHANGELOG_KEYS) || undefined;
 
+    // Fetch weekly downloads via unified REGISTRY_CONFIGS (non-fatal)
+    const weeklyDownloads = await fetchPackageDownloads('pypi', name);
+
     const extracted: ExtractedToolData = {
       name: pkgName,
       display_name: pkgName,
@@ -103,18 +106,20 @@ export async function crawlPyPiPackage(name: string): Promise<CrawlerResult> {
       language: 'Python',
       languages: ['Python'],
       package_managers: [
-        { registry: 'pypi', packageName: name, installCommand: `pip install ${name}` },
+        {
+          registry: 'pypi',
+          packageName: name,
+          installCommand: `pip install ${name}`,
+          weeklyDownloads,
+        },
       ],
       deployment_models: ['self-hosted'],
     };
 
-    // Fetch weekly downloads via unified REGISTRY_CONFIGS (non-fatal)
-    const weeklyDownloads = await fetchPackageDownloads('pypi', name);
-
     return {
       source: 'pypi',
       url,
-      raw: { ...raw, topics, weekly_downloads: weeklyDownloads },
+      raw: { ...raw, topics },
       extracted,
     };
   } catch (e) {

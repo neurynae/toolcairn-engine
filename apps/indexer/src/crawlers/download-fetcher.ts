@@ -264,21 +264,20 @@ async function fetchHomebrewDownloads(
 // ─── Main function ──────────────────────────────────────────────────────────
 
 /**
- * Fetch download counts for all discovered distribution channels.
- * Verifies ownership, fetches downloads, converts to weekly equivalent.
- * Returns the best result (highest weekly equivalent) across all channels.
+ * Fetch download counts for ALL discovered distribution channels that pass ownership verification.
+ * Returns every verified result — callers decide how to aggregate.
  *
  * @param channels - Discovered packages from README parser
  * @param ownerName - GitHub repo owner
  * @param repoName - GitHub repo name
- * @returns Best download result, or null if no downloads found
+ * @returns All verified download results (may be empty)
  */
-export async function fetchBestDownloadCount(
+export async function fetchAllDownloadCounts(
   channels: DiscoveredPackage[],
   ownerName: string,
   repoName: string,
-): Promise<DownloadResult | null> {
-  if (channels.length === 0) return null;
+): Promise<DownloadResult[]> {
+  if (channels.length === 0) return [];
 
   // Only fetch from registries that have download APIs
   const fetchable = channels.filter((ch) => {
@@ -286,7 +285,7 @@ export async function fetchBestDownloadCount(
     return config?.hasDownloadApi === true;
   });
 
-  if (fetchable.length === 0) return null;
+  if (fetchable.length === 0) return [];
 
   // Fetch all in parallel (different registries, different rate limits)
   const results = await Promise.all(
@@ -318,29 +317,42 @@ export async function fetchBestDownloadCount(
     }),
   );
 
-  // Pick the best (highest weekly equivalent)
-  let best: DownloadResult | null = null;
-  for (const r of results) {
-    if (r && r.weeklyEquivalent > (best?.weeklyEquivalent ?? 0)) {
-      best = r;
-    }
-  }
+  const verified = results.filter((r): r is DownloadResult => r !== null);
 
-  if (best) {
+  if (verified.length > 0) {
+    const best = verified.reduce((a, b) => (a.weeklyEquivalent >= b.weeklyEquivalent ? a : b));
     logger.info(
       {
         repo: `${ownerName}/${repoName}`,
-        registry: best.registry,
-        pkg: best.packageName,
-        weekly: best.weeklyEquivalent,
-        raw: best.rawDownloads,
-        window: best.timeWindow,
+        channels: verified.length,
+        bestRegistry: best.registry,
+        bestWeekly: best.weeklyEquivalent,
       },
-      'Download count fetched',
+      'Download counts fetched',
     );
   }
 
-  return best;
+  return verified;
+}
+
+/**
+ * Fetch download counts for all discovered channels and return the best result.
+ * Convenience wrapper around fetchAllDownloadCounts for callers that only need
+ * the single highest weekly-equivalent count.
+ *
+ * @param channels - Discovered packages from README parser
+ * @param ownerName - GitHub repo owner
+ * @param repoName - GitHub repo name
+ * @returns Best download result, or null if no downloads found
+ */
+export async function fetchBestDownloadCount(
+  channels: DiscoveredPackage[],
+  ownerName: string,
+  repoName: string,
+): Promise<DownloadResult | null> {
+  const all = await fetchAllDownloadCounts(channels, ownerName, repoName);
+  if (all.length === 0) return null;
+  return all.reduce((best, r) => (r.weeklyEquivalent > best.weeklyEquivalent ? r : best));
 }
 
 /**

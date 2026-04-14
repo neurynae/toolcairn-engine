@@ -21,7 +21,6 @@ function makeHealth(maintenanceScore = 0.8) {
     maintenance_score: maintenanceScore,
     credibility_score: maintenanceScore,
     forks_count: 0,
-    weekly_downloads: 0,
     stars_snapshot_at: '',
     stars_velocity_7d: 0,
     stars_velocity_30d: 0,

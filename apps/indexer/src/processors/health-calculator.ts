@@ -1,4 +1,4 @@
-import type { HealthSignals } from '@toolcairn/core';
+import type { HealthSignals, PackageChannel } from '@toolcairn/core';
 
 interface GitHubRepoData {
   stargazers_count?: number;
@@ -12,7 +12,6 @@ interface GitHubRepoData {
 interface RawGitHubData {
   repo?: GitHubRepoData;
   topics?: string[];
-  weekly_downloads?: number;
 }
 
 function extractNumber(value: unknown): number {
@@ -36,23 +35,40 @@ function recencyScore(dateStr: string): number {
   return Math.exp(-ageDays / 365);
 }
 
+// Per-registry log-normalization scales (weekly equivalent downloads).
+// Used as denominator in normalizeLog before percentile batch runs.
+const REGISTRY_LOG_SCALE: Record<string, number> = {
+  npm: 1_000_000,
+  pypi: 1_000_000,
+  crates: 100_000,
+  rubygems: 50_000,
+  packagist: 200_000,
+  nuget: 500_000,
+  pub: 50_000,
+  hex: 10_000,
+  cran: 50_000,
+  docker: 100_000,
+  homebrew: 10_000,
+  default: 50_000,
+};
+
 /**
  * Calculate HealthSignals from a raw GitHub API response.
  *
- * @param raw - Raw crawler response (includes weekly_downloads if set by crawlers)
+ * @param raw - Raw crawler response
  * @param prev - Previous health snapshot for real velocity computation
  * @param ownerType - 'User' or 'Organization'
  * @param isFork - true if this repo is itself a fork of another repo
- * @param hasRealPackage - true if tool has a real published package (npm/pip/cargo).
- *   When false, the 12% downloads weight is redistributed to other factors
- *   so tools without packages aren't penalized.
+ * @param channels - PackageChannel[] from the crawler's extracted.package_managers.
+ *   Download scores are derived from channels[*].weeklyDownloads, normalized
+ *   per-registry. When empty/all-zero, the 12% download weight is redistributed.
  */
 export function calculateHealth(
   raw: unknown,
   prev?: { stars: number; updatedAt: string },
   ownerType?: 'User' | 'Organization',
   isFork?: boolean,
-  hasRealPackage?: boolean,
+  channels?: PackageChannel[],
 ): HealthSignals {
   const data = raw as RawGitHubData;
   const repo: GitHubRepoData =
@@ -64,7 +80,6 @@ export function calculateHealth(
   const lastCommitDate = extractString(repo.pushed_at) || new Date().toISOString();
   const lastReleaseDate = extractString(repo.updated_at) || new Date().toISOString();
   const contributorCount = extractNumber(repo.subscribers_count);
-  const weeklyDownloads = extractNumber(data?.weekly_downloads);
 
   // Real velocity from snapshot delta
   let starsVelocity90d: number;
@@ -109,9 +124,12 @@ export function calculateHealth(
     0.1 * contributorTrendScore +
     0.1 * releaseRecency;
 
-  // ── Credibility formula (package-aware) ────────────────────────────────────
+  // ── Credibility formula (channel-aware) ───────────────────────────────────
   //
   // Tools WITH download data: standard weights (downloads = 12%).
+  //   dlScore = max per-channel normalized score (each channel normalized by its
+  //   registry-specific log scale so npm/pypi high-download tools are compared
+  //   fairly against crates/homebrew lower-download tools).
   // Tools WITHOUT download data: redistribute 12% proportionally so tools
   // without packages (Redis, Kubernetes) or on registries without APIs
   // (Go, Maven) aren't penalized for missing data.
@@ -122,11 +140,22 @@ export function calculateHealth(
   const forksScore = Math.min(1, Math.log10(forksCount + 1) / Math.log10(100_001));
   const orgBonus = ownerType === 'Organization' ? 1.0 : stars >= 1000 ? 0.6 : 0.3;
   const contribScore = normalizeLog(contributorCount, 500);
-  const dlScore = normalizeLog(weeklyDownloads, 500_000);
   const velocity30dScore = normalizeLog(starsVelocity30d, 5000);
   const maint = Math.max(0, Math.min(1, maintenanceScore));
 
-  const hasDownloads = weeklyDownloads > 0 && hasRealPackage !== false;
+  // Compute dlScore from channels: max(normalizeLog(ch.weeklyDownloads, SCALE[registry]))
+  const DEFAULT_LOG_SCALE = REGISTRY_LOG_SCALE.default ?? 50_000;
+  const dlScore =
+    channels && channels.length > 0
+      ? Math.max(
+          0,
+          ...channels.map((ch) => {
+            const scale: number = REGISTRY_LOG_SCALE[ch.registry] ?? DEFAULT_LOG_SCALE;
+            return normalizeLog(ch.weeklyDownloads, scale);
+          }),
+        )
+      : 0;
+  const hasDownloads = channels ? channels.some((ch) => ch.weeklyDownloads > 0) : false;
 
   let rawCredibility: number;
   if (hasDownloads) {
@@ -167,7 +196,6 @@ export function calculateHealth(
     maintenance_score: Math.max(0, Math.min(1, maintenanceScore)),
     credibility_score: credibilityScore,
     forks_count: forksCount,
-    weekly_downloads: weeklyDownloads,
     stars_snapshot_at: starsSnapshotAt,
     stars_velocity_7d: starsVelocity7d,
     stars_velocity_30d: starsVelocity30d,

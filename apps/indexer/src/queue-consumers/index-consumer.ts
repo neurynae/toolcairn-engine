@@ -155,16 +155,16 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     const processedTool = await processTool(crawlerResult, undefined, changeCheck.prevHealth);
     logger.info({ toolId, nodeId: processedTool.node.id }, 'Processing complete');
 
-    const {
-      stars,
-      weekly_downloads: weeklyDownloads,
-      download_registry,
-    } = processedTool.node.health;
+    const { stars } = processedTool.node.health;
+    const channels = processedTool.node.package_managers;
+
+    // Max weekly downloads across all channels (for admin visibility)
+    const maxWeeklyDownloads = channels.reduce((max, ch) => Math.max(max, ch.weeklyDownloads), 0);
 
     // Base meta — stars + downloads stored on every tool for admin visibility
     const baseMeta: IndexedToolMeta = {
       stars,
-      weeklyDownloads: weeklyDownloads ?? 0,
+      weeklyDownloads: maxWeeklyDownloads,
     };
 
     // 3a. Quality gate: stars OR verified package downloads.
@@ -172,18 +172,19 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     //     (25th percentile per registry, computed by weekly percentile cron).
     //     Falls back to no download bypass if thresholds not yet computed.
     const thresholds = await getDownloadThresholds();
-    const downloadThreshold = download_registry ? (thresholds[download_registry] ?? null) : null;
     const hasGitHubPopularity = stars >= 1000;
-    const hasPackageUsage =
-      downloadThreshold !== null && (weeklyDownloads ?? 0) >= downloadThreshold;
+    const hasPackageUsage = channels.some((ch) => {
+      const threshold = thresholds[ch.registry];
+      return threshold !== undefined && ch.weeklyDownloads >= threshold;
+    });
     if (!hasGitHubPopularity && !hasPackageUsage && !processedTool.node.grace_until) {
       logger.info(
-        { toolId, stars, weeklyDownloads, download_registry, downloadThreshold },
+        { toolId, stars, maxWeeklyDownloads, channels: channels.length },
         'Skipping — insufficient stars and downloads',
       );
       await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped', {
         ...baseMeta,
-        skipReason: `stars:${stars} downloads:${weeklyDownloads ?? 0} threshold:${downloadThreshold ?? 'none'}`,
+        skipReason: `stars:${stars} downloads:${maxWeeklyDownloads} thresholds:${JSON.stringify(thresholds)}`,
       });
       return;
     }

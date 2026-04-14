@@ -71,10 +71,6 @@ export interface HealthSignals {
   credibility_score: number;
   /** GitHub forks_count — how many times others have forked this tool */
   forks_count: number;
-  /** Weekly equivalent downloads from the best registry channel (0 if no package) */
-  weekly_downloads: number;
-  /** Which registry the download count came from (e.g. 'npm', 'pypi', 'crates') */
-  download_registry?: string;
   /** ISO date when stars were last snapshotted for velocity computation */
   stars_snapshot_at: string;
   /** Stars gained in last 7 days (computed from snapshots) */
@@ -95,6 +91,7 @@ export interface PackageChannel {
   registry: string; // e.g. 'npm', 'pypi', 'crates', 'homebrew', 'docker'
   packageName: string; // e.g. 'express', 'flask', 'ripgrep'
   installCommand: string; // e.g. 'npm install express', 'pip install flask'
+  weeklyDownloads: number; // weekly equivalent at last index time, 0 if unavailable
 }
 
 // ─── Node Types ────────────────────────────────────────────────────────────

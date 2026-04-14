@@ -34,8 +34,6 @@ export interface CreateToolParams {
   health_maintenance_score: number;
   health_credibility_score: number;
   health_forks_count: number;
-  health_weekly_downloads: number;
-  health_download_registry: string | null;
   health_stars_snapshot_at: string;
   health_stars_velocity_7d: number;
   health_stars_velocity_30d: number;
@@ -145,8 +143,6 @@ export const CREATE_TOOL = {
        t.health_maintenance_score = $health_maintenance_score,
        t.health_credibility_score = $health_credibility_score,
        t.health_forks_count = $health_forks_count,
-       t.health_weekly_downloads = $health_weekly_downloads,
-       t.health_download_registry = $health_download_registry,
        t.health_stars_snapshot_at = $health_stars_snapshot_at,
        t.health_stars_velocity_7d = $health_stars_velocity_7d,
        t.health_stars_velocity_30d = $health_stars_velocity_30d,
@@ -491,8 +487,6 @@ export function mapRecordToToolNode(record: Record<string, unknown>): ToolNode {
       credibility_score:
         typeof t.health_credibility_score === 'number' ? t.health_credibility_score : 0,
       forks_count: typeof t.health_forks_count === 'number' ? t.health_forks_count : 0,
-      weekly_downloads:
-        typeof t.health_weekly_downloads === 'number' ? t.health_weekly_downloads : 0,
       stars_snapshot_at:
         typeof t.health_stars_snapshot_at === 'string' ? t.health_stars_snapshot_at : '',
       stars_velocity_7d:

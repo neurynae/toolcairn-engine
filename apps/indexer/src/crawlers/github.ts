@@ -4,7 +4,7 @@ import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
-import { fetchBestDownloadCount } from './download-fetcher.js';
+import { fetchAllDownloadCounts } from './download-fetcher.js';
 import {
   corePreFlight,
   getBestCoreSlot,
@@ -326,8 +326,6 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     // Uses README install commands (Signal 1) and GitHub topics (Signal 2)
     // to discover distribution channels, verify ownership, and fetch download counts.
     // All external HTTP calls — no GitHub API quota impact.
-    let weeklyDownloads = 0;
-    let downloadRegistry: string | undefined;
     let packageChannels: PackageChannel[] = [];
     try {
       const ownerLogin = repoData.owner?.login ?? owner;
@@ -338,30 +336,23 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
         topics,
       );
       if (channels.length > 0) {
-        // Build package_managers from ALL discovered distribution channels
-        packageChannels = channels.map((ch) => ({
-          registry: ch.registry,
-          packageName: ch.packageName,
-          installCommand: ch.rawCommand,
-        }));
-        const best = await fetchBestDownloadCount(channels, ownerLogin, repoData.name);
-        if (best) {
-          weeklyDownloads = best.weeklyEquivalent;
-          downloadRegistry = best.registry;
-        }
+        const allResults = await fetchAllDownloadCounts(channels, ownerLogin, repoData.name);
+        // Map download counts back to each channel
+        packageChannels = channels.map((ch) => {
+          const result = allResults.find(
+            (r) => r.registry === ch.registry && r.packageName === ch.packageName,
+          );
+          return {
+            registry: ch.registry,
+            packageName: ch.packageName,
+            installCommand: ch.rawCommand,
+            weeklyDownloads: result?.weeklyEquivalent ?? 0,
+          };
+        });
       }
     } catch (e) {
       // Non-fatal — download fetching should never block the main crawl
       logger.debug({ repo: repoKey, err: e }, 'Download discovery failed (non-fatal)');
-    }
-
-    // Fall back to file-based detection if README yielded no channels
-    if (packageChannels.length === 0) {
-      packageChannels = Object.entries(fileBasedManagers).map(([manager, pkgName]) => ({
-        registry: manager,
-        packageName: pkgName,
-        installCommand: `${manager} install ${pkgName}`,
-      }));
     }
 
     const extracted: ExtractedToolData = {
@@ -387,8 +378,6 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
       languages,
       deps: packageJsonDeps,
       topics,
-      weekly_downloads: weeklyDownloads,
-      download_registry: downloadRegistry,
     };
 
     logger.info(
