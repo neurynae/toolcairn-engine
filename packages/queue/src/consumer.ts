@@ -13,7 +13,8 @@ export interface QueueHandlers {
   onIndexJob: (toolId: string, priority: number) => Promise<void>;
   onSearchEvent: (query: string, sessionId: string) => Promise<void>;
   onRunDiscovery?: () => Promise<void>;
-  onRunReindex?: () => Promise<void>;
+  /** force=true when triggeredBy==='manual' — bypasses 7-day staleness threshold */
+  onRunReindex?: (force?: boolean) => Promise<void>;
 }
 
 let redisClient: Redis | undefined;
@@ -326,7 +327,8 @@ export async function startConsumer(
             } else if (msg.type === 'run-discovery' && handlers.onRunDiscovery) {
               await handlers.onRunDiscovery();
             } else if (msg.type === 'run-reindex' && handlers.onRunReindex) {
-              await handlers.onRunReindex();
+              const { triggeredBy } = (msg.payload ?? {}) as { triggeredBy?: string };
+              await handlers.onRunReindex(triggeredBy === 'manual');
             }
           } catch (e) {
             logger.error({ err: e, messageId: msg.id }, 'PEL drain: message processing failed');

@@ -138,14 +138,19 @@ export async function enqueueDiscoveryTrigger(): Promise<Result<string, QueueErr
 
 /**
  * Enqueue a trigger to run the reindex scheduler.
+ * @param triggeredBy - 'cron' (normal staleness check) or 'manual' (force all tools).
+ *   Manual triggers bypass the 7-day staleness threshold, matching the TRIGGERED_BY=manual
+ *   pattern used in the VPS cron shell scripts.
  */
-export async function enqueueReindexTrigger(): Promise<Result<string, QueueError>> {
+export async function enqueueReindexTrigger(
+  triggeredBy: 'cron' | 'manual' = 'cron',
+): Promise<Result<string, QueueError>> {
   try {
     const redis = getRedisClient();
     const message: QueueMessage = {
       id: crypto.randomUUID(),
       type: 'run-reindex',
-      payload: {},
+      payload: { triggeredBy },
       timestamp: Date.now(),
     };
 

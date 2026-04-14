@@ -235,11 +235,13 @@ export function adminCronRoutes() {
     try {
       // daily-indexer: enqueue both discovery + reindex to the Redis stream
       // so the running indexer container processes them immediately.
+      // triggeredBy='manual' bypasses the 7-day staleness threshold — same
+      // pattern as TRIGGERED_BY=manual in the VPS cron shell scripts.
       // Other jobs still use the .trigger file approach for the VPS cron watcher.
       if (jobId === 'daily-indexer') {
         const [discResult, reidxResult] = await Promise.all([
           enqueueDiscoveryTrigger(),
-          enqueueReindexTrigger(),
+          enqueueReindexTrigger('manual'),
         ]);
         if (!discResult.ok) {
           logger.warn({ error: discResult.error }, 'Failed to enqueue discovery trigger');

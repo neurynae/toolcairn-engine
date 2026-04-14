@@ -13,7 +13,6 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import { config } from '@toolcairn/config';
-import { adminCronRoutes } from './admin-cron.js';
 import { PrismaClient } from '@toolcairn/db';
 import {
   GET_EDGE_WEIGHT_SUMMARY,
@@ -30,6 +29,7 @@ import { SignJWT } from 'jose';
 import neo4j from 'neo4j-driver';
 import { z } from 'zod';
 import { adminAuth } from '../middleware/admin-auth.js';
+import { adminCronRoutes } from './admin-cron.js';
 
 // ─── Shared Prisma singleton ──────────────────────────────────────────────────
 
@@ -657,9 +657,11 @@ RETURN edge.toolId AS toolId, topicId, topicNodeType, edge.edgeType AS edgeType
   });
 
   // ── POST /v1/admin/indexer/reindex ─────────────────────────────────────────
+  // Manual trigger — always uses 'manual' to bypass 7-day staleness threshold.
+  // Same pattern as TRIGGERED_BY=manual in VPS cron shell scripts.
   app.post('/indexer/reindex', async (c) => {
     try {
-      await enqueueReindexTrigger();
+      await enqueueReindexTrigger('manual');
       return c.json(ok({ message: 'Reindex triggered' }));
     } catch (e) {
       return c.json(err(e instanceof Error ? e.message : 'Enqueue error'), 500);

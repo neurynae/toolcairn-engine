@@ -155,10 +155,10 @@ async function runDiscovery(): Promise<void> {
   }
 }
 
-async function runReindex(): Promise<void> {
-  logger.info('Received run-reindex trigger');
+async function runReindex(force?: boolean): Promise<void> {
+  logger.info({ force: !!force }, 'Received run-reindex trigger');
   try {
-    const result = await runReindexScheduler();
+    const result = await runReindexScheduler(force);
     logger.info(result, 'Reindex scheduler completed');
   } catch (err) {
     logger.error({ err }, 'Reindex scheduler failed');

@@ -28,35 +28,40 @@ async function isReindexEnabled(prisma: PrismaClient): Promise<boolean> {
   return settings?.reindex_scheduler_enabled ?? true;
 }
 
-export async function runReindexScheduler(): Promise<{
+export async function runReindexScheduler(force = false): Promise<{
   found: number;
   enqueued: number;
 }> {
   const prisma = new PrismaClient();
   try {
-    // Check if reindex is enabled
-    const enabled = await isReindexEnabled(prisma);
-    if (!enabled) {
-      logger.info('Reindex scheduler is disabled — skipping run');
-      return { found: 0, enqueued: 0 };
+    // Check if reindex is enabled (force bypasses this check)
+    if (!force) {
+      const enabled = await isReindexEnabled(prisma);
+      if (!enabled) {
+        logger.info('Reindex scheduler is disabled — skipping run');
+        return { found: 0, enqueued: 0 };
+      }
     }
 
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - STALE_THRESHOLD_DAYS);
 
-    // Find tools that are either never indexed or indexed more than STALE_THRESHOLD_DAYS ago
+    // force=true: reindex ALL indexed tools regardless of age (used after major pipeline changes)
+    // normal: only tools not indexed in the last STALE_THRESHOLD_DAYS
     const staleTools = await prisma.indexedTool.findMany({
-      where: {
-        index_status: { in: ['indexed', 'pending'] },
-        OR: [{ last_indexed_at: null }, { last_indexed_at: { lt: cutoff } }],
-      },
+      where: force
+        ? { index_status: { in: ['indexed', 'pending'] } }
+        : {
+            index_status: { in: ['indexed', 'pending'] },
+            OR: [{ last_indexed_at: null }, { last_indexed_at: { lt: cutoff } }],
+          },
       select: {
         github_url: true,
         last_indexed_at: true,
         index_status: true,
       },
       orderBy: { last_indexed_at: 'asc' }, // oldest first
-      take: BATCH_SIZE,
+      take: force ? 500 : BATCH_SIZE, // larger batch for force runs
     });
 
     if (staleTools.length === 0) {
