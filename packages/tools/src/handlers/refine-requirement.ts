@@ -60,10 +60,16 @@ ${args.prompt}
 ${projectContext}${languageContext}${frameworkContext}
 
 For each distinct tool/library category needed, output a JSON object with:
-- "need": precise technical description of the capability (e.g., "JWT authentication middleware", "CLI argument parser")
+- "need": precise technical description of the capability (e.g., "JWT authentication middleware", "CLI argument parser"). Be specific about the tool's domain — say "Express.js HTTP web framework for Node.js" not just "web framework".
 - "use_cases": array of 1-3 relevant tags from [${categoryList}]
 - "constraints": object with: language (required if known), deployment_model (optional: self-hosted/cloud/serverless)
-- "search_query": a precise, technical query (5-12 words) that captures what this tool does and how it is typically described in the ecosystem
+- "search_query": a precise, domain-specific query (5-12 words) for searching a tool index. CRITICAL rules:
+  * Include the specific technology domain (e.g. "Ethereum Solidity smart contract development toolkit" not "blockchain development toolkit")
+  * Include the well-known tool name if there is a canonical tool for this need (e.g. "Hardhat Ethereum smart contract testing framework" not just "smart contract framework")
+  * Avoid generic adjectives like "open source", "lightweight", "modern", "best" — they match everything
+  * Avoid generic nouns that span domains like "platform", "system", "tool", "service" without a domain qualifier
+  * Good examples: "Playwright end-to-end browser automation testing", "commander.js Node.js CLI argument parser", "Hardhat Ethereum development environment"
+  * Bad examples: "open source platform for testing", "CLI tool for argument parsing", "development environment"
 - "why": one sentence on why this component is needed
 - "is_likely_proprietary": true if this is commonly a paid/managed service (${PROPRIETARY_PRONE_CATEGORIES.join(', ')})
 
@@ -81,7 +87,9 @@ Output ONLY a valid JSON array. No explanation.`;
         '3. Pass constraints directly as search_tools context filters:',
         '   { filters: { language: req.constraints.language, deployment_model: req.constraints.deployment_model } }',
         '',
-        '4. If classification is "stack_building": call get_stack after individual searches.',
+        '4. If classification is "stack_building": call get_stack with sub_needs = the search_query values from the JSON array.',
+        '   Example: get_stack({ use_case: "...", sub_needs: ["Hardhat Ethereum smart contract testing", "OpenZeppelin Solidity security library", ...] })',
+        '   This gives get_stack one precise search query per stack layer for best accuracy.',
         '',
         '5. Update .toolpilot/config.json with confirmed tools using update_project_config.',
       ].join('\n');
