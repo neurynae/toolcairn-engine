@@ -35,36 +35,48 @@ let _slots: TokenSlot[] | undefined;
 
 /**
  * Lazily initialize the token pool from environment variables.
- * Always includes the primary GITHUB_TOKEN.
- * Adds a secondary slot when GITHUB_TOKEN_2 is set and non-empty.
- * Falls back gracefully to a single-slot pool if the secondary token is absent.
+ *
+ * Supports N tokens via GITHUB_TOKEN, GITHUB_TOKEN_2, GITHUB_TOKEN_3, ...
+ * Each token should be from a DIFFERENT GitHub user account to get its own
+ * 5000 req/hour rate limit bucket. Zero-scope classic PATs work fine for
+ * reading public repo data.
+ *
+ * Example: 4 tokens from 4 accounts = 20,000 core req/hour combined.
  */
 export function getSlots(): TokenSlot[] {
   if (_slots) return _slots;
 
+  const slots: TokenSlot[] = [];
+
   // Primary slot — reuses the backward-compat coreRateState / searchRateState objects
   const primaryToken = process.env.GITHUB_TOKEN || undefined;
-  const slots: TokenSlot[] = [
-    {
-      octokit: new Octokit({ auth: primaryToken }),
-      core: coreRateState,
-      search: searchRateState,
-      label: 'primary',
-      token: primaryToken,
-    },
-  ];
+  slots.push({
+    octokit: new Octokit({ auth: primaryToken }),
+    core: coreRateState,
+    search: searchRateState,
+    label: 'token-1',
+    token: primaryToken,
+  });
 
-  // Secondary slot — optional, zero-scope token from a different GitHub account
-  const secondaryToken = process.env.GITHUB_TOKEN_2 || undefined;
-  if (secondaryToken) {
+  // Additional slots: GITHUB_TOKEN_2, GITHUB_TOKEN_3, ..., GITHUB_TOKEN_N
+  // Each should be from a DIFFERENT GitHub account for separate rate limit buckets.
+  for (let i = 2; i <= 20; i++) {
+    const token = process.env[`GITHUB_TOKEN_${i}`];
+    if (!token) break; // stop at first gap
     slots.push({
-      octokit: new Octokit({ auth: secondaryToken }),
+      octokit: new Octokit({ auth: token }),
       core: { remaining: 5000, resetAt: 0, limit: 5000 },
       search: { remaining: 30, resetAt: 0, limit: 30 },
-      label: 'secondary',
-      token: secondaryToken,
+      label: `token-${i}`,
+      token,
     });
-    logger.info('GitHub token pool: 2 tokens active (10k core req/hour combined)');
+  }
+
+  if (slots.length > 1) {
+    logger.info(
+      { tokens: slots.length, combinedCoreLimit: slots.length * 5000 },
+      `GitHub token pool: ${slots.length} tokens active`,
+    );
   }
 
   _slots = slots;

@@ -34,6 +34,7 @@ export interface CreateToolParams {
   health_credibility_score: number;
   health_forks_count: number;
   health_weekly_downloads: number;
+  health_download_registry: string | null;
   health_stars_snapshot_at: string;
   health_stars_velocity_7d: number;
   health_stars_velocity_30d: number;
@@ -144,6 +145,7 @@ export const CREATE_TOOL = {
        t.health_credibility_score = $health_credibility_score,
        t.health_forks_count = $health_forks_count,
        t.health_weekly_downloads = $health_weekly_downloads,
+       t.health_download_registry = $health_download_registry,
        t.health_stars_snapshot_at = $health_stars_snapshot_at,
        t.health_stars_velocity_7d = $health_stars_velocity_7d,
        t.health_stars_velocity_30d = $health_stars_velocity_30d,

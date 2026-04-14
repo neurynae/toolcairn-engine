@@ -7,6 +7,7 @@ on:
       - 'apps/api/**'
       - 'apps/indexer/**'
       - 'packages/**'
+      - 'scripts/cron/**'
       - 'docker-compose.prod.yml'
       - '.github/workflows/deploy.yml'
   workflow_dispatch: {}
@@ -64,6 +65,17 @@ jobs:
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
         run: scp docker-compose.prod.yml "deploy@${VPS_HOST}:/opt/toolcairn/docker-compose.prod.yml"
+
+      - name: Sync cron scripts to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          scp scripts/cron/run-daily-indexer.sh scripts/cron/run-search-weights.sh \
+              scripts/cron/run-weekly-graph.sh scripts/cron/cron-trigger-watcher.sh \
+              "deploy@${VPS_HOST}:/opt/toolcairn/scripts/"
+          ssh "deploy@${VPS_HOST}" "chmod +x /opt/toolcairn/scripts/*.sh"
+          scp scripts/cron/crontab "deploy@${VPS_HOST}:/tmp/toolcairn-crontab"
+          ssh "deploy@${VPS_HOST}" "crontab /tmp/toolcairn-crontab && rm /tmp/toolcairn-crontab"
 
       - name: Deploy to VPS
         env:

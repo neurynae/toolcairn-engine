@@ -45,7 +45,8 @@ const JOBS = [
   {
     id: 'weekly-graph',
     label: 'Weekly Graph Refresh',
-    description: 'Centrality, PageRank, canonical flags, personal repo cleanup',
+    description:
+      'Centrality, PageRank, canonical flags, personal repo cleanup, download percentiles',
     /** 05:00 UTC every Sunday — 0 5 * * 0 */
     schedule: { type: 'weekly' as const, dayOfWeek: 0, hour: 5, minute: 0 },
   },

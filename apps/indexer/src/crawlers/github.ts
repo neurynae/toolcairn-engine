@@ -11,26 +11,34 @@ import {
   sleepUntilCoreReset,
   updateSlotFromHeaders,
 } from './rate-limit.js';
+import { fetchBestDownloadCount } from './download-fetcher.js';
+import { discoverDistributionChannels } from './readme-install-parser.js';
 import { extractDocsUrl } from './readme-parser.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:github-crawler' });
 
 /**
- * Fetch the README for a repo and extract the best documentation URL.
- * Returns undefined if the README can't be fetched or has no docs link.
+ * Fetch the README for a repo. Returns both the docs URL and raw markdown content.
+ * The content is used by:
+ *   1. extractDocsUrl() — for documentation link extraction
+ *   2. discoverDistributionChannels() — for install command parsing + download fetching
  * Non-fatal — errors are swallowed so they don't block the main crawl.
  */
-async function fetchReadmeDocsUrl(owner: string, repo: string): Promise<string | undefined> {
+async function fetchReadme(
+  owner: string,
+  repo: string,
+): Promise<{ docsUrl?: string; content?: string }> {
   try {
     const { data } = await getBestCoreSlot().octokit.rest.repos.getReadme({ owner, repo });
     if (data.encoding === 'base64' && data.content) {
       const markdown = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf8');
-      return extractDocsUrl(markdown);
+      const docsUrl = extractDocsUrl(markdown);
+      return { docsUrl, content: markdown };
     }
   } catch {
     // Non-fatal — README may not exist or rate limit hit
   }
-  return undefined;
+  return {};
 }
 
 // ─── Octokit accessor (delegates to token pool) ──────────────────────────────
@@ -307,11 +315,36 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
 
     const homepage = repoData.homepage ?? undefined;
 
-    // README-parsed docs URL is the most targeted (e.g. links to API reference pages).
-    // Homepage heuristic is a fallback for when README has no explicit docs link.
-    const readmeDocsUrl = await fetchReadmeDocsUrl(owner, repo);
+    // README: fetch once, use for both docs URL extraction and install command parsing
+    const readme = await fetchReadme(owner, repo);
     const homepageDocsUrl = homepage && !homepage.includes('github.com') ? homepage : undefined;
-    const docsUrl = readmeDocsUrl ?? homepageDocsUrl;
+    const docsUrl = readme.docsUrl ?? homepageDocsUrl;
+
+    // ── Download discovery (README + topics → registry probe → fetch counts) ──
+    // Uses README install commands (Signal 1) and GitHub topics (Signal 2)
+    // to discover distribution channels, verify ownership, and fetch download counts.
+    // All external HTTP calls — no GitHub API quota impact.
+    let weeklyDownloads = 0;
+    let downloadRegistry: string | undefined;
+    try {
+      const ownerLogin = repoData.owner?.login ?? owner;
+      const channels = discoverDistributionChannels(
+        readme.content,
+        repoData.name,
+        ownerLogin,
+        topics,
+      );
+      if (channels.length > 0) {
+        const best = await fetchBestDownloadCount(channels, ownerLogin, repoData.name);
+        if (best) {
+          weeklyDownloads = best.weeklyEquivalent;
+          downloadRegistry = best.registry;
+        }
+      }
+    } catch (e) {
+      // Non-fatal — download fetching should never block the main crawl
+      logger.debug({ repo: repoKey, err: e }, 'Download discovery failed (non-fatal)');
+    }
 
     const extracted: ExtractedToolData = {
       name: repoData.name,
@@ -336,6 +369,8 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
       languages,
       deps: packageJsonDeps,
       topics,
+      weekly_downloads: weeklyDownloads,
+      download_registry: downloadRegistry,
     };
 
     logger.info(

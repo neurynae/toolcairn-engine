@@ -65,6 +65,7 @@ export class MemgraphToolRepository implements ToolRepository {
       health_credibility_score: tool.health.credibility_score,
       health_forks_count: tool.health.forks_count,
       health_weekly_downloads: tool.health.weekly_downloads,
+      health_download_registry: tool.health.download_registry ?? null,
       health_stars_snapshot_at: tool.health.stars_snapshot_at,
       health_stars_velocity_7d: tool.health.stars_velocity_7d,
       health_stars_velocity_30d: tool.health.stars_velocity_30d,

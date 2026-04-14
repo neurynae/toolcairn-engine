@@ -164,7 +164,17 @@ export async function processTool(
 
   logger.info({ toolName: extracted.name }, 'Processing tool');
 
-  const health = calculateHealth(raw, prevHealth, extracted.owner_type, extracted.is_fork);
+  // hasRealPackage: true if the crawler discovered actual download data from a registry
+  const rawData = raw as Record<string, unknown>;
+  const hasRealPackage =
+    typeof rawData.weekly_downloads === 'number' && rawData.weekly_downloads > 0;
+  const health = calculateHealth(
+    raw,
+    prevHealth,
+    extracted.owner_type,
+    extracted.is_fork,
+    hasRealPackage,
+  );
 
   // Fetch existing tools from Memgraph for dynamic relationship matching
   let existingTools: Set<string> | undefined;
@@ -188,7 +198,6 @@ export async function processTool(
   const relationships = extractRelationships(extracted, raw, existingTools);
 
   // Topic-based classification: GitHub topics → category + graph mesh edges
-  const rawData = raw as Record<string, unknown>;
   const topics = Array.isArray(rawData.topics) ? (rawData.topics as string[]) : [];
   const meaningfulTopics = topics.filter((t) => !NOISE_TOPICS.has(t));
   const category = meaningfulTopics[0] ?? topics[0] ?? 'other';

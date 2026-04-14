@@ -71,8 +71,10 @@ export interface HealthSignals {
   credibility_score: number;
   /** GitHub forks_count — how many times others have forked this tool */
   forks_count: number;
-  /** Weekly downloads from npm/PyPI (0 if not applicable) */
+  /** Weekly equivalent downloads from the best registry channel (0 if no package) */
   weekly_downloads: number;
+  /** Which registry the download count came from (e.g. 'npm', 'pypi', 'crates') */
+  download_registry?: string;
   /** ISO date when stars were last snapshotted for velocity computation */
   stars_snapshot_at: string;
   /** Stars gained in last 7 days (computed from snapshots) */

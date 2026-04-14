@@ -43,12 +43,16 @@ function recencyScore(dateStr: string): number {
  * @param prev - Previous health snapshot for real velocity computation
  * @param ownerType - 'User' or 'Organization'
  * @param isFork - true if this repo is itself a fork of another repo
+ * @param hasRealPackage - true if tool has a real published package (npm/pip/cargo).
+ *   When false, the 12% downloads weight is redistributed to other factors
+ *   so tools without packages aren't penalized.
  */
 export function calculateHealth(
   raw: unknown,
   prev?: { stars: number; updatedAt: string },
   ownerType?: 'User' | 'Organization',
   isFork?: boolean,
+  hasRealPackage?: boolean,
 ): HealthSignals {
   const data = raw as RawGitHubData;
   const repo: GitHubRepoData =
@@ -105,24 +109,45 @@ export function calculateHealth(
     0.1 * contributorTrendScore +
     0.1 * releaseRecency;
 
-  // ── Credibility formula ───────────────────────────────────────────────────
-  // Weights: stars 0.28, forks 0.18, org 0.15, maintenance 0.15,
-  //          downloads 0.12, contributors 0.07, velocity_30d 0.05 = 1.00
+  // ── Credibility formula (package-aware) ────────────────────────────────────
+  //
+  // Tools WITH download data: standard weights (downloads = 12%).
+  // Tools WITHOUT download data: redistribute 12% proportionally so tools
+  // without packages (Redis, Kubernetes) or on registries without APIs
+  // (Go, Maven) aren't penalized for missing data.
+  //
+  // Standard:      stars 0.28, forks 0.18, org 0.15, maint 0.15, dl 0.12, contrib 0.07, vel 0.05
+  // Redistributed: stars 0.318, forks 0.205, org 0.170, maint 0.170, contrib 0.080, vel 0.057
   const logStars = Math.min(1, Math.log10(stars + 1) / Math.log10(300_001));
   const forksScore = Math.min(1, Math.log10(forksCount + 1) / Math.log10(100_001));
   const orgBonus = ownerType === 'Organization' ? 1.0 : stars >= 1000 ? 0.6 : 0.3;
   const contribScore = normalizeLog(contributorCount, 500);
   const dlScore = normalizeLog(weeklyDownloads, 500_000);
   const velocity30dScore = normalizeLog(starsVelocity30d, 5000);
+  const maint = Math.max(0, Math.min(1, maintenanceScore));
 
-  const rawCredibility =
-    0.28 * logStars +
-    0.18 * forksScore +
-    0.15 * orgBonus +
-    0.15 * Math.max(0, Math.min(1, maintenanceScore)) +
-    0.12 * dlScore +
-    0.07 * contribScore +
-    0.05 * velocity30dScore;
+  const hasDownloads = weeklyDownloads > 0 && hasRealPackage !== false;
+
+  let rawCredibility: number;
+  if (hasDownloads) {
+    rawCredibility =
+      0.28 * logStars +
+      0.18 * forksScore +
+      0.15 * orgBonus +
+      0.15 * maint +
+      0.12 * dlScore +
+      0.07 * contribScore +
+      0.05 * velocity30dScore;
+  } else {
+    // Redistribute 12% download weight proportionally to remaining 88%
+    rawCredibility =
+      0.318 * logStars +
+      0.205 * forksScore +
+      0.17 * orgBonus +
+      0.17 * maint +
+      0.08 * contribScore +
+      0.057 * velocity30dScore;
+  }
 
   // Forks of another repo get a 40% credibility penalty
   const forkPenalty = isFork ? 0.4 : 1.0;

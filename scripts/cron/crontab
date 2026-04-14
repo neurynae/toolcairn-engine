@@ -1,0 +1,17 @@
+# ToolCairn — scheduled jobs
+# Source of truth: scripts/cron/crontab in toolcairn-engine repo
+# Deploy with: scripts/cron/sync-to-vps.sh
+# Logs: /var/log/toolcairn/cron.log
+
+# Daily indexer (03:00 UTC) — reindexes stale tools (now includes download fetching)
+0 3 * * * /opt/toolcairn/scripts/run-daily-indexer.sh >> /var/log/toolcairn/cron.log 2>&1
+
+# Search weights (06:00 UTC daily — 3h after indexer)
+0 6 * * * /opt/toolcairn/scripts/run-search-weights.sh >> /var/log/toolcairn/cron.log 2>&1
+
+# Weekly graph refresh (05:00 UTC every Sunday)
+# Steps: centrality → PageRank → canonical flags → cleanup → download percentiles
+0 5 * * 0 /opt/toolcairn/scripts/run-weekly-graph.sh >> /var/log/toolcairn/cron.log 2>&1
+
+# Trigger watcher — checks for manual trigger files from the admin UI (every minute)
+* * * * * /opt/toolcairn/scripts/cron-trigger-watcher.sh
