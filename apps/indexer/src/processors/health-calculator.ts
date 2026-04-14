@@ -68,25 +68,29 @@ export function computeCredibility(
   isFork: boolean,
 ): number {
   const { logStars, forksScore, orgBonus, maint, contribScore, velocity30dScore } = signals;
+
+  // Base score from GitHub signals only (redistributed weights, no download component).
+  // This is the floor — downloads can only boost, never lower.
+  const base =
+    0.318 * logStars +
+    0.205 * forksScore +
+    0.17 * orgBonus +
+    0.17 * maint +
+    0.08 * contribScore +
+    0.057 * velocity30dScore;
+
   let raw: number;
-  if (hasDownloads) {
-    raw =
-      0.28 * logStars +
-      0.18 * forksScore +
-      0.15 * orgBonus +
-      0.15 * maint +
-      0.12 * dlScore +
-      0.07 * contribScore +
-      0.05 * velocity30dScore;
+  if (hasDownloads && dlScore > 0) {
+    // Self-weighted mean: (base² + dlScore²) / (base + dlScore)
+    // Parameter-free — biases toward whichever signal is stronger.
+    // A tool with weak GitHub signals but strong downloads gets meaningfully boosted.
+    // A tool with strong GitHub signals and weaker downloads keeps its base score.
+    const blend = (base * base + dlScore * dlScore) / (base + dlScore);
+    raw = Math.max(base, blend); // downloads can only help, never hurt
   } else {
-    raw =
-      0.318 * logStars +
-      0.205 * forksScore +
-      0.17 * orgBonus +
-      0.17 * maint +
-      0.08 * contribScore +
-      0.057 * velocity30dScore;
+    raw = base;
   }
+
   const forkPenalty = isFork ? 0.4 : 1.0;
   return Math.max(0, Math.min(1, raw * forkPenalty));
 }
