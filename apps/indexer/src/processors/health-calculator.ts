@@ -1,4 +1,13 @@
 import type { HealthSignals, PackageChannel } from '@toolcairn/core';
+import { REGISTRY_CONFIGS } from '../crawlers/registry-config.js';
+
+// Fallback log-normalization scale when a registry has no logScale defined
+const DEFAULT_LOG_SCALE = 50_000;
+
+/** Get the log-normalization scale for a registry from REGISTRY_CONFIGS.logScale */
+function getLogScale(registry: string): number {
+  return REGISTRY_CONFIGS[registry]?.logScale ?? DEFAULT_LOG_SCALE;
+}
 
 interface GitHubRepoData {
   stargazers_count?: number;
@@ -35,22 +44,52 @@ function recencyScore(dateStr: string): number {
   return Math.exp(-ageDays / 365);
 }
 
-// Per-registry log-normalization scales (weekly equivalent downloads).
-// Used as denominator in normalizeLog before percentile batch runs.
-const REGISTRY_LOG_SCALE: Record<string, number> = {
-  npm: 1_000_000,
-  pypi: 1_000_000,
-  crates: 100_000,
-  rubygems: 50_000,
-  packagist: 200_000,
-  nuget: 500_000,
-  pub: 50_000,
-  hex: 10_000,
-  cran: 50_000,
-  docker: 100_000,
-  homebrew: 10_000,
-  default: 50_000,
-};
+/**
+ * Compute credibility score from pre-normalised signals + a pre-computed dlScore.
+ * Exported so the weekly percentile cron can recompute credibility after assigning
+ * real percentile-based dlScores — avoiding formula duplication.
+ *
+ * @param signals - Pre-normalised sub-scores (logStars, forksScore, etc.)
+ * @param dlScore - 0–1 download quality score (log-based at index time, percentile after cron)
+ * @param hasDownloads - true if the tool has verified package downloads
+ * @param isFork - applies 40% penalty if true
+ */
+export function computeCredibility(
+  signals: {
+    logStars: number;
+    forksScore: number;
+    orgBonus: number;
+    maint: number;
+    contribScore: number;
+    velocity30dScore: number;
+  },
+  dlScore: number,
+  hasDownloads: boolean,
+  isFork: boolean,
+): number {
+  const { logStars, forksScore, orgBonus, maint, contribScore, velocity30dScore } = signals;
+  let raw: number;
+  if (hasDownloads) {
+    raw =
+      0.28 * logStars +
+      0.18 * forksScore +
+      0.15 * orgBonus +
+      0.15 * maint +
+      0.12 * dlScore +
+      0.07 * contribScore +
+      0.05 * velocity30dScore;
+  } else {
+    raw =
+      0.318 * logStars +
+      0.205 * forksScore +
+      0.17 * orgBonus +
+      0.17 * maint +
+      0.08 * contribScore +
+      0.057 * velocity30dScore;
+  }
+  const forkPenalty = isFork ? 0.4 : 1.0;
+  return Math.max(0, Math.min(1, raw * forkPenalty));
+}
 
 /**
  * Calculate HealthSignals from a raw GitHub API response.
@@ -143,44 +182,23 @@ export function calculateHealth(
   const velocity30dScore = normalizeLog(starsVelocity30d, 5000);
   const maint = Math.max(0, Math.min(1, maintenanceScore));
 
-  // Compute dlScore from channels: max(normalizeLog(ch.weeklyDownloads, SCALE[registry]))
-  const DEFAULT_LOG_SCALE = REGISTRY_LOG_SCALE.default ?? 50_000;
+  // Compute dlScore from channels: max(normalizeLog(ch.weeklyDownloads, logScale))
+  // logScale comes from REGISTRY_CONFIGS[registry].logScale — single source of truth
   const dlScore =
     channels && channels.length > 0
       ? Math.max(
           0,
-          ...channels.map((ch) => {
-            const scale: number = REGISTRY_LOG_SCALE[ch.registry] ?? DEFAULT_LOG_SCALE;
-            return normalizeLog(ch.weeklyDownloads, scale);
-          }),
+          ...channels.map((ch) => normalizeLog(ch.weeklyDownloads, getLogScale(ch.registry))),
         )
       : 0;
   const hasDownloads = channels ? channels.some((ch) => ch.weeklyDownloads > 0) : false;
 
-  let rawCredibility: number;
-  if (hasDownloads) {
-    rawCredibility =
-      0.28 * logStars +
-      0.18 * forksScore +
-      0.15 * orgBonus +
-      0.15 * maint +
-      0.12 * dlScore +
-      0.07 * contribScore +
-      0.05 * velocity30dScore;
-  } else {
-    // Redistribute 12% download weight proportionally to remaining 88%
-    rawCredibility =
-      0.318 * logStars +
-      0.205 * forksScore +
-      0.17 * orgBonus +
-      0.17 * maint +
-      0.08 * contribScore +
-      0.057 * velocity30dScore;
-  }
-
-  // Forks of another repo get a 40% credibility penalty
-  const forkPenalty = isFork ? 0.4 : 1.0;
-  const credibilityScore = Math.max(0, Math.min(1, rawCredibility * forkPenalty));
+  const credibilityScore = computeCredibility(
+    { logStars, forksScore, orgBonus, maint, contribScore, velocity30dScore },
+    dlScore,
+    hasDownloads,
+    isFork ?? false,
+  );
 
   return {
     stars,

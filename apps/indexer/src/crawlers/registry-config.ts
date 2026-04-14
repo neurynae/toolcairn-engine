@@ -32,6 +32,12 @@ export interface RegistryConfig {
   headers?: Record<string, string>;
   /** Whether this registry has a usable public download API */
   hasDownloadApi: boolean;
+  /**
+   * Weekly download count for a "very popular" tool in this ecosystem.
+   * Used for log-normalization (credibility dlScore) and as fallback quality gate
+   * threshold (logScale/100) before the weekly percentile cron provides real values.
+   */
+  logScale?: number;
 }
 
 export interface InstallPattern {
@@ -53,6 +59,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     timeWindow: 'weekly',
     repoUrlField: 'repository.url',
     hasDownloadApi: true,
+    logScale: 1_000_000,
   },
   pypi: {
     name: 'PyPI',
@@ -62,6 +69,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     timeWindow: 'weekly',
     repoUrlField: 'info.project_urls',
     hasDownloadApi: true,
+    logScale: 1_000_000,
   },
   crates: {
     name: 'crates.io',
@@ -72,6 +80,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     repoUrlField: 'crate.repository',
     headers: { 'User-Agent': 'toolcairn-indexer (https://github.com/neurynae/toolcairn-engine)' },
     hasDownloadApi: true,
+    logScale: 100_000,
   },
   rubygems: {
     name: 'RubyGems',
@@ -81,6 +90,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     timeWindow: 'alltime',
     repoUrlField: 'source_code_uri',
     hasDownloadApi: true,
+    logScale: 50_000,
   },
   packagist: {
     name: 'Packagist',
@@ -91,13 +101,16 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     repoUrlField: 'package.repository',
     headers: { 'User-Agent': 'toolcairn-indexer (mailto:admin@neurynae.com)' },
     hasDownloadApi: true,
+    logScale: 200_000,
   },
   nuget: {
     name: 'NuGet',
-    downloadApiUrl: 'https://azuresearch-usnc.nuget.org/query?q=packageid:{pkg}&take=1&prerelease=false&semVerLevel=2.0.0',
+    downloadApiUrl:
+      'https://azuresearch-usnc.nuget.org/query?q=packageid:{pkg}&take=1&prerelease=false&semVerLevel=2.0.0',
     downloadField: 'data.0.totalDownloads',
     timeWindow: 'alltime',
     hasDownloadApi: true,
+    logScale: 500_000,
   },
   pub: {
     name: 'pub.dev',
@@ -106,6 +119,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'downloadCount30Days',
     timeWindow: 'monthly',
     hasDownloadApi: true,
+    logScale: 50_000,
   },
   hex: {
     name: 'Hex.pm',
@@ -116,6 +130,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     repoUrlField: 'meta.links',
     headers: { 'User-Agent': 'toolcairn-indexer' },
     hasDownloadApi: true,
+    logScale: 10_000,
   },
   cran: {
     name: 'CRAN',
@@ -123,6 +138,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'downloads',
     timeWindow: 'weekly',
     hasDownloadApi: true,
+    logScale: 50_000,
   },
   clojars: {
     name: 'Clojars',
@@ -130,6 +146,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'downloads',
     timeWindow: 'alltime',
     hasDownloadApi: true,
+    logScale: 50_000,
   },
   dub: {
     name: 'DUB',
@@ -137,6 +154,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'downloads.weekly',
     timeWindow: 'weekly',
     hasDownloadApi: true,
+    logScale: 5_000,
   },
   docker: {
     name: 'Docker Hub',
@@ -144,6 +162,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'pull_count',
     timeWindow: 'alltime',
     hasDownloadApi: true,
+    logScale: 100_000,
   },
   homebrew: {
     name: 'Homebrew',
@@ -151,6 +170,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'analytics.install.30d',
     timeWindow: 'monthly',
     hasDownloadApi: true,
+    logScale: 10_000,
   },
   terraform: {
     name: 'Terraform Registry',
@@ -161,7 +181,8 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
   },
   ansible: {
     name: 'Ansible Galaxy',
-    downloadApiUrl: 'https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/index/{pkg}/',
+    downloadApiUrl:
+      'https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/index/{pkg}/',
     downloadField: 'download_count',
     timeWindow: 'alltime',
     hasDownloadApi: true,
@@ -189,7 +210,8 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
   },
   wordpress: {
     name: 'WordPress.org',
-    downloadApiUrl: 'https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request[slug]={pkg}',
+    downloadApiUrl:
+      'https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request[slug]={pkg}',
     downloadField: 'downloaded',
     timeWindow: 'alltime',
     hasDownloadApi: true,
@@ -219,7 +241,12 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
   // ── Registries WITHOUT download APIs ──────────────────────────────────────
   go: { name: 'Go Modules', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
   maven: { name: 'Maven Central', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
-  gradle: { name: 'Gradle Plugin Portal', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
+  gradle: {
+    name: 'Gradle Plugin Portal',
+    downloadField: '',
+    timeWindow: 'weekly',
+    hasDownloadApi: false,
+  },
   hackage: { name: 'Hackage', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
   cpan: { name: 'CPAN', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
   luarocks: { name: 'LuaRocks', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
@@ -227,7 +254,12 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
   opam: { name: 'opam', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
   vcpkg: { name: 'vcpkg', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
   conan: { name: 'Conan', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
-  spm: { name: 'Swift Package Manager', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
+  spm: {
+    name: 'Swift Package Manager',
+    downloadField: '',
+    timeWindow: 'weekly',
+    hasDownloadApi: false,
+  },
   elm: { name: 'Elm Packages', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
   nix: { name: 'Nix', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
 };
@@ -288,7 +320,10 @@ export const INSTALL_PATTERNS: InstallPattern[] = [
   { registry: 'terraform', pattern: /source\s*=\s*"(?<pkg>[\w-]+\/[\w-]+\/[\w-]+)"/i },
 
   // ── Ansible ──
-  { registry: 'ansible', pattern: /ansible-galaxy\s+(?:collection|role)\s+install\s+(?<pkg>[\w.-]+)/i },
+  {
+    registry: 'ansible',
+    pattern: /ansible-galaxy\s+(?:collection|role)\s+install\s+(?<pkg>[\w.-]+)/i,
+  },
 
   // ── Helm ──
   { registry: 'helm', pattern: /helm\s+(?:install|repo\s+add)\s+\S+\s+(?<pkg>[\w./-]+)/i },
@@ -321,7 +356,10 @@ export const INSTALL_PATTERNS: InstallPattern[] = [
   { registry: 'wordpress', pattern: /wordpress\.org\/plugins\/(?<pkg>[\w-]+)/i },
 
   // ── VS Code ──
-  { registry: 'vscode', pattern: /(?:ext\s+install|marketplace\.visualstudio\.com\/items\?itemName=)(?<pkg>[\w.-]+)/i },
+  {
+    registry: 'vscode',
+    pattern: /(?:ext\s+install|marketplace\.visualstudio\.com\/items\?itemName=)(?<pkg>[\w.-]+)/i,
+  },
 
   // ── Flatpak ──
   { registry: 'flathub', pattern: /flatpak\s+install\s+(?:flathub\s+)?(?<pkg>[\w.-]+)/i },
@@ -337,50 +375,50 @@ export const INSTALL_PATTERNS: InstallPattern[] = [
 export const TOPIC_REGISTRY_HINTS: Record<string, string> = {
   'npm-package': 'npm',
   'npm-module': 'npm',
-  'npm': 'npm',
-  'pypi': 'pypi',
+  npm: 'npm',
+  pypi: 'pypi',
   'python-library': 'pypi',
-  'pip': 'pypi',
-  'crate': 'crates',
+  pip: 'pypi',
+  crate: 'crates',
   'crates-io': 'crates',
-  'rubygem': 'rubygems',
-  'gem': 'rubygems',
-  'composer': 'packagist',
-  'packagist': 'packagist',
-  'nuget': 'nuget',
-  'dotnet': 'nuget',
+  rubygem: 'rubygems',
+  gem: 'rubygems',
+  composer: 'packagist',
+  packagist: 'packagist',
+  nuget: 'nuget',
+  dotnet: 'nuget',
   'pub-dev': 'pub',
   'flutter-package': 'pub',
   'dart-package': 'pub',
   'hex-pm': 'hex',
   'elixir-library': 'hex',
-  'cran': 'cran',
+  cran: 'cran',
   'r-package': 'cran',
   'docker-image': 'docker',
-  'dockerfile': 'docker',
+  dockerfile: 'docker',
   'homebrew-formula': 'homebrew',
-  'homebrew': 'homebrew',
+  homebrew: 'homebrew',
   'terraform-module': 'terraform',
   'terraform-provider': 'terraform',
   'ansible-role': 'ansible',
   'ansible-collection': 'ansible',
   'helm-chart': 'helm',
-  'helm': 'helm',
+  helm: 'helm',
   'wordpress-plugin': 'wordpress',
   'wordpress-theme': 'wordpress',
   'vscode-extension': 'vscode',
-  'vscode': 'vscode',
-  'flatpak': 'flathub',
-  'snap': 'snap',
+  vscode: 'vscode',
+  flatpak: 'flathub',
+  snap: 'snap',
   'go-module': 'go',
   'golang-library': 'go',
   'julia-package': 'julia',
-  'cocoapods': 'cocoapods',
+  cocoapods: 'cocoapods',
   'puppet-module': 'puppet',
   'chef-cookbook': 'chef',
-  'clojure': 'clojars',
+  clojure: 'clojars',
   'nim-package': 'nimble',
-  'opam': 'opam',
+  opam: 'opam',
   'dub-package': 'dub',
   'd-language': 'dub',
 };

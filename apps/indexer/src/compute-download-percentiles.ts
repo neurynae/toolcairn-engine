@@ -3,41 +3,17 @@ import { PrismaClient } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
+import { REGISTRY_CONFIGS } from './crawlers/registry-config.js';
+import { computeCredibility } from './processors/health-calculator.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:download-percentiles' });
 const DRY_RUN = !process.argv.includes('--write');
 const MIN_GROUP_SIZE = 50;
 
-// ─── Fallback scales for small groups ───────────────────────────────────────
-// Used when fewer than MIN_GROUP_SIZE tools exist for a registry.
-// Values represent "very popular" weekly downloads in each ecosystem.
-
-const REGISTRY_SCALES: Record<string, number> = {
-  npm: 1_000_000,
-  pypi: 1_000_000,
-  crates: 100_000,
-  rubygems: 50_000,
-  packagist: 200_000,
-  nuget: 500_000,
-  pub: 50_000,
-  hex: 10_000,
-  cran: 50_000,
-  docker: 100_000,
-  homebrew: 10_000,
-  terraform: 5_000,
-  clojars: 10_000,
-  dub: 5_000,
-  ansible: 50_000,
-  puppet: 10_000,
-  chef: 10_000,
-  flathub: 5_000,
-  wordpress: 50_000,
-  vscode: 100_000,
-  julia: 10_000,
-  cocoapods: 10_000,
-};
-
 const DEFAULT_SCALE = 50_000;
+function getLogScale(registry: string): number {
+  return REGISTRY_CONFIGS[registry]?.logScale ?? DEFAULT_SCALE;
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -65,47 +41,16 @@ function normalizeLog(value: number, scale: number): number {
   return Math.min(1, Math.log1p(value) / Math.log1p(scale));
 }
 
-/**
- * Compute credibility with a provided dlScore (0-1).
- * Same formula as health-calculator.ts but accepts pre-computed dlScore.
- */
-function computeCredibilityWithDlScore(
-  tool: ToolDownloadData,
-  dlScore: number,
-  hasDownloads: boolean,
-): number {
-  const logStars = Math.min(1, Math.log10(tool.health.stars + 1) / Math.log10(300_001));
-  const forksScore = Math.min(
-    1,
-    Math.log10((tool.health.forks_count ?? 0) + 1) / Math.log10(100_001),
-  );
-  const orgBonus = tool.ownerType === 'Organization' ? 1.0 : tool.health.stars >= 1000 ? 0.6 : 0.3;
-  const contribScore = normalizeLog(tool.health.contributor_count, 500);
-  const velocity30dScore = normalizeLog(tool.health.stars_velocity_30d, 5000);
-  const maint = Math.max(0, Math.min(1, tool.health.maintenance_score));
-
-  let raw: number;
-  if (hasDownloads) {
-    raw =
-      0.28 * logStars +
-      0.18 * forksScore +
-      0.15 * orgBonus +
-      0.15 * maint +
-      0.12 * dlScore +
-      0.07 * contribScore +
-      0.05 * velocity30dScore;
-  } else {
-    raw =
-      0.318 * logStars +
-      0.205 * forksScore +
-      0.17 * orgBonus +
-      0.17 * maint +
-      0.08 * contribScore +
-      0.057 * velocity30dScore;
-  }
-
-  const forkPenalty = tool.isFork ? 0.4 : 1.0;
-  return Math.max(0, Math.min(1, raw * forkPenalty));
+/** Build the signals object needed by computeCredibility from stored health data */
+function toCredibilitySignals(tool: ToolDownloadData) {
+  return {
+    logStars: Math.min(1, Math.log10(tool.health.stars + 1) / Math.log10(300_001)),
+    forksScore: Math.min(1, Math.log10((tool.health.forks_count ?? 0) + 1) / Math.log10(100_001)),
+    orgBonus: tool.ownerType === 'Organization' ? 1.0 : tool.health.stars >= 1000 ? 0.6 : 0.3,
+    contribScore: normalizeLog(tool.health.contributor_count, 500),
+    velocity30dScore: normalizeLog(tool.health.stars_velocity_30d, 5000),
+    maint: Math.max(0, Math.min(1, tool.health.maintenance_score)),
+  };
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -219,7 +164,7 @@ async function main() {
       );
     } else {
       // Fallback: log normalization with registry-specific scale
-      const scale = REGISTRY_SCALES[registry] ?? DEFAULT_SCALE;
+      const scale = getLogScale(registry);
       for (const entry of group) {
         dlScoreByToolRegistry.set(
           `${entry.pointId}:${registry}`,
@@ -269,7 +214,7 @@ async function main() {
   for (const tool of allTools) {
     const dlScore = dlScores.get(tool.pointId) ?? 0;
     const hasDownloads = dlScore > 0;
-    const newCredibility = computeCredibilityWithDlScore(tool, dlScore, hasDownloads);
+    const newCredibility = computeCredibility(toCredibilitySignals(tool), dlScore, hasDownloads, tool.isFork);
 
     // Skip if credibility hasn't changed meaningfully
     if (Math.abs(newCredibility - tool.health.credibility_score) < 0.005) continue;

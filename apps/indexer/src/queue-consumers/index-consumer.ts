@@ -2,12 +2,23 @@ import { PrismaClient } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
 import { MemgraphToolRepository } from '@toolcairn/graph';
 import { runCrawler } from '../crawlers/index.js';
+import { REGISTRY_CONFIGS } from '../crawlers/registry-config.js';
 import { processTool } from '../processors/index.js';
 import { writeEdgeToMemgraph, writeToolToMemgraph, writeTopicNodes } from '../writers/memgraph.js';
 import { type IndexedToolMeta, upsertIndexedTool } from '../writers/prisma.js';
 import { upsertToolVector } from '../writers/qdrant.js';
 
+// Fallback thresholds derived from REGISTRY_CONFIGS.logScale at 1%.
+// Single source of truth — logScale lives in registry-config.ts.
+// After the first weekly cron run, AppSettings.download_quality_thresholds replaces these.
+const REGISTRY_FALLBACK_THRESHOLDS: Record<string, number> = Object.fromEntries(
+  Object.entries(REGISTRY_CONFIGS)
+    .filter(([, v]) => v.logScale !== undefined)
+    .map(([k, v]) => [k, Math.round(v.logScale! / 100)]),
+);
+
 // Load download quality thresholds from AppSettings (set by weekly percentile cron).
+// Falls back to REGISTRY_FALLBACK_THRESHOLDS until first cron run.
 // Cached per-process — refreshed on each worker restart.
 let _downloadThresholds: Record<string, number> | null = null;
 async function getDownloadThresholds(): Promise<Record<string, number>> {
@@ -20,15 +31,15 @@ async function getDownloadThresholds(): Promise<Record<string, number>> {
     });
     await prisma.$disconnect();
     if (settings?.download_quality_thresholds) {
-      _downloadThresholds = JSON.parse(settings.download_quality_thresholds) as Record<
-        string,
-        number
-      >;
+      _downloadThresholds = {
+        ...REGISTRY_FALLBACK_THRESHOLDS,
+        ...(JSON.parse(settings.download_quality_thresholds) as Record<string, number>),
+      };
     }
   } catch {
-    // Non-fatal — fall back to no threshold (only stars gate applies)
+    // Non-fatal
   }
-  return _downloadThresholds ?? {};
+  return _downloadThresholds ?? REGISTRY_FALLBACK_THRESHOLDS;
 }
 
 const logger = createLogger({ name: '@toolcairn/indexer:index-consumer' });
