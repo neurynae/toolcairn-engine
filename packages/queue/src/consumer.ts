@@ -412,7 +412,8 @@ export async function startConsumer(
           } else if (msg.type === 'run-discovery' && handlers.onRunDiscovery) {
             await handlers.onRunDiscovery();
           } else if (msg.type === 'run-reindex' && handlers.onRunReindex) {
-            await handlers.onRunReindex();
+            const { triggeredBy } = (msg.payload ?? {}) as { triggeredBy?: string };
+            await handlers.onRunReindex(triggeredBy === 'manual');
           }
         } catch (e) {
           logger.error(
