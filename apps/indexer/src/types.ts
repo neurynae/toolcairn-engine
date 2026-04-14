@@ -1,4 +1,4 @@
-import type { ToolNode } from '@toolcairn/core';
+import type { PackageChannel, ToolNode } from '@toolcairn/core';
 
 export interface ExtractedToolData {
   name: string;
@@ -14,7 +14,7 @@ export interface ExtractedToolData {
   license: string;
   language: string;
   languages: string[];
-  package_managers: Record<string, string>;
+  package_managers: PackageChannel[];
   deployment_models: string[];
 }
 

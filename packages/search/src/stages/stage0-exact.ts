@@ -41,7 +41,7 @@ export function buildExactLookupMaps(tools: ToolNode[]): ExactLookupMaps {
 
   for (const tool of tools) {
     // Package manager names
-    for (const pmName of Object.values(tool.package_managers ?? {})) {
+    for (const { packageName: pmName } of tool.package_managers ?? []) {
       const key = pmName.toLowerCase();
       const arr = byPmName.get(key) ?? [];
       arr.push(tool);
@@ -144,8 +144,8 @@ export function stage0ExactResolve(query: string, maps: ExactLookupMaps): Stage0
 
     // Short-circuit only if clear winner: credibility gap > 0.15
     // AND best candidate has a package manager name matching the query
-    const bestHasPmMatch = Object.values(best.package_managers ?? {}).some(
-      (n) => n.toLowerCase() === q || n.toLowerCase() === qNorm,
+    const bestHasPmMatch = (best.package_managers ?? []).some(
+      ({ packageName: n }) => n.toLowerCase() === q || n.toLowerCase() === qNorm,
     );
 
     if (bestCred - secondCred > 0.15 && bestHasPmMatch) {

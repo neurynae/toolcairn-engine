@@ -132,11 +132,19 @@ model IndexedTool {
   index_status    String    @default("pending") // "pending" | "indexed" | "failed" | "skipped"
   error_message   String?
   retry_count     Int       @default(0)
+  /// Star count at the time the tool was last evaluated (populated on skip or index)
+  stars           Int?
+  /// Weekly download count at the time of last evaluation (0 if no package found)
+  weekly_downloads Int?
+  /// Why the tool was skipped, e.g. "low_stars_and_downloads" or "name_collision:url"
+  skip_reason     String?
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
 
   @@index([index_status])
   @@index([last_indexed_at])
+  @@index([stars])
+  @@index([weekly_downloads])
 }
 
 // ─── Auth (Auth.js v5 Prisma Adapter) ────────────────────────────────────────
@@ -323,5 +331,9 @@ model AppSettings {
   discovery_last_pushed_days  Int      @default(90)
   last_discovery_run          DateTime?
   last_reindex_run            DateTime?
+  /// JSON: per-registry minimum weekly downloads for indexing quality gate.
+  /// Computed by compute-download-percentiles.ts (25th percentile per registry).
+  /// Format: { "npm": 1234, "pypi": 567, "crates": 89, ... }
+  download_quality_thresholds String?
   updated_at                  DateTime @updatedAt
 }

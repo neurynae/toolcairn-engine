@@ -36,7 +36,7 @@ function makeTool(overrides: Partial<ToolNode> & Pick<ToolNode, 'id' | 'name'>):
     language: 'TypeScript',
     languages: ['TypeScript'],
     deployment_models: ['cloud'],
-    package_managers: {},
+    package_managers: [],
     health: makeHealth(),
     docs: {},
     topics: [],

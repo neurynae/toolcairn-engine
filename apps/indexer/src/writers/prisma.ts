@@ -41,14 +41,25 @@ async function withReconnect<T>(fn: (db: PrismaClient) => Promise<T>): Promise<T
   }
 }
 
+export interface IndexedToolMeta {
+  /** Star count at evaluation time */
+  stars?: number;
+  /** Weekly download count at evaluation time */
+  weeklyDownloads?: number;
+  /** Why the tool was skipped — only set on skipped tools */
+  skipReason?: string;
+}
+
 /**
  * Upsert an IndexedTool record in PostgreSQL.
  * Sets graph_node_id, last_indexed_at, index_status, and increments retry_count.
+ * Optionally stores quality signals (stars, downloads, skip reason, registry info).
  */
 export async function upsertIndexedTool(
   githubUrl: string,
   graphNodeId: string,
   status: string,
+  meta?: IndexedToolMeta,
 ): Promise<void> {
   try {
     await withReconnect((prisma) =>
@@ -60,6 +71,9 @@ export async function upsertIndexedTool(
           index_status: status,
           retry_count: { increment: 1 },
           updated_at: new Date(),
+          ...(meta?.stars !== undefined && { stars: meta.stars }),
+          ...(meta?.weeklyDownloads !== undefined && { weekly_downloads: meta.weeklyDownloads }),
+          ...(meta?.skipReason !== undefined && { skip_reason: meta.skipReason }),
         },
         create: {
           github_url: githubUrl,
@@ -67,6 +81,9 @@ export async function upsertIndexedTool(
           last_indexed_at: new Date(),
           index_status: status,
           retry_count: 0,
+          stars: meta?.stars,
+          weekly_downloads: meta?.weeklyDownloads,
+          skip_reason: meta?.skipReason,
         },
       }),
     );

@@ -75,7 +75,9 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
       license,
       language: 'JavaScript',
       languages: ['JavaScript', 'TypeScript'],
-      package_managers: { npm: name },
+      package_managers: [
+        { registry: 'npm', packageName: name, installCommand: `npm install ${name}` },
+      ],
       deployment_models: ['self-hosted'],
     };
 

@@ -1,8 +1,10 @@
 import type { Octokit } from '@octokit/rest';
+import type { PackageChannel } from '@toolcairn/core';
 import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
+import { fetchBestDownloadCount } from './download-fetcher.js';
 import {
   corePreFlight,
   getBestCoreSlot,
@@ -11,7 +13,6 @@ import {
   sleepUntilCoreReset,
   updateSlotFromHeaders,
 } from './rate-limit.js';
-import { fetchBestDownloadCount } from './download-fetcher.js';
 import { discoverDistributionChannels } from './readme-install-parser.js';
 import { extractDocsUrl } from './readme-parser.js';
 
@@ -307,10 +308,11 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     const languageNames = Object.keys(languages);
     const primaryLanguage = repoData.language ?? languageNames[0] ?? 'unknown';
     const deploymentModels = detectDeploymentModels(topics);
-    const packageManagers = detectPackageManagers(rootFilenames);
+    // File-based detection (used as fallback when README has no install commands)
+    const fileBasedManagers = detectPackageManagers(rootFilenames);
     // Override generic "npm" with actual package name from package.json
-    if (npmPackageName && packageManagers.npm) {
-      packageManagers.npm = npmPackageName;
+    if (npmPackageName && fileBasedManagers.npm) {
+      fileBasedManagers.npm = npmPackageName;
     }
 
     const homepage = repoData.homepage ?? undefined;
@@ -326,6 +328,7 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     // All external HTTP calls — no GitHub API quota impact.
     let weeklyDownloads = 0;
     let downloadRegistry: string | undefined;
+    let packageChannels: PackageChannel[] = [];
     try {
       const ownerLogin = repoData.owner?.login ?? owner;
       const channels = discoverDistributionChannels(
@@ -335,6 +338,12 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
         topics,
       );
       if (channels.length > 0) {
+        // Build package_managers from ALL discovered distribution channels
+        packageChannels = channels.map((ch) => ({
+          registry: ch.registry,
+          packageName: ch.packageName,
+          installCommand: ch.rawCommand,
+        }));
         const best = await fetchBestDownloadCount(channels, ownerLogin, repoData.name);
         if (best) {
           weeklyDownloads = best.weeklyEquivalent;
@@ -344,6 +353,15 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
     } catch (e) {
       // Non-fatal — download fetching should never block the main crawl
       logger.debug({ repo: repoKey, err: e }, 'Download discovery failed (non-fatal)');
+    }
+
+    // Fall back to file-based detection if README yielded no channels
+    if (packageChannels.length === 0) {
+      packageChannels = Object.entries(fileBasedManagers).map(([manager, pkgName]) => ({
+        registry: manager,
+        packageName: pkgName,
+        installCommand: `${manager} install ${pkgName}`,
+      }));
     }
 
     const extracted: ExtractedToolData = {
@@ -360,7 +378,7 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
       license: repoData.license?.spdx_id ?? 'unknown',
       language: primaryLanguage,
       languages: languageNames,
-      package_managers: packageManagers,
+      package_managers: packageChannels,
       deployment_models: deploymentModels,
     };
 

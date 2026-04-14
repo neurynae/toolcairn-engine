@@ -90,6 +90,13 @@ export interface DocumentationLinks {
   changelog_url?: string;
 }
 
+/** A package distribution channel for a tool */
+export interface PackageChannel {
+  registry: string; // e.g. 'npm', 'pypi', 'crates', 'homebrew', 'docker'
+  packageName: string; // e.g. 'express', 'flask', 'ripgrep'
+  installCommand: string; // e.g. 'npm install express', 'pip install flask'
+}
+
 // ─── Node Types ────────────────────────────────────────────────────────────
 
 export interface ToolNode {
@@ -106,8 +113,8 @@ export interface ToolNode {
   language: string;
   languages: string[];
   deployment_models: DeploymentModel[];
-  /** Map of package manager name to package name, e.g. { npm: "qdrant-client" } */
-  package_managers: Record<string, string>;
+  /** Distribution channels this tool is published to */
+  package_managers: PackageChannel[];
   health: HealthSignals;
   docs: DocumentationLinks;
   /** GitHub topics / npm keywords — community-curated tags, persisted for graph mesh */

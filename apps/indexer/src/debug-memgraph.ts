@@ -15,7 +15,7 @@ const tool: ToolNode = {
   language: 'TypeScript',
   languages: ['TypeScript'],
   deployment_models: ['self-hosted'],
-  package_managers: { npm: 'npm' },
+  package_managers: [{ registry: 'npm', packageName: 'npm', installCommand: 'npm install npm' }],
   health: {
     stars: 35000,
     stars_velocity_90d: 1750,

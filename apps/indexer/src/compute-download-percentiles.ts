@@ -1,24 +1,4 @@
-/**
- * Compute percentile-based download scores and recalculate credibility.
- *
- * Run AFTER a full reindex populates weekly_downloads for all tools.
- * Groups tools by download_registry, computes percentile rank within
- * each ecosystem, then recalculates credibility_score using the
- * percentile as dlScore instead of raw log normalization.
- *
- * This ensures npm top-5% ≈ cargo top-5% ≈ PyPI top-5% in credibility,
- * regardless of each ecosystem's absolute download volume.
- *
- * For registries with < 50 tools, falls back to log normalization with
- * registry-specific scales.
- *
- * Designed to run as a weekly cron job via the index-worker scheduler.
- *
- * Usage:
- *   pnpm tsx src/compute-download-percentiles.ts          # dry run
- *   pnpm tsx src/compute-download-percentiles.ts --write  # commit
- */
-
+import { PrismaClient } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
 import { closeMemgraphDriver, getMemgraphSession } from '@toolcairn/graph';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
@@ -291,6 +271,36 @@ async function main() {
 
   await session.close();
   await closeMemgraphDriver();
+
+  // Phase 4: Compute and store 25th percentile thresholds per registry in AppSettings.
+  // These are used by the index-consumer quality gate to allow low-star but
+  // high-download tools: a tool qualifies if its downloads >= 25th percentile
+  // of its registry (i.e. it has more downloads than at least 25% of indexed tools).
+  const thresholds: Record<string, number> = {};
+  for (const [registry, group] of byRegistry) {
+    if (group.length >= MIN_GROUP_SIZE) {
+      // Sort ascending and take the 25th percentile value
+      const sorted = [...group].sort((a, b) => a.weeklyDownloads - b.weeklyDownloads);
+      const idx = Math.floor(sorted.length * 0.25);
+      thresholds[registry] = sorted[idx]?.weeklyDownloads ?? 0;
+    }
+  }
+
+  if (Object.keys(thresholds).length > 0) {
+    const prisma = new PrismaClient();
+    try {
+      await prisma.appSettings.upsert({
+        where: { id: 'global' },
+        create: { id: 'global', download_quality_thresholds: JSON.stringify(thresholds) },
+        update: { download_quality_thresholds: JSON.stringify(thresholds) },
+      });
+      logger.info({ thresholds }, 'Download quality thresholds stored in AppSettings');
+    } catch (e) {
+      logger.warn({ err: e }, 'Failed to store download thresholds — non-fatal');
+    } finally {
+      await prisma.$disconnect();
+    }
+  }
 
   logger.info(
     { updated, totalTools: allTools.length, registries: byRegistry.size },

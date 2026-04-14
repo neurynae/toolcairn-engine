@@ -102,7 +102,9 @@ export async function crawlPyPiPackage(name: string): Promise<CrawlerResult> {
       license,
       language: 'Python',
       languages: ['Python'],
-      package_managers: { pip: name },
+      package_managers: [
+        { registry: 'pypi', packageName: name, installCommand: `pip install ${name}` },
+      ],
       deployment_models: ['self-hosted'],
     };
 

@@ -79,7 +79,9 @@ export async function crawlCratesIoPackage(name: string): Promise<CrawlerResult>
       license,
       language: 'Rust',
       languages: ['Rust'],
-      package_managers: { cargo: name },
+      package_managers: [
+        { registry: 'crates', packageName: name, installCommand: `cargo add ${name}` },
+      ],
       deployment_models: ['self-hosted'],
     };
 

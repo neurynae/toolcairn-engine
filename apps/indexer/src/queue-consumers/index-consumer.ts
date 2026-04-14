@@ -1,10 +1,35 @@
+import { PrismaClient } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
 import { MemgraphToolRepository } from '@toolcairn/graph';
 import { runCrawler } from '../crawlers/index.js';
 import { processTool } from '../processors/index.js';
 import { writeEdgeToMemgraph, writeToolToMemgraph, writeTopicNodes } from '../writers/memgraph.js';
-import { upsertIndexedTool } from '../writers/prisma.js';
+import { type IndexedToolMeta, upsertIndexedTool } from '../writers/prisma.js';
 import { upsertToolVector } from '../writers/qdrant.js';
+
+// Load download quality thresholds from AppSettings (set by weekly percentile cron).
+// Cached per-process — refreshed on each worker restart.
+let _downloadThresholds: Record<string, number> | null = null;
+async function getDownloadThresholds(): Promise<Record<string, number>> {
+  if (_downloadThresholds) return _downloadThresholds;
+  try {
+    const prisma = new PrismaClient();
+    const settings = await prisma.appSettings.findUnique({
+      where: { id: 'global' },
+      select: { download_quality_thresholds: true },
+    });
+    await prisma.$disconnect();
+    if (settings?.download_quality_thresholds) {
+      _downloadThresholds = JSON.parse(settings.download_quality_thresholds) as Record<
+        string,
+        number
+      >;
+    }
+  } catch {
+    // Non-fatal — fall back to no threshold (only stars gate applies)
+  }
+  return _downloadThresholds ?? {};
+}
 
 const logger = createLogger({ name: '@toolcairn/indexer:index-consumer' });
 
@@ -130,16 +155,36 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     const processedTool = await processTool(crawlerResult, undefined, changeCheck.prevHealth);
     logger.info({ toolId, nodeId: processedTool.node.id }, 'Processing complete');
 
-    // 3a. Gate: reject ANY repo under 1000 stars.
-    //     Prevents low-quality tools from entering the search index regardless
-    //     of owner type. Without this, name squatters (e.g. mortylabs/kubernetes
-    //     at 26★) can steal name slots from canonical tools after cleanup.
-    if (processedTool.node.health.stars < 1000 && !processedTool.node.grace_until) {
+    const {
+      stars,
+      weekly_downloads: weeklyDownloads,
+      download_registry,
+    } = processedTool.node.health;
+
+    // Base meta — stars + downloads stored on every tool for admin visibility
+    const baseMeta: IndexedToolMeta = {
+      stars,
+      weeklyDownloads: weeklyDownloads ?? 0,
+    };
+
+    // 3a. Quality gate: stars OR verified package downloads.
+    //     Threshold for downloads comes from AppSettings.download_quality_thresholds
+    //     (25th percentile per registry, computed by weekly percentile cron).
+    //     Falls back to no download bypass if thresholds not yet computed.
+    const thresholds = await getDownloadThresholds();
+    const downloadThreshold = download_registry ? (thresholds[download_registry] ?? null) : null;
+    const hasGitHubPopularity = stars >= 1000;
+    const hasPackageUsage =
+      downloadThreshold !== null && (weeklyDownloads ?? 0) >= downloadThreshold;
+    if (!hasGitHubPopularity && !hasPackageUsage && !processedTool.node.grace_until) {
       logger.info(
-        { toolId, stars: processedTool.node.health.stars, owner: processedTool.node.owner_type },
-        'Skipping repo under 1000 stars',
+        { toolId, stars, weeklyDownloads, download_registry, downloadThreshold },
+        'Skipping — insufficient stars and downloads',
       );
-      await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped');
+      await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped', {
+        ...baseMeta,
+        skipReason: `stars:${stars} downloads:${weeklyDownloads ?? 0} threshold:${downloadThreshold ?? 'none'}`,
+      });
       return;
     }
 
@@ -165,7 +210,10 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
         },
         'Skipping lower-star duplicate — existing tool with same name has more stars',
       );
-      await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped');
+      await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped', {
+        ...baseMeta,
+        skipReason: `name_collision:${existingResult.data.github_url}`,
+      });
       return;
     }
 
@@ -173,7 +221,7 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     const writeResults = await Promise.allSettled([
       writeToolToMemgraph(processedTool.node),
       upsertToolVector(processedTool.node, processedTool.vector),
-      upsertIndexedTool(processedTool.node.github_url, processedTool.node.id, 'indexed'),
+      upsertIndexedTool(processedTool.node.github_url, processedTool.node.id, 'indexed', baseMeta),
     ]);
 
     for (const result of writeResults) {

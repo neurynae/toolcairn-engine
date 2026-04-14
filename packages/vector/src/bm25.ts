@@ -64,8 +64,8 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
 
   for (const tool of tools) {
     const { full: nameTokens, parts: namePartTokens } = tokenizeName(tool.name);
-    const pkgTokens = Object.values(tool.package_managers ?? {})
-      .flatMap((n) => tokenize(n))
+    const pkgTokens = (tool.package_managers ?? [])
+      .flatMap((ch) => tokenize(ch.packageName))
       .filter((t) => t.length > 1);
     const descTokens = tokenize(tool.description);
     const topicTokens = tokenize((tool.topics ?? []).join(' '));

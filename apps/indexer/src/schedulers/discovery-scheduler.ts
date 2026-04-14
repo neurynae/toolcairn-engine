@@ -20,7 +20,7 @@ import { createLogger } from '@toolcairn/errors';
 import { getMemgraphSession } from '@toolcairn/graph';
 import { enqueueIndexJob } from '@toolcairn/queue';
 import { discoverReposAcrossTopics } from '../crawlers/github-discovery.js';
-import { clearProgress, setProgress } from '../progress.js';
+import { setProgress } from '../progress.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:discovery-scheduler' });
 
@@ -531,7 +531,9 @@ async function getSettings(prisma: PrismaClient): Promise<DiscoverySettings> {
         ? settings.discovery_topics
         : DEFAULT_DISCOVERY_TOPICS,
     batchSize: settings?.discovery_batch_size ?? 20,
-    minStars: settings?.discovery_min_stars ?? 100,
+    // 500 allows high-download but under-starred packages to be discovered.
+    // The quality gate in index-consumer accepts: stars>=1000 OR downloads>=10k.
+    minStars: settings?.discovery_min_stars ?? 500,
     lastPushedDays: settings?.discovery_last_pushed_days ?? 90,
   };
 }

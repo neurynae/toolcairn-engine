@@ -1,7 +1,8 @@
 // Tool Cypher queries — all parameterized values.
 // Relationship types use template literal for safe string interpolation.
 
-import type { EdgeSource, EdgeType, ToolNode } from '@toolcairn/core';
+import type { EdgeSource, EdgeType, PackageChannel, ToolNode } from '@toolcairn/core';
+// PackageChannel is used in the package_managers deserialisation below.
 
 // ─── Parameter interfaces ────────────────────────────────────────────────────
 
@@ -19,7 +20,7 @@ export interface CreateToolParams {
   language: string;
   languages: string[];
   deployment_models: string[];
-  package_managers: string; // JSON-serialized Record<string, string>
+  package_managers: string; // JSON-serialized PackageChannel[]
   health_stars: number;
   health_stars_velocity_90d: number;
   health_last_commit_date: string;
@@ -463,10 +464,10 @@ export function mapRecordToToolNode(record: Record<string, unknown>): ToolNode {
     package_managers: (() => {
       try {
         return typeof t.package_managers === 'string'
-          ? (JSON.parse(t.package_managers) as Record<string, string>)
-          : ((t.package_managers ?? {}) as Record<string, string>);
+          ? (JSON.parse(t.package_managers) as PackageChannel[])
+          : ((t.package_managers ?? []) as PackageChannel[]);
       } catch {
-        return {} as Record<string, string>;
+        return [] as PackageChannel[];
       }
     })(),
     health: {

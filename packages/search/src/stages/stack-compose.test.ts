@@ -40,7 +40,7 @@ function makeTool(name: string, category: string, topics: string[] = []): ToolNo
     language: 'TypeScript',
     languages: ['TypeScript'],
     deployment_models: ['cloud'],
-    package_managers: {},
+    package_managers: [],
     health: makeHealth(),
     docs: {},
     topics,
