@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DeploymentModel, ToolNode } from '@toolcairn/core';
 import { createLogger } from '@toolcairn/errors';
 import { MemgraphToolRepository } from '@toolcairn/graph';
+import { REGISTRY_CONFIGS } from '../crawlers/registry-config.js';
 import type { CrawlerResult, ProcessedTool, TopicEdge } from '../types.js';
 import { generateEmbedding } from './embedding-processor.js';
 import { calculateHealth } from './health-calculator.js';
@@ -175,6 +176,26 @@ export async function processTool(
     extracted.is_fork,
     hasRealPackage,
   );
+  // Resolve download_registry using REGISTRY_CONFIGS as the single source of truth:
+  // - GitHub crawler: raw.download_registry set by download-fetcher (already a REGISTRY_CONFIGS key)
+  // - Source-specific crawlers (npm:/pypi:/crates.io:): normalize source to REGISTRY_CONFIGS key
+  //   'crates.io' source → 'crates' key; 'npm'/'pypi' sources match their REGISTRY_CONFIGS keys
+  const normalizeSource = (src: string): string => (src === 'crates.io' ? 'crates' : src);
+
+  const rawRegistry =
+    typeof rawData.download_registry === 'string' ? rawData.download_registry : null;
+  const sourceRegistry =
+    crawlerResult.source !== 'github' ? normalizeSource(crawlerResult.source) : null;
+  const resolvedRegistry =
+    rawRegistry && REGISTRY_CONFIGS[rawRegistry]
+      ? rawRegistry
+      : sourceRegistry && REGISTRY_CONFIGS[sourceRegistry]
+        ? sourceRegistry
+        : null;
+
+  if (resolvedRegistry) {
+    health.download_registry = resolvedRegistry;
+  }
 
   // Fetch existing tools from Memgraph for dynamic relationship matching
   let existingTools: Set<string> | undefined;

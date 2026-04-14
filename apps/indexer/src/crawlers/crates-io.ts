@@ -2,6 +2,7 @@ import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
+import { fetchPackageDownloads } from './download-fetcher.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:crates-io-crawler' });
 
@@ -82,10 +83,13 @@ export async function crawlCratesIoPackage(name: string): Promise<CrawlerResult>
       deployment_models: ['self-hosted'],
     };
 
+    // Fetch downloads via unified REGISTRY_CONFIGS (non-fatal)
+    const weeklyDownloads = await fetchPackageDownloads('crates', name);
+
     return {
       source: 'crates.io',
       url,
-      raw: { ...raw, topics },
+      raw: { ...raw, topics, weekly_downloads: weeklyDownloads },
       extracted,
     };
   } catch (e) {

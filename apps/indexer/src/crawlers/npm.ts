@@ -2,6 +2,7 @@ import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
+import { fetchPackageDownloads } from './download-fetcher.js';
 import { extractDocsUrl } from './readme-parser.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:npm-crawler' });
@@ -78,25 +79,17 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
       deployment_models: ['self-hosted'],
     };
 
-    // Fetch weekly download count from npm stats API (non-fatal)
-    let weeklyDownloads = 0;
-    try {
-      const dlRes = await fetch(
-        `https://api.npmjs.org/downloads/point/last-week/${encodeURIComponent(name)}`,
-        { signal: AbortSignal.timeout(3000) },
-      );
-      if (dlRes.ok) {
-        const dlData = (await dlRes.json()) as { downloads?: number };
-        weeklyDownloads = dlData.downloads ?? 0;
-      }
-    } catch {
-      // Non-fatal — leave as 0
-    }
+    // Fetch weekly downloads via unified REGISTRY_CONFIGS (non-fatal)
+    const weeklyDownloads = await fetchPackageDownloads('npm', name);
 
     return {
       source: 'npm',
       url,
-      raw: { ...raw, topics: keywords, weekly_downloads: weeklyDownloads },
+      raw: {
+        ...raw,
+        topics: keywords,
+        weekly_downloads: weeklyDownloads,
+      },
       extracted,
     };
   } catch (e) {

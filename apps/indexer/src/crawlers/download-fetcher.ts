@@ -12,8 +12,8 @@
  */
 
 import { createLogger } from '@toolcairn/errors';
-import { type TimeWindow, REGISTRY_CONFIGS } from './registry-config.js';
 import type { DiscoveredPackage } from './readme-install-parser.js';
+import { REGISTRY_CONFIGS, type TimeWindow } from './registry-config.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:download-fetcher' });
 
@@ -118,9 +118,7 @@ async function verifyOwnership(
     }
 
     const ownerRepo = `${ownerName}/${repoName}`.toLowerCase();
-    return urlsToCheck.some(
-      (u) => typeof u === 'string' && u.toLowerCase().includes(ownerRepo),
-    );
+    return urlsToCheck.some((u) => typeof u === 'string' && u.toLowerCase().includes(ownerRepo));
   } catch {
     // Verification failed — be conservative, don't trust the match
     return false;
@@ -253,7 +251,10 @@ async function fetchHomebrewDownloads(
     if (!installs30d) return null;
 
     // Sum all install variants (e.g. "wget": 27522, "wget --HEAD": 74)
-    const total = Object.values(installs30d).reduce((sum, n) => sum + (typeof n === 'number' ? n : 0), 0);
+    const total = Object.values(installs30d).reduce(
+      (sum, n) => sum + (typeof n === 'number' ? n : 0),
+      0,
+    );
     return total > 0 ? { downloads: total, timeWindow: 'monthly' } : null;
   } catch {
     return null;
@@ -304,11 +305,7 @@ export async function fetchBestDownloadCount(
       const dl = await fetchRegistryDownloads(ch.registry, ch.packageName);
       if (!dl) return null;
 
-      const weeklyEquivalent = convertToWeeklyEquivalent(
-        dl.downloads,
-        dl.timeWindow,
-        dl.createdAt,
-      );
+      const weeklyEquivalent = convertToWeeklyEquivalent(dl.downloads, dl.timeWindow, dl.createdAt);
 
       return {
         registry: ch.registry,
@@ -344,4 +341,28 @@ export async function fetchBestDownloadCount(
   }
 
   return best;
+}
+
+/**
+ * Fetch weekly download count for a known registry + package name.
+ * Used by dedicated crawlers (npm, pypi, crates-io) that already know
+ * the registry and package name — no README parsing needed.
+ *
+ * Uses REGISTRY_CONFIGS as single source of truth for API URLs and fields.
+ * Returns 0 if the registry has no API or the fetch fails.
+ */
+export async function fetchPackageDownloads(
+  registry: string,
+  packageName: string,
+): Promise<number> {
+  const dl = await fetchRegistryDownloads(registry, packageName);
+  if (!dl) return 0;
+  const weekly = convertToWeeklyEquivalent(dl.downloads, dl.timeWindow, dl.createdAt);
+  if (weekly > 0) {
+    logger.debug(
+      { registry, pkg: packageName, weekly, raw: dl.downloads, window: dl.timeWindow },
+      'Package downloads fetched',
+    );
+  }
+  return weekly;
 }

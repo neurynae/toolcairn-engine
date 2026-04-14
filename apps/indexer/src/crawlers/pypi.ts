@@ -2,6 +2,7 @@ import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
+import { fetchPackageDownloads } from './download-fetcher.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:pypi-crawler' });
 
@@ -105,20 +106,8 @@ export async function crawlPyPiPackage(name: string): Promise<CrawlerResult> {
       deployment_models: ['self-hosted'],
     };
 
-    // Fetch weekly download count from PyPI Stats API (non-fatal)
-    let weeklyDownloads = 0;
-    try {
-      const dlRes = await fetch(
-        `https://pypistats.org/api/packages/${encodeURIComponent(name)}/recent`,
-        { signal: AbortSignal.timeout(3000) },
-      );
-      if (dlRes.ok) {
-        const dlData = (await dlRes.json()) as { data?: { last_week?: number } };
-        weeklyDownloads = dlData.data?.last_week ?? 0;
-      }
-    } catch {
-      // Non-fatal — leave as 0
-    }
+    // Fetch weekly downloads via unified REGISTRY_CONFIGS (non-fatal)
+    const weeklyDownloads = await fetchPackageDownloads('pypi', name);
 
     return {
       source: 'pypi',
