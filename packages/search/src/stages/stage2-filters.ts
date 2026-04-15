@@ -62,10 +62,7 @@ export async function stage2ApplyFilters(
       const rankScore = rank >= 0 ? 1 / (rank + 1) : 0;
       const score =
         stage1Score !== undefined
-          ? stage1Score *
-            Math.sqrt(credScore) *
-            (tool.search_weight ?? 1.0) *
-            computeGraphBoost(tool)
+          ? stage1Score * Math.sqrt(credScore) * (tool.search_weight ?? 1.0)
           : (RANK_WEIGHT * rankScore + CREDIBILITY_WEIGHT * credScore) *
             (tool.search_weight ?? 1.0);
 
