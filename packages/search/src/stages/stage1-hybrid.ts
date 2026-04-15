@@ -9,6 +9,7 @@ import {
   rrfFusion,
 } from '@toolcairn/vector';
 import { expandQueryAliases } from '../aliases.js';
+import { computeLangConcordance } from '../language-concordance.js';
 import { expandQueryWithGraphEntities } from '../query-expander.js';
 import { classifyQueryIntent, getIntentWeights } from '../query-intent.js';
 import type { Stage1Result } from '../types.js';
@@ -27,6 +28,8 @@ export async function stage1HybridSearch(
   prebuiltBm25Index?: Bm25IndexData,
   topicFilter?: string[],
   topicMatchIds?: Set<string>,
+  targetLanguages?: string[],
+  toolCorpus?: ToolNode[],
 ): Promise<Stage1Result> {
   const t0 = Date.now();
 
@@ -124,6 +127,24 @@ export async function stage1HybridSearch(
     const sum = b + v;
     const relevance = sum > 0 ? (b * b + v * v) / sum : 0;
     relevanceScores.set(id, relevance);
+  }
+
+  // ── Language concordance penalty ───────────────────────────────────────────
+  // When target languages are detected from the query, penalize tools from
+  // wrong ecosystems (e.g. PHP jwt in Node.js query → 0.3× multiplier).
+  if (targetLanguages && targetLanguages.length > 0 && toolCorpus) {
+    const toolMap = new Map(toolCorpus.map((t) => [t.id, t]));
+    for (const [id, score] of relevanceScores) {
+      const tool = toolMap.get(id);
+      if (tool) {
+        const concordance = computeLangConcordance(
+          tool.language,
+          tool.languages ?? [],
+          targetLanguages,
+        );
+        relevanceScores.set(id, score * concordance);
+      }
+    }
   }
 
   // Fallback if both paths empty

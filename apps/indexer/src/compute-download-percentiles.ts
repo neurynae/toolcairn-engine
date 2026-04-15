@@ -214,7 +214,12 @@ async function main() {
   for (const tool of allTools) {
     const dlScore = dlScores.get(tool.pointId) ?? 0;
     const hasDownloads = dlScore > 0;
-    const newCredibility = computeCredibility(toCredibilitySignals(tool), dlScore, hasDownloads, tool.isFork);
+    const newCredibility = computeCredibility(
+      toCredibilitySignals(tool),
+      dlScore,
+      hasDownloads,
+      tool.isFork,
+    );
 
     // Skip if credibility hasn't changed meaningfully
     if (Math.abs(newCredibility - tool.health.credibility_score) < 0.005) continue;

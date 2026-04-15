@@ -141,15 +141,11 @@ export class FakeToolRepository implements ToolRepository {
     return { ok: true, data: found ?? null };
   }
 
-  async getPairwiseEdges(
-    _names: string[],
-  ): Promise<Result<PairwiseEdge[], RepositoryError>> {
+  async getPairwiseEdges(_names: string[]): Promise<Result<PairwiseEdge[], RepositoryError>> {
     return { ok: true, data: [] };
   }
 
-  async getToolUseCases(
-    _names: string[],
-  ): Promise<Result<ToolUseCases[], RepositoryError>> {
+  async getToolUseCases(_names: string[]): Promise<Result<ToolUseCases[], RepositoryError>> {
     return { ok: true, data: [] };
   }
 

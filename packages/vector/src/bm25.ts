@@ -10,6 +10,7 @@ const FIELD_WEIGHTS = {
   packageNames: 2.5, // npm/pip/cargo canonical name
   description: 1.0,
   topics: 0.5,
+  language: 1.0, // programming language / ecosystem signal
 } as const;
 
 type Field = keyof typeof FIELD_WEIGHTS;
@@ -21,11 +22,13 @@ interface DocTokens {
   packageNames: string[];
   description: string[];
   topics: string[];
+  language: string[]; // programming language tokens
   len: number;
 }
 
 export interface Bm25IndexData {
   idf: Map<string, number>;
+  df: Map<string, number>;
   docs: Map<string, DocTokens>;
   avgDocLen: number;
 }
@@ -69,12 +72,16 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
       .filter((t) => t.length > 1);
     const descTokens = tokenize(tool.description);
     const topicTokens = tokenize((tool.topics ?? []).join(' '));
+    const langTokens = tokenize(
+      [tool.language, ...(tool.languages ?? [])].filter(Boolean).join(' '),
+    );
     const len =
       nameTokens.length +
       namePartTokens.length +
       pkgTokens.length +
       descTokens.length +
-      topicTokens.length;
+      topicTokens.length +
+      langTokens.length;
 
     docs.set(tool.id, {
       id: tool.id,
@@ -83,6 +90,7 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
       packageNames: pkgTokens,
       description: descTokens,
       topics: topicTokens,
+      language: langTokens,
       len,
     });
     totalLen += len;
@@ -94,6 +102,7 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
       ...pkgTokens,
       ...descTokens,
       ...topicTokens,
+      ...langTokens,
     ]) {
       if (!seen.has(token)) {
         seen.add(token);
@@ -109,12 +118,22 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
   }
 
   const avgDocLen = N > 0 ? totalLen / N : 1;
-  return { idf, docs, avgDocLen };
+  return { idf, df, docs, avgDocLen };
+}
+
+/**
+ * Maximum possible IDF in this corpus — log(N + 1).
+ * Used to normalize name IDF into a 0-1 range for proportional weighting.
+ * Computed once per index build (self-calibrating as corpus grows).
+ */
+function computeMaxIdf(corpusSize: number): number {
+  return Math.log(corpusSize + 1);
 }
 
 export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
   const queryTokens = tokenize(query);
   const scores = new Map<string, number>();
+  const maxIdf = computeMaxIdf(index.docs.size);
 
   for (const [docId, doc] of index.docs) {
     let score = 0;
@@ -131,7 +150,18 @@ export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
         const fieldLen = fieldTokens.length;
         const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (fieldLen / index.avgDocLen)));
 
-        score += idfScore * tfNorm * FIELD_WEIGHTS[field];
+        // IDF-proportional name weight: distinctive names ("prisma", idf~9)
+        // get full 3.0 weight. Generic common-word names ("image", idf~3)
+        // get ~1.7. Self-calibrating from the corpus — no thresholds.
+        // Formula: nameWeight = 1.0 + 2.0 × (nameTokenIdf / maxIdf)
+        let weight = FIELD_WEIGHTS[field];
+        if (field === 'name') {
+          const nameIdf = index.idf.get(token) ?? 0;
+          const normalizedIdf = maxIdf > 0 ? nameIdf / maxIdf : 0;
+          weight = 1.0 + 2.0 * normalizedIdf;
+        }
+
+        score += idfScore * tfNorm * weight;
       }
     }
 
