@@ -37,3 +37,8 @@ export { expandWithCooccurrence } from './facets/expand.js';
 export { classifyQueryIntent, getIntentWeights } from './query-intent.js';
 export type { QueryIntent, IntentWeights } from './query-intent.js';
 export { expandQueryWithGraphEntities } from './query-expander.js';
+export {
+  buildTopicVocabulary,
+  computeTopicMatchIds,
+  extractTopicsFromQuery,
+} from './topic-filter.js';

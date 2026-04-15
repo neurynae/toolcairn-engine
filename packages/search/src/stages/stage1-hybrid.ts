@@ -25,6 +25,8 @@ export async function stage1HybridSearch(
   lookupMaps?: ExactLookupMaps,
   weightOverride?: Stage1WeightOverride,
   prebuiltBm25Index?: Bm25IndexData,
+  topicFilter?: string[],
+  topicMatchIds?: Set<string>,
 ): Promise<Stage1Result> {
   const t0 = Date.now();
 
@@ -40,7 +42,14 @@ export async function stage1HybridSearch(
   // buildBm25Index() call that tokenizes all 30K+ tools (~100ms + ~50MB).
   const bm25Index: Bm25IndexData = prebuiltBm25Index ?? buildBm25Index(allTools);
   const bm25Results = bm25Search(expandedQuery, bm25Index);
-  const bm25Ids = bm25Results.map((r) => r.id);
+  // When topic filter is active, post-filter BM25 results to only include tools
+  // with overlapping topics. This narrows the candidate pool to domain-relevant tools
+  // before RRF fusion, preventing high-star irrelevant tools from dominating.
+  const filteredBm25 =
+    topicFilter && topicFilter.length > 0 && topicMatchIds && topicMatchIds.size > 0
+      ? bm25Results.filter((r) => topicMatchIds.has(r.id))
+      : bm25Results;
+  const bm25Ids = filteredBm25.map((r) => r.id);
 
   // ── Vector embedding — falls back to BM25-only when NOMIC_API_KEY absent ─
   let queryVector: number[] | null = null;
@@ -53,10 +62,22 @@ export async function stage1HybridSearch(
   let vectorIds: string[] = [];
   if (queryVector) {
     try {
+      // When topic filter is active, apply Qdrant payload filter (OR across topics)
+      // so vector search only returns tools in the relevant domain.
+      const qdrantFilter =
+        topicFilter && topicFilter.length > 0
+          ? {
+              should: topicFilter.map((t) => ({
+                key: 'topics' as const,
+                match: { value: t },
+              })),
+            }
+          : undefined;
       const vectorResults = await qdrantClient().search(COLLECTION_NAME, {
         vector: queryVector,
         limit: 150, // increased from 100 for better recall
         with_payload: false,
+        filter: qdrantFilter,
       });
       vectorIds = (vectorResults as Array<{ id: string | number }>).map((r) => String(r.id));
     } catch {

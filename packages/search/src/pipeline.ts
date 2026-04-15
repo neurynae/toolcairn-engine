@@ -8,6 +8,11 @@ import { stage1HybridSearch } from './stages/stage1-hybrid.js';
 import { stage2ApplyFilters } from './stages/stage2-filters.js';
 import { stage3GraphRerank } from './stages/stage3-graph.js';
 import { stage4Select } from './stages/stage4-select.js';
+import {
+  buildTopicVocabulary,
+  computeTopicMatchIds,
+  extractTopicsFromQuery,
+} from './topic-filter.js';
 import type {
   SearchContext,
   SearchPipelineInput,
@@ -54,6 +59,19 @@ async function getCachedBm25Index(
 
   return _bm25CachePromise;
 }
+
+// ─── Topic vocabulary cache ──────────────────────────────────────────────────
+// Built once alongside the BM25 index, cached for process lifetime.
+// ~1,764 unique topics with 10+ tools. O(1) lookup per query token.
+let _cachedTopicVocab: Set<string> | null = null;
+let _cachedTopicCorpus: ToolNode[] | null = null;
+
+/** Minimum topic-matching tool IDs to use topic-filtered search (Level 1). */
+const TOPIC_FILTER_MIN_POOL = 10;
+/** Minimum results from topic-filtered search before falling back. */
+const TOPIC_FILTER_MIN_RESULTS = 3;
+/** Score multiplier for topic-overlapping tools in Level 3 (unfiltered + bonus). */
+const TOPIC_BONUS_MULTIPLIER = 1.5;
 
 export interface RunStages2to4Result {
   results: ToolScoredResult[];
@@ -216,12 +234,20 @@ export class SearchPipeline {
   }
 
   /**
-   * Per-sub-need search: Stage 1 (BM25+vector) → Stage 2 (credibility) only.
-   * Skips Stage 3 graph rerank — which amplifies popular generic tools via
-   * graph connectivity regardless of domain relevance. For precise single-concept
-   * sub-needs like "continuous integration server", BM25 token precision + vector
-   * semantics are sufficient. Stage 3's graph popularity is pure noise here.
+   * Per-sub-need search with 3-level topic filtering for domain relevance.
    *
+   * Problem: searching ALL 13K+ tools for every sub-need query lets high-star
+   * irrelevant tools (qdrant, pandas, freeCodeCamp) dominate via Stage 2's
+   * 80% credibility weight. Topic filtering narrows the candidate pool to
+   * domain-relevant tools BEFORE credibility scoring.
+   *
+   * Level 1: Topic-filtered search — extract topics from query, filter both
+   *   BM25 and Qdrant vector results to tools with matching topics.
+   * Level 2: Unfiltered search with topic bonus — run standard search but
+   *   boost score of tools with topic overlap by 1.5x.
+   * Level 3: Pure unfiltered fallback — no topic signals or too few matches.
+   *
+   * Skips Stage 3 graph rerank (graph popularity is noise for precise sub-needs).
    * Uses cached BM25 index — zero per-request corpus loading.
    */
   async runStages1to2ForSubNeed(
@@ -230,17 +256,72 @@ export class SearchPipeline {
     limit: number,
   ): Promise<ToolScoredResult[]> {
     const bm25Index = await getCachedBm25Index(this);
-    const stage1 = await stage1HybridSearch(
+    const vocabulary = await this.getTopicVocabulary();
+    const topics = extractTopicsFromQuery(query, vocabulary);
+
+    // Precompute topic-matching tool IDs from cached corpus
+    const corpus = await this.getCachedCorpus();
+    const topicMatchIds =
+      topics.length > 0 ? computeTopicMatchIds(corpus, topics) : new Set<string>();
+
+    // ── Level 1: Topic-filtered search ─────────────────────────────────────
+    if (topics.length > 0 && topicMatchIds.size >= TOPIC_FILTER_MIN_POOL) {
+      logger.debug(
+        { query, topics, matchCount: topicMatchIds.size },
+        'Sub-need Level 1: topic-filtered search',
+      );
+      const stage1 = await stage1HybridSearch(
+        query,
+        [],
+        undefined,
+        { bm25Weight: 1.0, vectorWeight: 1.0 },
+        bm25Index,
+        topics,
+        topicMatchIds,
+      );
+      const stage2 = await stage2ApplyFilters(stage1.ids, context);
+      if (stage2.hits.length >= TOPIC_FILTER_MIN_RESULTS) {
+        logger.debug(
+          { query, hitCount: stage2.hits.length },
+          'Sub-need Level 1 success: topic-filtered results sufficient',
+        );
+        return stage2.hits.slice(0, limit).map((h) => ({ tool: h.tool, score: h.score }));
+      }
+      logger.debug(
+        { query, hitCount: stage2.hits.length },
+        'Sub-need Level 1 insufficient — falling through to Level 2',
+      );
+    }
+
+    // ── Level 2: Unfiltered search with topic bonus ────────────────────────
+    // Run standard search, but multiply score by 1.5x for tools with topic overlap.
+    // This gives domain-relevant tools an advantage without hard-filtering.
+    const stage1Unfiltered = await stage1HybridSearch(
       query,
       [],
       undefined,
       { bm25Weight: 1.0, vectorWeight: 1.0 },
       bm25Index,
     );
-    const stage2 = await stage2ApplyFilters(stage1.ids, context);
-    // Stage 2 returns hits with score = rankScore × credibility.
-    // Convert to ToolScoredResult format.
-    return stage2.hits.slice(0, limit).map((h) => ({ tool: h.tool, score: h.score }));
+    const stage2Unfiltered = await stage2ApplyFilters(stage1Unfiltered.ids, context);
+
+    if (topics.length > 0 && topicMatchIds.size > 0) {
+      logger.debug(
+        { query, topics, matchCount: topicMatchIds.size },
+        'Sub-need Level 2: unfiltered + topic bonus',
+      );
+      const boosted = stage2Unfiltered.hits.map((h) => ({
+        tool: h.tool,
+        score: topicMatchIds.has(h.tool.id) ? h.score * TOPIC_BONUS_MULTIPLIER : h.score,
+      }));
+      boosted.sort((a, b) => b.score - a.score);
+      return boosted.slice(0, limit);
+    }
+
+    // ── Level 3: Pure unfiltered fallback ──────────────────────────────────
+    // No topic signals extracted — standard Stage 1+2 pipeline.
+    logger.debug({ query }, 'Sub-need Level 3: pure unfiltered search (no topic signals)');
+    return stage2Unfiltered.hits.slice(0, limit).map((h) => ({ tool: h.tool, score: h.score }));
   }
 
   /**
@@ -256,6 +337,29 @@ export class SearchPipeline {
     if (askedDimensions.includes('deployment_model') && !askedDimensions.includes('is_stable'))
       return 3;
     return 4; // All rounds done, proceed to results
+  }
+
+  /**
+   * Get or build the cached topic vocabulary from the tool corpus.
+   * Built once, cached for process lifetime alongside BM25 index.
+   */
+  async getTopicVocabulary(): Promise<Set<string>> {
+    if (_cachedTopicVocab) return _cachedTopicVocab;
+    const corpus = await this.getCachedCorpus();
+    _cachedTopicVocab = buildTopicVocabulary(corpus);
+    logger.info({ vocabSize: _cachedTopicVocab.size }, 'Topic vocabulary cached');
+    return _cachedTopicVocab;
+  }
+
+  /**
+   * Get or load the cached tool corpus for topic operations.
+   * Separate from BM25 cache — BM25 only needs the index, topic filtering
+   * needs the raw ToolNode[] for topic field access.
+   */
+  private async getCachedCorpus(): Promise<ToolNode[]> {
+    if (_cachedTopicCorpus) return _cachedTopicCorpus;
+    _cachedTopicCorpus = await this.loadToolCorpus();
+    return _cachedTopicCorpus;
   }
 
   /**
