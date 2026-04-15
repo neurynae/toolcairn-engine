@@ -51,8 +51,21 @@ function getOctokit(): Octokit {
 
 // ─── ETag cache (in-memory, keyed by endpoint URL) ───────────────────────────
 // ETags allow conditional GETs: a 304 Not Modified response costs 0 rate-limit points.
+// Capped at MAX_ETAG_ENTRIES to prevent unbounded heap growth during long indexer
+// runs (38k+ repos × 5 calls each = ~190k entries without a cap).
+// Eviction: drop the oldest entry when the limit is hit (FIFO via Map insertion order).
 
+const MAX_ETAG_ENTRIES = 5_000;
 const etagCache = new Map<string, { etag: string; data: unknown }>();
+
+function setEtagCache(key: string, value: { etag: string; data: unknown }): void {
+  if (etagCache.size >= MAX_ETAG_ENTRIES) {
+    // Map iteration order is insertion order — delete the first (oldest) key
+    const firstKey = etagCache.keys().next().value;
+    if (firstKey !== undefined) etagCache.delete(firstKey);
+  }
+  etagCache.set(key, value);
+}
 
 // ─── Retry wrapper ────────────────────────────────────────────────────────────
 
@@ -90,7 +103,7 @@ async function githubRequest<T>(
       updateSlotFromHeaders(slot, 'core', response.headers as Record<string, string | undefined>);
 
       const etag = response.headers.etag;
-      if (etag) etagCache.set(cacheKey, { etag, data: response.data });
+      if (etag) setEtagCache(cacheKey, { etag, data: response.data });
 
       return response.data as T;
     } catch (err: unknown) {
