@@ -61,10 +61,13 @@ export async function upsertIndexedTool(
   status: string,
   meta?: IndexedToolMeta,
 ): Promise<void> {
+  // Normalize to lowercase so mixed-case URLs from discovery never create
+  // duplicate rows alongside the canonical lowercase form written by the indexer.
+  const normalizedUrl = githubUrl.toLowerCase();
   try {
     await withReconnect((prisma) =>
       prisma.indexedTool.upsert({
-        where: { github_url: githubUrl },
+        where: { github_url: normalizedUrl },
         update: {
           graph_node_id: graphNodeId,
           last_indexed_at: new Date(),
@@ -76,7 +79,7 @@ export async function upsertIndexedTool(
           ...(meta?.skipReason !== undefined && { skip_reason: meta.skipReason }),
         },
         create: {
-          github_url: githubUrl,
+          github_url: normalizedUrl,
           graph_node_id: graphNodeId,
           last_indexed_at: new Date(),
           index_status: status,
@@ -87,7 +90,10 @@ export async function upsertIndexedTool(
         },
       }),
     );
-    logger.info({ githubUrl, graphNodeId, status }, 'IndexedTool upserted in PostgreSQL');
+    logger.info(
+      { githubUrl: normalizedUrl, graphNodeId, status },
+      'IndexedTool upserted in PostgreSQL',
+    );
   } catch (e) {
     throw new IndexerError({
       message: `Failed to upsert IndexedTool for ${githubUrl}: ${e instanceof Error ? e.message : String(e)}`,
