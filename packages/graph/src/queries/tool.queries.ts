@@ -110,7 +110,7 @@ export function buildUpsertEdgeQuery(params: UpsertEdgeParams): {
 // ─── Static query strings ─────────────────────────────────────────────────────
 
 export const CREATE_TOOL = {
-  text: `MERGE (t:Tool { name: $name })
+  text: `MERGE (t:Tool { github_url: $github_url })
    ON CREATE SET t.grace_until = NULL,
                  t.grace_retries = 0,
                  t.ecosystem_centrality = 0,

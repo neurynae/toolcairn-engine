@@ -200,34 +200,9 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
       return;
     }
 
-    // 3b. Gate: name collision — if a tool with the same name already exists in
-    //     Memgraph with MORE stars, skip this one. Prevents wechaty/docusaurus
-    //     (119★) from overwriting facebook/docusaurus (56k★) via the MERGE query.
-    const repo = new MemgraphToolRepository();
-    const existingResult = await repo.findByName(processedTool.node.name);
-    if (
-      existingResult.ok &&
-      existingResult.data &&
-      existingResult.data.github_url !== processedTool.node.github_url &&
-      existingResult.data.health.stars > processedTool.node.health.stars
-    ) {
-      logger.info(
-        {
-          toolId,
-          name: processedTool.node.name,
-          existingUrl: existingResult.data.github_url,
-          existingStars: existingResult.data.health.stars,
-          newUrl: processedTool.node.github_url,
-          newStars: processedTool.node.health.stars,
-        },
-        'Skipping lower-star duplicate — existing tool with same name has more stars',
-      );
-      await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped', {
-        ...baseMeta,
-        skipReason: `name_collision:${existingResult.data.github_url}`,
-      });
-      return;
-    }
+    // Note: name collision gate removed. MERGE now keys on github_url (unique per repo),
+    // so same-name tools in different ecosystems coexist as separate nodes.
+    // Credibility score naturally surfaces the best tool for any given name.
 
     // 4. Write to all stores concurrently
     const writeResults = await Promise.allSettled([
