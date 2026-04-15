@@ -25,7 +25,7 @@ async function main() {
     logger.info('Running PageRank via MAGE...');
     try {
       const result = await session.run(
-        'CALL pagerank.get() YIELD node, rank WHERE "Tool" IN labels(node) RETURN node.name AS name, rank',
+        'CALL pagerank.get() YIELD node, rank WITH node, rank WHERE "Tool" IN labels(node) RETURN node.name AS name, rank',
       );
 
       let maxRank = 0;
