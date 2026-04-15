@@ -178,6 +178,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'data.attributes.week',
     timeWindow: 'weekly',
     hasDownloadApi: true,
+    logScale: 5_000,
   },
   ansible: {
     name: 'Ansible Galaxy',
@@ -186,6 +187,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'download_count',
     timeWindow: 'alltime',
     hasDownloadApi: true,
+    logScale: 50_000,
   },
   puppet: {
     name: 'Puppet Forge',
@@ -193,6 +195,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'downloads',
     timeWindow: 'alltime',
     hasDownloadApi: true,
+    logScale: 10_000,
   },
   chef: {
     name: 'Chef Supermarket',
@@ -200,6 +203,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'metrics.downloads.total',
     timeWindow: 'alltime',
     hasDownloadApi: true,
+    logScale: 10_000,
   },
   flathub: {
     name: 'Flathub',
@@ -207,6 +211,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'installs_last_7_days',
     timeWindow: 'weekly',
     hasDownloadApi: true,
+    logScale: 5_000,
   },
   wordpress: {
     name: 'WordPress.org',
@@ -215,6 +220,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'downloaded',
     timeWindow: 'alltime',
     hasDownloadApi: true,
+    logScale: 50_000,
   },
   vscode: {
     name: 'VS Code Marketplace',
@@ -222,6 +228,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'statistics.install',
     timeWindow: 'alltime',
     hasDownloadApi: true,
+    logScale: 100_000,
   },
   julia: {
     name: 'Julia Packages',
@@ -229,6 +236,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'total_requests',
     timeWindow: 'monthly',
     hasDownloadApi: true,
+    logScale: 10_000,
   },
   cocoapods: {
     name: 'CocoaPods',
@@ -236,6 +244,7 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     downloadField: 'stats.download_week',
     timeWindow: 'weekly',
     hasDownloadApi: true,
+    logScale: 10_000,
   },
 
   // ── Registries WITHOUT download APIs ──────────────────────────────────────
