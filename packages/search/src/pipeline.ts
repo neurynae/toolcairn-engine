@@ -285,12 +285,12 @@ export class SearchPipeline {
       );
       const stage2 = await stage2ApplyFilters(stage1.ids, context, stage1.scores);
       if (stage2.hits.length >= TOPIC_FILTER_MIN_RESULTS) {
-        const stage3 = await stage3GraphRerank(stage2);
+        const results = await this.applyGraphMultiplier(stage2.hits);
         logger.debug(
-          { query, hitCount: stage3.results.length },
-          'Sub-need Level 1 success: topic-filtered + graph reranked',
+          { query, hitCount: results.length },
+          'Sub-need Level 1 success: topic-filtered + graph multiplied',
         );
-        return stage3.results.slice(0, limit);
+        return results.slice(0, limit);
       }
       logger.debug(
         { query, hitCount: stage2.hits.length },
@@ -316,12 +316,89 @@ export class SearchPipeline {
       stage1Unfiltered.scores,
     );
 
-    // ── Level 2: Unfiltered + Stage 3 graph rerank ─────────────────────────
-    // Topics did their job as a filter (Level 1). In the unfiltered path,
-    // tools compete on description match + credibility + graph connectivity.
-    const stage3Unfiltered = await stage3GraphRerank(stage2Unfiltered);
-    logger.debug({ query, targetLanguages }, 'Sub-need Level 2: unfiltered + graph reranked');
-    return stage3Unfiltered.results.slice(0, limit);
+    // ── Level 2: Unfiltered + graph multiplier ─────────────────────────────
+    // Tools compete on description match + credibility + graph connectivity.
+    const results = await this.applyGraphMultiplier(stage2Unfiltered.hits);
+    logger.debug({ query, targetLanguages }, 'Sub-need Level 2: unfiltered + graph multiplied');
+    return results.slice(0, limit);
+  }
+
+  /**
+   * Query Memgraph for live graph connectivity scores and apply as a multiplier
+   * on Stage 2 results. Uses the same Cypher query as Stage 3 (edge weights,
+   * use-case overlap, centrality, pagerank) but applies as a multiplicative
+   * boost (1.0–2.0×) instead of replacing the score with an additive formula.
+   *
+   * Zero graph connectivity = 1.0× (Stage 2 score unchanged).
+   * High graph connectivity = up to 2.0× (doubles the score).
+   */
+  private async applyGraphMultiplier(
+    hits: Array<{ tool: ToolNode; score: number }>,
+  ): Promise<ToolScoredResult[]> {
+    if (hits.length === 0) return [];
+
+    const names = hits.map((h) => h.tool.name);
+    let graphScores: Map<string, number>;
+
+    try {
+      const { GET_TOOL_GRAPH_RERANK, getMemgraphSession, mapRecordToToolNodeWithScore } =
+        await import('@toolcairn/graph');
+      const session = getMemgraphSession();
+      try {
+        const result = await session.run(GET_TOOL_GRAPH_RERANK.text, { names });
+        graphScores = new Map(
+          result.records.map((r) => {
+            const { tool, graphScore } = mapRecordToToolNodeWithScore(r.toObject());
+            return [tool.name, graphScore];
+          }),
+        );
+      } finally {
+        await session.close();
+      }
+    } catch (e) {
+      // Memgraph unavailable — return Stage 2 results unchanged
+      logger.warn({ err: e }, 'Graph multiplier: Memgraph query failed — skipping');
+      return hits.map((h) => ({ tool: h.tool, score: h.score }));
+    }
+
+    // Extract PURE edge connectivity by subtracting the static centrality/pagerank
+    // component that Memgraph's query adds (centrality×0.1 + pagerank×0.15).
+    // These static signals are already handled by computeGraphBoost in Stage 2 —
+    // double-counting them here lets hub tools (next.js) overwhelm specialized
+    // tools (docusaurus) even when hubs have no edges to other candidates.
+    const pureEdgeScores: number[] = [];
+    const toolEdgeMap = new Map<string, number>();
+    for (const h of hits) {
+      const rawGraph = graphScores.get(h.tool.name) ?? 0;
+      const rawCentrality = h.tool.ecosystem_centrality;
+      const centrality =
+        typeof rawCentrality === 'number'
+          ? rawCentrality
+          : ((rawCentrality as { low?: number })?.low ?? 0);
+      const pagerank = h.tool.pagerank_score ?? 0;
+      const staticComponent = centrality * 0.1 + pagerank * 0.15;
+      const pureEdge = Math.max(0, rawGraph - staticComponent);
+      toolEdgeMap.set(h.tool.name, pureEdge);
+      if (pureEdge > 0) pureEdgeScores.push(pureEdge);
+    }
+
+    // Saturation normalization: score / (score + median). Self-calibrating —
+    // median comes from the actual data, no hardcoded constants.
+    // Result: 0 edges → 0, median edges → 0.5, high edges → ~0.8-0.9
+    const sorted = pureEdgeScores.sort((a, b) => a - b);
+    const median = sorted.length > 0 ? (sorted[Math.floor(sorted.length / 2)] ?? 1) : 1;
+    const saturationK = Math.max(median, 0.5); // floor at 0.5 to avoid div-by-tiny
+
+    const results: ToolScoredResult[] = hits.map((h) => {
+      const pureEdge = toolEdgeMap.get(h.tool.name) ?? 0;
+      const saturated = pureEdge / (pureEdge + saturationK);
+      // Multiplier: 1.0 (no edges to candidates) to 2.0 (heavily connected)
+      const multiplier = 1.0 + saturated;
+      return { tool: h.tool, score: h.score * multiplier };
+    });
+
+    results.sort((a, b) => b.score - a.score);
+    return results;
   }
 
   /**
