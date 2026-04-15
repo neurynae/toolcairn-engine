@@ -385,19 +385,42 @@ export async function startConsumer(
       const indexMessages = messages.filter((m) => m.type === 'index-job');
       const otherMessages = messages.filter((m) => m.type !== 'index-job');
 
-      // Process index jobs in concurrent sliding windows
+      // 2-minute ceiling per job — prevents a hung download fetch or stalled
+      // GitHub API call from blocking the whole batch indefinitely.
+      const JOB_TIMEOUT_MS = 120_000;
+
+      // Process index jobs in concurrent sliding windows.
+      // Each message is XACK'd immediately after its own job completes (success,
+      // failure, or timeout) rather than waiting for the whole batch. This means
+      // a slow job never holds other messages in the PEL.
       for (let i = 0; i < indexMessages.length; i += concurrency) {
         const batch = indexMessages.slice(i, i + concurrency);
         await Promise.allSettled(
           batch.map(async (msg) => {
             const { toolId, priority } = msg.payload as { toolId: string; priority: number };
             try {
-              await handlers.onIndexJob(toolId, priority);
+              await Promise.race([
+                handlers.onIndexJob(toolId, priority),
+                new Promise<never>((_, reject) =>
+                  setTimeout(
+                    () => reject(new Error(`Job timeout after ${JOB_TIMEOUT_MS}ms`)),
+                    JOB_TIMEOUT_MS,
+                  ),
+                ),
+              ]);
             } catch (e) {
               logger.error(
                 { err: e, messageId: msg.id, toolId },
-                'Index job failed (non-fatal — will be reclaimed)',
+                'Index job failed (non-fatal)',
               );
+            }
+            // XACK immediately — regardless of success / failure / timeout.
+            // Per-message so one slow job can't strand the other 9 in the PEL.
+            try {
+              const r = getRedisClient();
+              await r.xack(msg._streamKey, group, msg._entryId);
+            } catch (e) {
+              logger.warn({ err: e, entryId: msg._entryId }, 'XACK failed');
             }
           }),
         );
@@ -423,9 +446,9 @@ export async function startConsumer(
         }
       }
 
-      // Acknowledge each message only against its originating stream
+      // XACK non-index messages (search, scheduler) — these are fast and don't hang.
+      // Index messages are already XACK'd per-message above.
       const redis = getRedisClient();
-      const indexIds = messages.filter((m) => m._streamKey === INDEX_STREAM).map((m) => m._entryId);
       const searchIds = messages
         .filter((m) => m._streamKey === SEARCH_STREAM)
         .map((m) => m._entryId);
@@ -433,7 +456,6 @@ export async function startConsumer(
         .filter((m) => m._streamKey === SCHEDULER_STREAM)
         .map((m) => m._entryId);
 
-      if (indexIds.length > 0) await redis.xack(INDEX_STREAM, group, ...indexIds);
       if (searchIds.length > 0) await redis.xack(SEARCH_STREAM, group, ...searchIds);
       if (schedulerIds.length > 0) await redis.xack(SCHEDULER_STREAM, group, ...schedulerIds);
     }
