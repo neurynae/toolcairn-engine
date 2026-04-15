@@ -279,7 +279,7 @@ export class SearchPipeline {
         topics,
         topicMatchIds,
       );
-      const stage2 = await stage2ApplyFilters(stage1.ids, context);
+      const stage2 = await stage2ApplyFilters(stage1.ids, context, stage1.scores);
       if (stage2.hits.length >= TOPIC_FILTER_MIN_RESULTS) {
         logger.debug(
           { query, hitCount: stage2.hits.length },
@@ -303,7 +303,11 @@ export class SearchPipeline {
       { bm25Weight: 1.0, vectorWeight: 1.0 },
       bm25Index,
     );
-    const stage2Unfiltered = await stage2ApplyFilters(stage1Unfiltered.ids, context);
+    const stage2Unfiltered = await stage2ApplyFilters(
+      stage1Unfiltered.ids,
+      context,
+      stage1Unfiltered.scores,
+    );
 
     if (topics.length > 0 && topicMatchIds.size > 0) {
       logger.debug(

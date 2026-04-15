@@ -51,6 +51,18 @@ export async function stage1HybridSearch(
       : bm25Results;
   const bm25Ids = filteredBm25.map((r) => r.id);
 
+  // ── BM25 score normalization (saturation: score / (score + median)) ───────
+  const nonZeroBm25 = filteredBm25
+    .filter((r) => r.score > 0)
+    .map((r) => r.score)
+    .sort((a, b) => a - b);
+  const medianBm25 =
+    nonZeroBm25.length > 0 ? (nonZeroBm25[Math.floor(nonZeroBm25.length / 2)] ?? 1) : 1;
+  const normalizedBm25Scores = new Map<string, number>();
+  for (const r of filteredBm25) {
+    normalizedBm25Scores.set(r.id, r.score / (r.score + medianBm25));
+  }
+
   // ── Vector embedding — falls back to BM25-only when NOMIC_API_KEY absent ─
   let queryVector: number[] | null = null;
   try {
@@ -59,7 +71,8 @@ export async function stage1HybridSearch(
     // No API key — BM25-only mode
   }
 
-  let vectorIds: string[] = [];
+  const vectorIds: string[] = [];
+  const rawVectorScores = new Map<string, number>();
   if (queryVector) {
     try {
       // When topic filter is active, apply Qdrant payload filter (OR across topics)
@@ -79,10 +92,38 @@ export async function stage1HybridSearch(
         with_payload: false,
         filter: qdrantFilter,
       });
-      vectorIds = (vectorResults as Array<{ id: string | number }>).map((r) => String(r.id));
+      for (const r of vectorResults as Array<{ id: string | number; score: number }>) {
+        vectorIds.push(String(r.id));
+        rawVectorScores.set(String(r.id), r.score);
+      }
     } catch {
       // Vector search unavailable — fall back to BM25-only
     }
+  }
+
+  // ── Vector score normalization (min-max within result set) ────────────────
+  const normalizedVectorScores = new Map<string, number>();
+  if (rawVectorScores.size > 0) {
+    const vecValues = [...rawVectorScores.values()];
+    const minVec = Math.min(...vecValues);
+    const maxVec = Math.max(...vecValues);
+    const vecRange = maxVec - minVec || 1;
+    for (const [id, s] of rawVectorScores) {
+      normalizedVectorScores.set(id, (s - minVec) / vecRange);
+    }
+  }
+
+  // ── Combined relevance scores (self-weighted mean of BM25 + vector) ───────
+  // relevance = (b² + v²) / (b + v) — higher individual score dominates,
+  // agreement amplifies. Zero when both are zero.
+  const relevanceScores = new Map<string, number>();
+  const allScoredIds = new Set([...normalizedBm25Scores.keys(), ...normalizedVectorScores.keys()]);
+  for (const id of allScoredIds) {
+    const b = normalizedBm25Scores.get(id) ?? 0;
+    const v = normalizedVectorScores.get(id) ?? 0;
+    const sum = b + v;
+    const relevance = sum > 0 ? (b * b + v * v) / sum : 0;
+    relevanceScores.set(id, relevance);
   }
 
   // Fallback if both paths empty
@@ -90,7 +131,12 @@ export async function stage1HybridSearch(
     const fallbackIds = [...allTools]
       .sort((a, b) => b.health.maintenance_score - a.health.maintenance_score)
       .map((t) => t.id);
-    return { ids: fallbackIds, elapsed_ms: Date.now() - t0, intent };
+    return {
+      ids: fallbackIds,
+      scores: new Map<string, number>(),
+      elapsed_ms: Date.now() - t0,
+      intent,
+    };
   }
 
   // ── Intent-weighted RRF fusion ────────────────────────────────────────────
@@ -115,5 +161,5 @@ export async function stage1HybridSearch(
     }
   }
 
-  return { ids, elapsed_ms: Date.now() - t0, intent };
+  return { ids, scores: relevanceScores, elapsed_ms: Date.now() - t0, intent };
 }

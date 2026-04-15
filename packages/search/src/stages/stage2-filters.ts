@@ -30,6 +30,7 @@ const CREDIBILITY_WEIGHT = 0.8;
 export async function stage2ApplyFilters(
   candidateIds: string[],
   context: SearchContext | undefined,
+  stage1Scores?: Map<string, number>,
 ): Promise<Stage2Result> {
   const t0 = Date.now();
 
@@ -48,14 +49,22 @@ export async function stage2ApplyFilters(
     .filter((p) => p.payload != null)
     .map((p) => {
       const tool = p.payload as unknown as ToolNode;
+      const credScore = tool.health.credibility_score ?? 0;
+      const stage1Score = stage1Scores?.get(String(p.id));
+
+      // When Stage 1 provides actual relevance scores (sub-need path),
+      // use: relevance x sqrt(credibility). sqrt compresses popularity into
+      // a tiebreaker — zero relevance = zero final score regardless of stars.
+      // Fallback to rank-based formula for paths without scores (search_tools, main pipeline).
       const rank = candidateIds.indexOf(String(p.id));
       const rankScore = rank >= 0 ? 1 / (rank + 1) : 0;
-      const credScore = tool.health.credibility_score ?? 0;
-      return {
-        tool,
-        score:
-          (RANK_WEIGHT * rankScore + CREDIBILITY_WEIGHT * credScore) * (tool.search_weight ?? 1.0),
-      };
+      const score =
+        stage1Score !== undefined
+          ? stage1Score * Math.sqrt(credScore) * (tool.search_weight ?? 1.0)
+          : (RANK_WEIGHT * rankScore + CREDIBILITY_WEIGHT * credScore) *
+            (tool.search_weight ?? 1.0);
+
+      return { tool, score };
     })
     .sort((a, b) => b.score - a.score);
 
