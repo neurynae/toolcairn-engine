@@ -9,6 +9,9 @@ const INDEX_STREAM = 'toolpilot:index';
 const SEARCH_STREAM = 'toolpilot:search';
 const SCHEDULER_STREAM = 'toolpilot:scheduler';
 
+// 2-minute ceiling per job — used in both PEL drain and main loop.
+const JOB_TIMEOUT_MS = 120_000;
+
 export interface QueueHandlers {
   onIndexJob: (toolId: string, priority: number) => Promise<void>;
   onSearchEvent: (query: string, sessionId: string) => Promise<void>;
@@ -323,7 +326,12 @@ export async function startConsumer(
           try {
             if (msg.type === 'index-job') {
               const { toolId, priority } = msg.payload as { toolId: string; priority: number };
-              await handlers.onIndexJob(toolId, priority);
+              await Promise.race([
+                handlers.onIndexJob(toolId, priority),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('PEL job timeout')), JOB_TIMEOUT_MS),
+                ),
+              ]);
             } else if (msg.type === 'run-discovery' && handlers.onRunDiscovery) {
               await handlers.onRunDiscovery();
             } else if (msg.type === 'run-reindex' && handlers.onRunReindex) {
@@ -333,16 +341,16 @@ export async function startConsumer(
           } catch (e) {
             logger.error({ err: e, messageId: msg.id }, 'PEL drain: message processing failed');
           }
+          // XACK immediately after each message — same as main loop.
+          // Batch XACK at end of loop caused the whole drain to silently fail
+          // when redis.xack threw, leaving all messages permanently in the PEL.
+          try {
+            const r = getRedisClient();
+            await r.xack(msg._streamKey, group, msg._entryId);
+          } catch (e) {
+            logger.warn({ err: e, entryId: msg._entryId }, 'PEL drain: XACK failed');
+          }
         }
-        const redis = getRedisClient();
-        const indexIds = pelMessages
-          .filter((m) => m._streamKey === INDEX_STREAM)
-          .map((m) => m._entryId);
-        const schedulerIds = pelMessages
-          .filter((m) => m._streamKey === SCHEDULER_STREAM)
-          .map((m) => m._entryId);
-        if (indexIds.length > 0) await redis.xack(INDEX_STREAM, group, ...indexIds);
-        if (schedulerIds.length > 0) await redis.xack(SCHEDULER_STREAM, group, ...schedulerIds);
         pelMessages = await readFromPEL(group, consumer, 10);
       }
       logger.info('PEL drain complete');
@@ -385,10 +393,6 @@ export async function startConsumer(
       const indexMessages = messages.filter((m) => m.type === 'index-job');
       const otherMessages = messages.filter((m) => m.type !== 'index-job');
 
-      // 2-minute ceiling per job — prevents a hung download fetch or stalled
-      // GitHub API call from blocking the whole batch indefinitely.
-      const JOB_TIMEOUT_MS = 120_000;
-
       // Process index jobs in concurrent sliding windows.
       // Each message is XACK'd immediately after its own job completes (success,
       // failure, or timeout) rather than waiting for the whole batch. This means
@@ -409,10 +413,7 @@ export async function startConsumer(
                 ),
               ]);
             } catch (e) {
-              logger.error(
-                { err: e, messageId: msg.id, toolId },
-                'Index job failed (non-fatal)',
-              );
+              logger.error({ err: e, messageId: msg.id, toolId }, 'Index job failed (non-fatal)');
             }
             // XACK immediately — regardless of success / failure / timeout.
             // Per-message so one slow job can't strand the other 9 in the PEL.
