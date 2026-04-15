@@ -258,6 +258,8 @@ export class SearchPipeline {
     const bm25Index = await getCachedBm25Index(this);
     const vocabulary = await this.getTopicVocabulary();
     const topics = extractTopicsFromQuery(query, vocabulary);
+    const { extractLanguagesFromQuery: extractLangs } = await import('./language-concordance.js');
+    const targetLanguages = extractLangs(query);
 
     // Precompute topic-matching tool IDs from cached corpus
     const corpus = await this.getCachedCorpus();
@@ -267,7 +269,7 @@ export class SearchPipeline {
     // ── Level 1: Topic-filtered search ─────────────────────────────────────
     if (topics.length > 0 && topicMatchIds.size >= TOPIC_FILTER_MIN_POOL) {
       logger.debug(
-        { query, topics, matchCount: topicMatchIds.size },
+        { query, topics, targetLanguages, matchCount: topicMatchIds.size },
         'Sub-need Level 1: topic-filtered search',
       );
       const stage1 = await stage1HybridSearch(
@@ -278,6 +280,8 @@ export class SearchPipeline {
         bm25Index,
         topics,
         topicMatchIds,
+        targetLanguages,
+        corpus,
       );
       const stage2 = await stage2ApplyFilters(stage1.ids, context, stage1.scores);
       if (stage2.hits.length >= TOPIC_FILTER_MIN_RESULTS) {
@@ -293,15 +297,17 @@ export class SearchPipeline {
       );
     }
 
-    // ── Level 2: Unfiltered search with topic bonus ────────────────────────
-    // Run standard search, but multiply score by 1.5x for tools with topic overlap.
-    // This gives domain-relevant tools an advantage without hard-filtering.
+    // ── Level 2: Unfiltered search (no topic bonus — topics already served as filter) ──
     const stage1Unfiltered = await stage1HybridSearch(
       query,
       [],
       undefined,
       { bm25Weight: 1.0, vectorWeight: 1.0 },
       bm25Index,
+      undefined,
+      undefined,
+      targetLanguages,
+      corpus,
     );
     const stage2Unfiltered = await stage2ApplyFilters(
       stage1Unfiltered.ids,
@@ -309,22 +315,10 @@ export class SearchPipeline {
       stage1Unfiltered.scores,
     );
 
-    if (topics.length > 0 && topicMatchIds.size > 0) {
-      logger.debug(
-        { query, topics, matchCount: topicMatchIds.size },
-        'Sub-need Level 2: unfiltered + topic bonus',
-      );
-      const boosted = stage2Unfiltered.hits.map((h) => ({
-        tool: h.tool,
-        score: topicMatchIds.has(h.tool.id) ? h.score * TOPIC_BONUS_MULTIPLIER : h.score,
-      }));
-      boosted.sort((a, b) => b.score - a.score);
-      return boosted.slice(0, limit);
-    }
-
-    // ── Level 3: Pure unfiltered fallback ──────────────────────────────────
-    // No topic signals extracted — standard Stage 1+2 pipeline.
-    logger.debug({ query }, 'Sub-need Level 3: pure unfiltered search (no topic signals)');
+    // ── Level 2/3: Pure relevance × √credibility — no topic bonus ─────────
+    // Topics did their job as a filter (Level 1). In the unfiltered path,
+    // tools compete on description match + credibility alone.
+    logger.debug({ query, targetLanguages }, 'Sub-need Level 2: unfiltered search');
     return stage2Unfiltered.hits.slice(0, limit).map((h) => ({ tool: h.tool, score: h.score }));
   }
 

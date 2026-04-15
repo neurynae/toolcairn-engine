@@ -137,6 +137,7 @@ export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
 
   for (const [docId, doc] of index.docs) {
     let score = 0;
+    let bestTopicMatch = 0;
 
     for (const token of queryTokens) {
       const idfScore = index.idf.get(token) ?? 0;
@@ -150,20 +151,30 @@ export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
         const fieldLen = fieldTokens.length;
         const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (fieldLen / index.avgDocLen)));
 
-        // IDF-proportional name weight: distinctive names ("prisma", idf~9)
-        // get full 3.0 weight. Generic common-word names ("image", idf~3)
-        // get ~1.7. Self-calibrating from the corpus — no thresholds.
-        // Formula: nameWeight = 1.0 + 2.0 × (nameTokenIdf / maxIdf)
-        let weight = FIELD_WEIGHTS[field];
-        if (field === 'name') {
-          const nameIdf = index.idf.get(token) ?? 0;
-          const normalizedIdf = maxIdf > 0 ? nameIdf / maxIdf : 0;
-          weight = 1.0 + 2.0 * normalizedIdf;
-        }
+        if (field === 'topics') {
+          // Topics use BEST single match, not cumulative sum.
+          // One strong topic match ("orm" for ORM query) is the signal.
+          // 10 weak matches from verbose tagging shouldn't compound.
+          const tokenScore = idfScore * tfNorm * FIELD_WEIGHTS[field];
+          bestTopicMatch = Math.max(bestTopicMatch, tokenScore);
+        } else {
+          // IDF-proportional name weight: distinctive names ("prisma", idf~9)
+          // get full 3.0 weight. Generic common-word names ("image", idf~3)
+          // get ~1.7. Self-calibrating from the corpus — no thresholds.
+          let weight = FIELD_WEIGHTS[field];
+          if (field === 'name') {
+            const nameIdf = index.idf.get(token) ?? 0;
+            const normalizedIdf = maxIdf > 0 ? nameIdf / maxIdf : 0;
+            weight = 1.0 + 2.0 * normalizedIdf;
+          }
 
-        score += idfScore * tfNorm * weight;
+          score += idfScore * tfNorm * weight;
+        }
       }
     }
+
+    // Add the single best topic match (not the sum of all matches)
+    score += bestTopicMatch;
 
     if (score > 0) scores.set(docId, score);
   }
