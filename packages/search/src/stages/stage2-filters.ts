@@ -53,14 +53,19 @@ export async function stage2ApplyFilters(
       const stage1Score = stage1Scores?.get(String(p.id));
 
       // When Stage 1 provides actual relevance scores (sub-need path),
-      // use: relevance x sqrt(credibility). sqrt compresses popularity into
-      // a tiebreaker — zero relevance = zero final score regardless of stars.
+      // use: relevance x sqrt(credibility) x graphBoost. sqrt compresses
+      // popularity into a tiebreaker — zero relevance = zero final score
+      // regardless of stars. graphBoost (1.0–2.0) amplifies well-connected
+      // canonical tools without overriding relevance.
       // Fallback to rank-based formula for paths without scores (search_tools, main pipeline).
       const rank = candidateIds.indexOf(String(p.id));
       const rankScore = rank >= 0 ? 1 / (rank + 1) : 0;
       const score =
         stage1Score !== undefined
-          ? stage1Score * Math.sqrt(credScore) * (tool.search_weight ?? 1.0)
+          ? stage1Score *
+            Math.sqrt(credScore) *
+            (tool.search_weight ?? 1.0) *
+            computeGraphBoost(tool)
           : (RANK_WEIGHT * rankScore + CREDIBILITY_WEIGHT * credScore) *
             (tool.search_weight ?? 1.0);
 
@@ -137,4 +142,46 @@ function buildPayloadFilters(
   }
 
   return fns;
+}
+
+/**
+ * Compute a graph-based boost multiplier from ecosystem_centrality,
+ * pagerank_score, and is_canonical. Returns 1.0–2.0 range.
+ *
+ * - ecosystem_centrality: log-compressed (diminishing returns above ~50 edges)
+ * - pagerank_score: already 0–1, scaled up to be comparable
+ * - is_canonical: flat bonus for curated canonical tools
+ *
+ * Combined via self-weighted mean into a gentle amplifier that favors
+ * well-connected canonical tools without overriding relevance.
+ * Zero graph presence = 1.0 (no change).
+ */
+export function computeGraphBoost(tool: ToolNode): number {
+  // Extract centrality — handle neo4j Integer {low, high} format from Qdrant
+  const rawCentrality = tool.ecosystem_centrality;
+  const centrality =
+    typeof rawCentrality === 'number'
+      ? rawCentrality
+      : ((rawCentrality as { low?: number })?.low ?? 0);
+
+  // Log-compress centrality: diminishing returns above ~50 edges
+  // log(1) = 0, log(10) = 2.3, log(50) = 3.9, log(335) = 5.8, log(1000) = 6.9
+  // Normalize to 0–1 by dividing by log(1000) ≈ 6.9
+  const centralitySignal =
+    centrality > 0 ? Math.min(1.0, Math.log(centrality) / Math.log(1000)) : 0;
+
+  // PageRank: already 0–1 (typically 0–0.15 range), scale up to be comparable
+  const pagerankSignal = Math.min(1.0, (tool.pagerank_score ?? 0) * 5);
+
+  // Canonical bonus: small flat boost for curated canonical tools
+  const canonicalBonus = tool.is_canonical ? 0.15 : 0;
+
+  // Self-weighted mean of centrality and pagerank (biases toward stronger signal)
+  const sum = centralitySignal + pagerankSignal;
+  const graphScore =
+    sum > 0 ? (centralitySignal * centralitySignal + pagerankSignal * pagerankSignal) / sum : 0;
+
+  // Final boost: 1.0 (no graph) to 2.0 (maximum graph presence)
+  // graphScore ranges 0–1, canonicalBonus is 0 or 0.15
+  return 1.0 + Math.min(1.0, graphScore + canonicalBonus);
 }

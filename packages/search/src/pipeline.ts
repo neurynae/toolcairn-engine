@@ -285,11 +285,12 @@ export class SearchPipeline {
       );
       const stage2 = await stage2ApplyFilters(stage1.ids, context, stage1.scores);
       if (stage2.hits.length >= TOPIC_FILTER_MIN_RESULTS) {
+        const stage3 = await stage3GraphRerank(stage2);
         logger.debug(
-          { query, hitCount: stage2.hits.length },
-          'Sub-need Level 1 success: topic-filtered results sufficient',
+          { query, hitCount: stage3.results.length },
+          'Sub-need Level 1 success: topic-filtered + graph reranked',
         );
-        return stage2.hits.slice(0, limit).map((h) => ({ tool: h.tool, score: h.score }));
+        return stage3.results.slice(0, limit);
       }
       logger.debug(
         { query, hitCount: stage2.hits.length },
@@ -315,11 +316,12 @@ export class SearchPipeline {
       stage1Unfiltered.scores,
     );
 
-    // ── Level 2/3: Pure relevance × √credibility — no topic bonus ─────────
+    // ── Level 2: Unfiltered + Stage 3 graph rerank ─────────────────────────
     // Topics did their job as a filter (Level 1). In the unfiltered path,
-    // tools compete on description match + credibility alone.
-    logger.debug({ query, targetLanguages }, 'Sub-need Level 2: unfiltered search');
-    return stage2Unfiltered.hits.slice(0, limit).map((h) => ({ tool: h.tool, score: h.score }));
+    // tools compete on description match + credibility + graph connectivity.
+    const stage3Unfiltered = await stage3GraphRerank(stage2Unfiltered);
+    logger.debug({ query, targetLanguages }, 'Sub-need Level 2: unfiltered + graph reranked');
+    return stage3Unfiltered.results.slice(0, limit);
   }
 
   /**
