@@ -1,4 +1,4 @@
-import type { ToolNode } from '@toolcairn/core';
+import type { PackageChannel, ToolNode } from '@toolcairn/core';
 import { createLogger } from '@toolcairn/errors';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
 import { ClarificationEngine } from './clarification/engine.js';
@@ -278,7 +278,29 @@ export class SearchPipeline {
 
       const points = result.points as Array<{ payload: Record<string, unknown> | null }>;
       tools.push(
-        ...points.filter((p) => p.payload != null).map((p) => p.payload as unknown as ToolNode),
+        ...points
+          .filter((p) => p.payload != null)
+          .map((p) => {
+            const t = p.payload as unknown as ToolNode;
+            // Qdrant payloads may still hold the old Record<string,string> format
+            // for package_managers. Normalize to PackageChannel[] so all downstream
+            // code (BM25, stage0-exact) can safely call .flatMap / .some on it.
+            const raw = t.package_managers as unknown;
+            if (!Array.isArray(raw)) {
+              t.package_managers =
+                raw && typeof raw === 'object'
+                  ? Object.entries(raw as Record<string, string>).map(
+                      ([registry, pkg]): PackageChannel => ({
+                        registry,
+                        packageName: pkg,
+                        installCommand: '',
+                        weeklyDownloads: 0,
+                      }),
+                    )
+                  : [];
+            }
+            return t;
+          }),
       );
 
       const nextOffset = result.next_page_offset as string | number | null | undefined;
