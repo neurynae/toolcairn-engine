@@ -409,18 +409,24 @@ export class SearchPipeline {
 
     // ── BM25→vector fallback ───────────────────────────────────────────
     // If BM25 top score is weak (compound keywords didn't match), append
-    // vector results to the BM25 ranked list so they get a chance in the
-    // BM25 leg of RRF. When BM25 works well, this is a no-op.
+    // high-confidence vector results to the BM25 ranked list so they get
+    // a chance in the BM25 leg of RRF. Only tools with cosine similarity
+    // ≥ 0.65 are included — this filters noise while catching genuine
+    // semantic matches for compound keywords BM25 couldn't tokenize.
     const BM25_WEAK_THRESHOLD = 2.0;
+    const VECTOR_FALLBACK_MIN_SIMILARITY = 0.65;
     const topBm25Raw = bm25Results[0]?.score ?? 0;
     let effectiveBm25Ids = bm25Ids;
     if (topBm25Raw < BM25_WEAK_THRESHOLD && vectorIds.length > 0) {
       const bm25IdSet = new Set(bm25Ids);
-      const fallbackIds = vectorIds.filter((id) => !bm25IdSet.has(id));
+      const fallbackIds = vectorIds.filter(
+        (id) =>
+          !bm25IdSet.has(id) && (rawVectorScores.get(id) ?? 0) >= VECTOR_FALLBACK_MIN_SIMILARITY,
+      );
       effectiveBm25Ids = [...bm25Ids, ...fallbackIds];
       logger.debug(
         { topBm25Raw, fallbackCount: fallbackIds.length },
-        'BM25 weak — appending vector fallback to BM25 list',
+        'BM25 weak — appending high-confidence vector fallback to BM25 list',
       );
     }
 
