@@ -43,6 +43,24 @@ function tokenize(text: string): string[] {
 }
 
 /**
+ * Tokenize keyword_sentence field: splits on commas only, preserving
+ * hyphens, underscores, and concatenated words as single tokens.
+ *
+ * "database_indexing, audio-intelligence-lab, orm" →
+ * ["database_indexing", "audio-intelligence-lab", "orm"]
+ *
+ * Compound keywords carry domain meaning (database_indexing ≠ database + indexing).
+ * When BM25 can't match compounds, vector search catches them semantically.
+ */
+function tokenizeKeywords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t.length > 1);
+}
+
+/**
  * Tokenize a tool name into:
  *   - `name` field: the full compound name (single token) — weight 3.0
  *   - `nameParts` field: split components — weight 1.5
@@ -77,7 +95,7 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
     const langTokens = tokenize(
       [tool.language, ...(tool.languages ?? [])].filter(Boolean).join(' '),
     );
-    const kwTokens = tokenize(tool.keyword_sentence ?? '');
+    const kwTokens = tokenizeKeywords(tool.keyword_sentence ?? '');
     const len =
       nameTokens.length +
       namePartTokens.length +
@@ -138,6 +156,7 @@ function computeMaxIdf(corpusSize: number): number {
 
 export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
   const queryTokens = tokenize(query);
+  const queryKwTokens = tokenizeKeywords(query);
   const scores = new Map<string, number>();
   const maxIdf = computeMaxIdf(index.docs.size);
 
@@ -145,11 +164,13 @@ export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
     let score = 0;
     let bestTopicMatch = 0;
 
+    // ── Standard fields: use standard query tokens ──────────────────────
     for (const token of queryTokens) {
       const idfScore = index.idf.get(token) ?? 0;
       if (idfScore === 0) continue;
 
       for (const field of Object.keys(FIELD_WEIGHTS) as Field[]) {
+        if (field === 'keywordSentence') continue; // handled separately below
         const fieldTokens = doc[field];
         const tf = fieldTokens.filter((t) => t === token).length;
         if (tf === 0) continue;
@@ -158,30 +179,38 @@ export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
         const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (fieldLen / index.avgDocLen)));
 
         if (field === 'topics') {
-          // Topics use BEST single match, not cumulative sum.
-          // One strong topic match ("orm" for ORM query) is the signal.
-          // 10 weak matches from verbose tagging shouldn't compound.
           const tokenScore = idfScore * tfNorm * FIELD_WEIGHTS[field];
           bestTopicMatch = Math.max(bestTopicMatch, tokenScore);
         } else {
-          // IDF-proportional name weight: distinctive names ("prisma", idf~9)
-          // get full 3.0 weight. Generic common-word names ("image", idf~3)
-          // get ~1.7. Self-calibrating from the corpus — no thresholds.
           let weight = FIELD_WEIGHTS[field];
           if (field === 'name') {
             const nameIdf = index.idf.get(token) ?? 0;
             const normalizedIdf = maxIdf > 0 ? nameIdf / maxIdf : 0;
             weight = 1.0 + 2.0 * normalizedIdf;
           }
-
           score += idfScore * tfNorm * weight;
         }
       }
     }
 
-    // Add the single best topic match (not the sum of all matches)
-    score += bestTopicMatch;
+    // ── keywordSentence: use keyword-aware query tokens ─────────────────
+    // Compound keywords (database_indexing, audio-intelligence-lab) are
+    // single tokens — they only match when the query also contains the
+    // exact compound. Vector fallback handles non-exact matches.
+    for (const token of queryKwTokens) {
+      const idfScore = index.idf.get(token) ?? 0;
+      if (idfScore === 0) continue;
 
+      const fieldTokens = doc.keywordSentence;
+      const tf = fieldTokens.filter((t) => t === token).length;
+      if (tf === 0) continue;
+
+      const fieldLen = fieldTokens.length;
+      const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (fieldLen / index.avgDocLen)));
+      score += idfScore * tfNorm * FIELD_WEIGHTS.keywordSentence;
+    }
+
+    score += bestTopicMatch;
     if (score > 0) scores.set(docId, score);
   }
 

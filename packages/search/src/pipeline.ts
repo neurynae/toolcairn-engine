@@ -324,14 +324,17 @@ export class SearchPipeline {
   }
 
   /**
-   * Keyword-sentence search: BM25-dominant retrieval using LLM-generated keywords.
+   * Keyword-sentence search with BM25→vector fallback.
    *
-   * The keyword_sentence field in BM25 (weight 4.0) makes keyword-to-keyword
-   * matching the dominant signal. Tools without keyword_sentence still match
-   * on name/description/topics at lower weight.
+   * Implements its own Stage 1 instead of delegating to stage1HybridSearch,
+   * because keyword search needs:
+   * 1. Keyword-aware BM25 tokenization (compounds preserved as single tokens)
+   * 2. Vector fallback when BM25 can't match compounds (if BM25 is weak,
+   *    vector results are appended to the BM25 ranked list as a safety net)
+   * 3. RRF at 1.2:0.8 (slight BM25 favor — field weight 4.0 already dominates)
    *
-   * No topic filtering needed — the keywords themselves are specific enough.
-   * Language concordance extracted from the keyword_sentence content.
+   * Flow: BM25 → [vector fallback if weak] → vector search → RRF 1.2:0.8
+   *       → language concordance → relevance scores → Stage 2
    */
   async runKeywordSearch(
     keywordSentence: string,
@@ -339,31 +342,137 @@ export class SearchPipeline {
     limit: number,
   ): Promise<ToolScoredResult[]> {
     const bm25Index = await getCachedBm25Index(this);
-    const { extractLanguagesFromQuery: extractLangs } = await import('./language-concordance.js');
-    const targetLanguages = extractLangs(keywordSentence);
     const corpus = await this.getCachedCorpus();
 
-    // Stage 1: BM25-heavy hybrid search.
-    // Keywords are precise tool-vocabulary terms → BM25 matching is reliable.
-    // Vector adds semantic proximity but is de-emphasized.
-    const stage1 = await stage1HybridSearch(
-      keywordSentence,
-      [], // allTools unused when prebuiltBm25Index provided
-      undefined, // no lookup maps
-      { bm25Weight: 1.5, vectorWeight: 0.5 }, // BM25 dominant
-      bm25Index,
-      undefined, // no topic filter — keywords ARE the filter
-      undefined, // no topic match IDs
-      targetLanguages,
-      corpus,
+    // ── BM25 search ────────────────────────────────────────────────────
+    const {
+      bm25Search,
+      embedText,
+      qdrantClient: getClient,
+      COLLECTION_NAME: collection,
+      rrfFusion,
+    } = await import('@toolcairn/vector');
+    const bm25Results = bm25Search(keywordSentence, bm25Index);
+    const bm25Ids = bm25Results.map((r) => r.id);
+
+    // BM25 score normalization (saturation: score / (score + median))
+    const nonZeroBm25 = bm25Results
+      .filter((r) => r.score > 0)
+      .map((r) => r.score)
+      .sort((a, b) => a - b);
+    const medianBm25 =
+      nonZeroBm25.length > 0 ? (nonZeroBm25[Math.floor(nonZeroBm25.length / 2)] ?? 1) : 1;
+    const normalizedBm25 = new Map<string, number>();
+    for (const r of bm25Results) {
+      normalizedBm25.set(r.id, r.score / (r.score + medianBm25));
+    }
+
+    // ── Vector search (Nomic embed + Qdrant) ───────────────────────────
+    let queryVector: number[] | null = null;
+    try {
+      queryVector = await embedText(keywordSentence, 'search_query');
+    } catch {
+      // No NOMIC_API_KEY — BM25-only mode
+    }
+
+    const vectorIds: string[] = [];
+    const rawVectorScores = new Map<string, number>();
+    if (queryVector) {
+      try {
+        const vectorResults = await getClient().search(collection, {
+          vector: queryVector,
+          limit: 150,
+          with_payload: false,
+        });
+        for (const r of vectorResults as Array<{
+          id: string | number;
+          score: number;
+        }>) {
+          vectorIds.push(String(r.id));
+          rawVectorScores.set(String(r.id), r.score);
+        }
+      } catch {
+        // Vector search unavailable — BM25-only mode
+      }
+    }
+
+    // Vector score normalization (min-max)
+    const normalizedVector = new Map<string, number>();
+    if (rawVectorScores.size > 0) {
+      const vals = [...rawVectorScores.values()];
+      const minV = Math.min(...vals);
+      const range = Math.max(...vals) - minV || 1;
+      for (const [id, s] of rawVectorScores) {
+        normalizedVector.set(id, (s - minV) / range);
+      }
+    }
+
+    // ── BM25→vector fallback ───────────────────────────────────────────
+    // If BM25 top score is weak (compound keywords didn't match), append
+    // vector results to the BM25 ranked list so they get a chance in the
+    // BM25 leg of RRF. When BM25 works well, this is a no-op.
+    const BM25_WEAK_THRESHOLD = 2.0;
+    const topBm25Raw = bm25Results[0]?.score ?? 0;
+    let effectiveBm25Ids = bm25Ids;
+    if (topBm25Raw < BM25_WEAK_THRESHOLD && vectorIds.length > 0) {
+      const bm25IdSet = new Set(bm25Ids);
+      const fallbackIds = vectorIds.filter((id) => !bm25IdSet.has(id));
+      effectiveBm25Ids = [...bm25Ids, ...fallbackIds];
+      logger.debug(
+        { topBm25Raw, fallbackCount: fallbackIds.length },
+        'BM25 weak — appending vector fallback to BM25 list',
+      );
+    }
+
+    // ── RRF fusion at 1.2:0.8 (slight BM25 favor) ─────────────────────
+    const fused =
+      vectorIds.length > 0
+        ? rrfFusion([effectiveBm25Ids, vectorIds], [1.2, 0.8])
+        : effectiveBm25Ids;
+
+    // ── Combined relevance: (b² + v²) / (b + v) ───────────────────────
+    const relevanceScores = new Map<string, number>();
+    const allScoredIds = new Set([...normalizedBm25.keys(), ...normalizedVector.keys()]);
+    for (const id of allScoredIds) {
+      const b = normalizedBm25.get(id) ?? 0;
+      const v = normalizedVector.get(id) ?? 0;
+      const sum = b + v;
+      relevanceScores.set(id, sum > 0 ? (b * b + v * v) / sum : 0);
+    }
+
+    // ── Language concordance penalty ───────────────────────────────────
+    const { extractLanguagesFromQuery: extractLangs, computeLangConcordance } = await import(
+      './language-concordance.js'
     );
+    const targetLanguages = extractLangs(keywordSentence);
+    if (targetLanguages.length > 0) {
+      const toolMap = new Map(corpus.map((t) => [t.id, t]));
+      for (const [id, score] of relevanceScores) {
+        const tool = toolMap.get(id);
+        if (tool) {
+          const concordance = computeLangConcordance(
+            tool.language,
+            tool.languages ?? [],
+            targetLanguages,
+          );
+          relevanceScores.set(id, score * concordance);
+        }
+      }
+    }
 
-    // Stage 2: credibility scoring (relevance × √credibility × search_weight)
-    const stage2 = await stage2ApplyFilters(stage1.ids, context, stage1.scores);
+    // ── Stage 2: credibility scoring ───────────────────────────────────
+    const stage2 = await stage2ApplyFilters(fused, context, relevanceScores);
 
-    // Graph multiplier (1.0-2.0×) — same as existing sub-need path
+    // Graph multiplier (1.0–2.0×)
     const results = await this.applyGraphMultiplier(stage2.hits);
-    logger.debug({ keywordSentence, hitCount: results.length }, 'Keyword search complete');
+    logger.debug(
+      {
+        keywordSentence: keywordSentence.slice(0, 80),
+        hitCount: results.length,
+        bm25Weak: topBm25Raw < BM25_WEAK_THRESHOLD,
+      },
+      'Keyword search complete',
+    );
     return results.slice(0, limit);
   }
 
