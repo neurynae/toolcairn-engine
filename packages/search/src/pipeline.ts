@@ -324,6 +324,50 @@ export class SearchPipeline {
   }
 
   /**
+   * Keyword-sentence search: BM25-dominant retrieval using LLM-generated keywords.
+   *
+   * The keyword_sentence field in BM25 (weight 4.0) makes keyword-to-keyword
+   * matching the dominant signal. Tools without keyword_sentence still match
+   * on name/description/topics at lower weight.
+   *
+   * No topic filtering needed — the keywords themselves are specific enough.
+   * Language concordance extracted from the keyword_sentence content.
+   */
+  async runKeywordSearch(
+    keywordSentence: string,
+    context: SearchContext | undefined,
+    limit: number,
+  ): Promise<ToolScoredResult[]> {
+    const bm25Index = await getCachedBm25Index(this);
+    const { extractLanguagesFromQuery: extractLangs } = await import('./language-concordance.js');
+    const targetLanguages = extractLangs(keywordSentence);
+    const corpus = await this.getCachedCorpus();
+
+    // Stage 1: BM25-heavy hybrid search.
+    // Keywords are precise tool-vocabulary terms → BM25 matching is reliable.
+    // Vector adds semantic proximity but is de-emphasized.
+    const stage1 = await stage1HybridSearch(
+      keywordSentence,
+      [], // allTools unused when prebuiltBm25Index provided
+      undefined, // no lookup maps
+      { bm25Weight: 1.5, vectorWeight: 0.5 }, // BM25 dominant
+      bm25Index,
+      undefined, // no topic filter — keywords ARE the filter
+      undefined, // no topic match IDs
+      targetLanguages,
+      corpus,
+    );
+
+    // Stage 2: credibility scoring (relevance × √credibility × search_weight)
+    const stage2 = await stage2ApplyFilters(stage1.ids, context, stage1.scores);
+
+    // Graph multiplier (1.0-2.0×) — same as existing sub-need path
+    const results = await this.applyGraphMultiplier(stage2.hits);
+    logger.debug({ keywordSentence, hitCount: results.length }, 'Keyword search complete');
+    return results.slice(0, limit);
+  }
+
+  /**
    * Query Memgraph for live graph connectivity scores and apply as a multiplier
    * on Stage 2 results. Uses the same Cypher query as Stage 3 (edge weights,
    * use-case overlap, centrality, pagerank) but applies as a multiplicative

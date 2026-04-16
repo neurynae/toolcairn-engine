@@ -9,6 +9,7 @@ const FIELD_WEIGHTS = {
   nameParts: 1.5, // split components — partial match (e.g. "vue", "router")
   packageNames: 2.5, // npm/pip/cargo canonical name
   description: 1.0,
+  keywordSentence: 4.0, // LLM-generated keywords — dominant search signal
   topics: 0.5,
   language: 1.0, // programming language / ecosystem signal
 } as const;
@@ -21,6 +22,7 @@ interface DocTokens {
   nameParts: string[]; // [split name components, excluding the full name]
   packageNames: string[];
   description: string[];
+  keywordSentence: string[]; // LLM-generated keyword tokens from README analysis
   topics: string[];
   language: string[]; // programming language tokens
   len: number;
@@ -75,11 +77,13 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
     const langTokens = tokenize(
       [tool.language, ...(tool.languages ?? [])].filter(Boolean).join(' '),
     );
+    const kwTokens = tokenize(tool.keyword_sentence ?? '');
     const len =
       nameTokens.length +
       namePartTokens.length +
       pkgTokens.length +
       descTokens.length +
+      kwTokens.length +
       topicTokens.length +
       langTokens.length;
 
@@ -89,6 +93,7 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
       nameParts: namePartTokens,
       packageNames: pkgTokens,
       description: descTokens,
+      keywordSentence: kwTokens,
       topics: topicTokens,
       language: langTokens,
       len,
@@ -101,6 +106,7 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
       ...namePartTokens,
       ...pkgTokens,
       ...descTokens,
+      ...kwTokens,
       ...topicTokens,
       ...langTokens,
     ]) {

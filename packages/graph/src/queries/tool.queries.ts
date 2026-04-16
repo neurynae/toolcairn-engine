@@ -560,7 +560,7 @@ export interface PairwiseEdge {
 }
 
 export const GET_PAIRWISE_EDGES = {
-  text: `MATCH (a:Tool)-[e:INTEGRATES_WITH|COMPATIBLE_WITH|POPULAR_WITH|REPLACES|CONFLICTS_WITH|CO_OCCURS_WITH]-(b:Tool)
+  text: `MATCH (a:Tool)-[e:INTEGRATES_WITH|COMPATIBLE_WITH|POPULAR_WITH|REPLACES|CONFLICTS_WITH|CO_OCCURS_WITH|REQUIRES]-(b:Tool)
 WHERE a.name IN $names AND b.name IN $names AND a.name < b.name
 RETURN a.name AS source, b.name AS target, type(e) AS edge_type,
        CASE WHEN e.last_verified IS NULL THEN coalesce(e.weight, 0.5)

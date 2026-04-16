@@ -65,11 +65,11 @@ ${args.prompt}
 ${projectContext}${languageContext}${frameworkContext}
 
 For each distinct functional layer, output a JSON object with:
-- "need": the specific technical role this layer fills
-- "tool_category": the precise technical category name used in this ecosystem (specific noun phrase, not "platform", "solution", or "system")
+- "sub_need_type": the stack layer type as a 1-3 word noun phrase (e.g. "database", "auth", "web-framework", "cache", "message-queue"). Be specific.
+- "keyword_sentence": 10-20 comma-separated lowercase keywords that a developer tool in this category would use to describe itself in its README. Include: the tool category, primary capabilities, ecosystem terms, technical nouns. Do NOT include specific tool names. Do NOT include generic words like "open source", "platform", "service", "solution".
+  Example: for an ORM layer: "orm, database, schema, migration, query builder, postgresql, mysql, typescript, data modeling, relations"
 - "use_cases": array of 1-3 relevant tags from [${categoryList}]
 - "constraints": object with: language (if known), deployment_model (self-hosted/cloud/serverless)
-- "search_query": 5-10 words describing this tool as it describes itself in its own documentation. Use the tool_category + ecosystem + primary technical characteristics. Never name specific tools or use generic words like "open source", "platform", "service", "solution".
 - "why": one sentence on why this layer is needed
 - "is_likely_proprietary": true if this is commonly a paid/managed service (${PROPRIETARY_PRONE_CATEGORIES.join(', ')})
 
@@ -100,8 +100,8 @@ Output ONLY a valid JSON array. No explanation.`;
             '',
             '2. Call get_stack with:',
             '   - use_case: the original developer request',
-            '   - sub_needs: combine tool_category + search_query for each requirement into a single precise query per layer',
-            '     The tool_category anchors the search to the right tool type; the search_query adds ecosystem and function context.',
+            '   - sub_needs: for each requirement, pass {sub_need_type: req.sub_need_type, keyword_sentence: req.keyword_sentence}',
+            '     The sub_need_type assigns the tool to its stack layer; the keyword_sentence enables keyword matching against the tool database.',
             '',
             '3. For proprietary layers (is_likely_proprietary: true): note them separately — they may not be in the index.',
             '',

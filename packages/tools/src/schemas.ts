@@ -25,12 +25,28 @@ export const reportOutcomeSchema = {
 export const getStackSchema = {
   use_case: z.string().min(1),
   sub_needs: z
-    .array(z.string().min(1))
+    .array(
+      z.union([
+        z.string().min(1),
+        z.object({
+          sub_need_type: z
+            .string()
+            .min(1)
+            .max(50)
+            .describe('Stack layer type, e.g. "database", "auth", "web-framework"'),
+          keyword_sentence: z
+            .string()
+            .min(1)
+            .max(500)
+            .describe('Comma-separated keywords matching tool vocabulary, max 20 keywords'),
+        }),
+      ]),
+    )
     .min(1)
     .max(8)
     .optional()
     .describe(
-      'Decomposed sub-queries from refine_requirement. Each is a precise 2-8 word search query for one stack layer (e.g. "mobile backend API framework", "push notification service"). When provided, get_stack runs a targeted search per sub-need instead of a single broad search — dramatically improving accuracy for multi-concept queries.',
+      'Structured sub-needs from refine_requirement. Each is {sub_need_type, keyword_sentence} for keyword-matched search, or a plain string (legacy). The structured format dramatically improves accuracy.',
     ),
   constraints: z
     .object({

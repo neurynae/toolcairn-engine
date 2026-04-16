@@ -141,6 +141,13 @@ export interface ToolNode {
    */
   is_canonical: boolean;
   /**
+   * LLM-generated keyword sentence from README analysis.
+   * Comma-separated keywords bridging the vocabulary gap between
+   * developer search queries and tool descriptions.
+   * Set by upload-keywords.ts script. Never overwritten on re-index.
+   */
+  keyword_sentence?: string;
+  /**
    * Grace period for personal repos (500-999 stars).
    * ISO date when current grace window expires. Null = not in grace period.
    * Set by cleanup script only — never overwritten by reindex.
