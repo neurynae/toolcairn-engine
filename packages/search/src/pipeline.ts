@@ -355,16 +355,18 @@ export class SearchPipeline {
     const bm25Results = bm25Search(keywordSentence, bm25Index);
     const bm25Ids = bm25Results.map((r) => r.id);
 
-    // BM25 score normalization (saturation: score / (score + median))
-    const nonZeroBm25 = bm25Results
-      .filter((r) => r.score > 0)
-      .map((r) => r.score)
-      .sort((a, b) => a - b);
-    const medianBm25 =
-      nonZeroBm25.length > 0 ? (nonZeroBm25[Math.floor(nonZeroBm25.length / 2)] ?? 1) : 1;
+    // BM25 score normalization (min-max instead of saturation).
+    // Saturation score/(score+median) compresses all high scores to 0.95+,
+    // destroying the 2x score advantage that 11/11 keyword matches should
+    // have over 3/11 matches. Min-max preserves the actual score ratios.
     const normalizedBm25 = new Map<string, number>();
-    for (const r of bm25Results) {
-      normalizedBm25.set(r.id, r.score / (r.score + medianBm25));
+    if (bm25Results.length > 0) {
+      const maxBm25 = bm25Results[0]?.score ?? 1; // already sorted desc
+      const minBm25 = bm25Results[bm25Results.length - 1]?.score ?? 0;
+      const bm25Range = maxBm25 - minBm25 || 1;
+      for (const r of bm25Results) {
+        normalizedBm25.set(r.id, (r.score - minBm25) / bm25Range);
+      }
     }
 
     // ── Vector search (Nomic embed + Qdrant) ───────────────────────────
@@ -469,17 +471,16 @@ export class SearchPipeline {
     // ── Stage 2: credibility scoring ───────────────────────────────────
     const stage2 = await stage2ApplyFilters(fused, context, relevanceScores);
 
-    // Graph multiplier (1.0–2.0×)
-    const results = await this.applyGraphMultiplier(stage2.hits);
+    // No graph multiplier for keyword search — keyword relevance IS the
+    // primary signal. Graph verification (REPLACES/INTEGRATES_WITH/REQUIRES)
+    // is handled in Stage 3 by the get_stack handler. The graph multiplier
+    // amplifies hub tools (React, Node.js) via connectivity, which overwhelms
+    // keyword match scores for less-connected but precisely matching tools.
     logger.debug(
-      {
-        keywordSentence: keywordSentence.slice(0, 80),
-        hitCount: results.length,
-        bm25Weak: topBm25Raw < BM25_WEAK_THRESHOLD,
-      },
+      { keywordSentence: keywordSentence.slice(0, 80), hitCount: stage2.hits.length },
       'Keyword search complete',
     );
-    return results.slice(0, limit);
+    return stage2.hits.map((h) => ({ tool: h.tool, score: h.score })).slice(0, limit);
   }
 
   /**
