@@ -290,48 +290,38 @@ export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
       }
     }
 
-    // ── keywordSentence: compound + collapsed matching (no double counting) ─
-    // For each query keyword token, try exact compound match first (weight 4.0).
-    // If no exact match, try collapsed form (strip separators) at same weight.
-    // next.js ↔ nextjs, database_indexing ↔ database indexing match via collapsed.
-    // One match per query token — collapsed never double-counts an exact match.
+    // ── keywordSentence: compound + collapsed matching (flat IDF) ────────
+    // Flat IDF (1.0) for keyword field: every keyword match contributes
+    // equally regardless of corpus frequency. Match COUNT dominates over
+    // individual term rarity. "react" matching is just as intentional as
+    // "ssg" matching — both are curated keywords, not natural language.
+    // IDF-based scoring remains for name/description/topics fields.
     const kwFieldTokens = doc.keywordSentence;
     const kwFieldLen = kwFieldTokens.length;
     const kwCollapsedDoc = kwFieldTokens.map(collapseToken);
     for (const token of queryKwTokens) {
       // Try exact compound match first
       let tf = kwFieldTokens.filter((t) => t === token).length;
-      let idfToken = token;
       if (tf === 0) {
         // Fallback: try collapsed form (next.js → nextjs)
         const collapsed = collapseToken(token);
         tf = kwCollapsedDoc.filter((t) => t === collapsed).length;
-        idfToken = collapsed;
       }
       if (tf === 0) continue;
-      const idfScore = index.idf.get(idfToken) ?? index.idf.get(token) ?? 0;
-      if (idfScore === 0) continue;
       const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (kwFieldLen / index.avgDocLen)));
-      score += idfScore * tfNorm * FIELD_WEIGHTS.keywordSentence;
+      score += tfNorm * FIELD_WEIGHTS.keywordSentence; // flat IDF: no idfScore multiplier
     }
 
-    // ── keywordSentence: word-level tokens (partial match, half weight) ─
-    // Catches cross-format matches: query "data processing" (compound) splits
-    // to words "data", "processing" which match tool keywords "data_processing"
-    // (which tokenizeKeywords stores as single token, but its individual words
-    // are also indexed via standard tokenize in the doc's keyword tokens).
-    // This pass only runs for words NOT already matched as compounds above.
+    // ── keywordSentence: word-level tokens (partial match, half weight, flat IDF) ─
+    // Catches cross-format + compound-split matches. Also uses flat IDF.
     if (queryKwWordTokens.length > 0) {
-      // Build word-level tokens from doc's keyword_sentence for matching
       const kwDocWords = tokenize(kwFieldTokens.join(' '));
       for (const token of queryKwWordTokens) {
-        const idfScore = index.idf.get(token) ?? 0;
-        if (idfScore === 0) continue;
         const tf = kwDocWords.filter((t) => t === token).length;
         if (tf === 0) continue;
         const docWordLen = kwDocWords.length;
         const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (docWordLen / index.avgDocLen)));
-        score += idfScore * tfNorm * KW_PARTIAL_WEIGHT;
+        score += tfNorm * KW_PARTIAL_WEIGHT; // flat IDF
       }
     }
 
