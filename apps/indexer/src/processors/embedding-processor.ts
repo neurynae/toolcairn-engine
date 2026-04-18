@@ -10,7 +10,7 @@ const logger = createLogger({ name: '@toolcairn/indexer:embedding-processor' });
  */
 export async function generateEmbedding(tool: ToolNode): Promise<number[]> {
   try {
-    const text = toolEmbedText(tool.name, tool.description, tool.topics);
+    const text = toolEmbedText(tool.name, tool.description, tool.topics, tool.keyword_sentence);
     logger.debug({ toolName: tool.name }, 'Generating embedding');
 
     const vectors = await embedBatch([text]);
@@ -37,7 +37,9 @@ export async function generateEmbedding(tool: ToolNode): Promise<number[]> {
 export async function generateEmbeddingBatch(nodes: ToolNode[]): Promise<number[][]> {
   if (nodes.length === 0) return [];
 
-  const texts = nodes.map((node) => toolEmbedText(node.name, node.description, node.topics));
+  const texts = nodes.map((node) =>
+    toolEmbedText(node.name, node.description, node.topics, node.keyword_sentence),
+  );
   logger.debug({ count: nodes.length }, 'Generating batch embeddings');
 
   try {

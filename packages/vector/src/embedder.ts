@@ -56,10 +56,17 @@ export async function embedBatch(
 }
 
 /** Canonical text for embedding a ToolNode.
- * Uses topics instead of category — category is a derived field that can
- * be wrong; topics are the ground truth from GitHub maintainers.
+ * Combines name, description, keyword_sentence, and topics into a single
+ * text for vector embedding. keyword_sentence provides the keyword-rich
+ * signal that bridges vocabulary mismatch between queries and descriptions.
  */
-export function toolEmbedText(name: string, description: string, topics?: string[]): string {
+export function toolEmbedText(
+  name: string,
+  description: string,
+  topics?: string[],
+  keywordSentence?: string,
+): string {
+  const kwText = keywordSentence ? `\n${keywordSentence}` : '';
   const topicText = topics && topics.length > 0 ? `\nTopics: ${topics.join(', ')}` : '';
-  return `${name}\n${description}${topicText}`;
+  return `${name}\n${description}${kwText}${topicText}`;
 }
