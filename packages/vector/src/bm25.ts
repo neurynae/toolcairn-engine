@@ -172,6 +172,64 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
     idf.set(term, Math.log((N - freq + 0.5) / (freq + 0.5) + 1));
   }
 
+  // ── Second pass: split concatenated keyword tokens using corpus vocabulary ─
+  // 20% of tools have concatenated keywords from the LLM (e.g. "serverrendering"
+  // instead of "server rendering"). Use the df vocabulary (all known words from
+  // names, descriptions, topics) to decompose them. "serverrendering" → if
+  // "server" and "rendering" are both known words → add them as extra tokens.
+  // Greedy left-to-right longest-match ensures quality splits.
+  const MIN_CONCAT_LEN = 8;
+  const MIN_WORD_LEN = 3;
+  const vocabSet = new Set(df.keys());
+
+  function splitConcatenated(token: string): string[] {
+    if (token.length < MIN_CONCAT_LEN) return [];
+    if (/[\s\-_.]/.test(token)) return []; // has separators, not concatenated
+    // Greedy left-to-right: find longest known prefix, recurse on remainder
+    const parts: string[] = [];
+    let remaining = token;
+    while (remaining.length >= MIN_WORD_LEN) {
+      let found = false;
+      // Try longest prefix first (down to MIN_WORD_LEN)
+      for (let len = Math.min(remaining.length, 20); len >= MIN_WORD_LEN; len--) {
+        const prefix = remaining.slice(0, len);
+        if (
+          vocabSet.has(prefix) &&
+          (remaining.length - len === 0 || remaining.length - len >= MIN_WORD_LEN)
+        ) {
+          parts.push(prefix);
+          remaining = remaining.slice(len);
+          found = true;
+          break;
+        }
+      }
+      if (!found) break; // can't split further
+    }
+    // Only return if we split into 2+ parts and consumed most of the token
+    if (parts.length >= 2 && remaining.length <= 2) {
+      return parts;
+    }
+    return [];
+  }
+
+  for (const [, doc] of docs) {
+    const extraTokens: string[] = [];
+    for (const kw of doc.keywordSentence) {
+      const parts = splitConcatenated(kw);
+      for (const part of parts) {
+        if (!doc.keywordSentence.includes(part)) {
+          extraTokens.push(part);
+        }
+      }
+    }
+    if (extraTokens.length > 0) {
+      doc.keywordSentence.push(...extraTokens);
+      doc.len += extraTokens.length;
+      totalLen += extraTokens.length;
+      // Update df for new tokens (they already exist in vocab, df stays correct)
+    }
+  }
+
   const avgDocLen = N > 0 ? totalLen / N : 1;
   return { idf, df, docs, avgDocLen };
 }
