@@ -61,6 +61,37 @@ function tokenizeKeywords(text: string): string[] {
 }
 
 /**
+ * Collapse separators (hyphens, underscores, spaces, dots) to create a
+ * normalized form for cross-format matching.
+ *
+ * "next.js" → "nextjs", "database_indexing" → "databaseindexing",
+ * "server-side rendering" → "serversiderendering"
+ *
+ * Both document and query tokens get collapsed forms. This makes
+ * next.js ↔ nextjs, data_processing ↔ data processing match automatically.
+ */
+function collapseToken(token: string): string {
+  return token.replace(/[\s\-_.]+/g, '');
+}
+
+/**
+ * Expand keyword tokens with collapsed separator variants.
+ * Returns the original tokens + any collapsed forms that differ from originals.
+ */
+function expandWithCollapsed(tokens: string[]): string[] {
+  const origSet = new Set(tokens);
+  const collapsed: string[] = [];
+  for (const t of tokens) {
+    const c = collapseToken(t);
+    if (c.length > 1 && !origSet.has(c)) {
+      collapsed.push(c);
+      origSet.add(c); // deduplicate
+    }
+  }
+  return [...tokens, ...collapsed];
+}
+
+/**
  * Tokenize a tool name into:
  *   - `name` field: the full compound name (single token) — weight 3.0
  *   - `nameParts` field: split components — weight 1.5
@@ -95,7 +126,7 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
     const langTokens = tokenize(
       [tool.language, ...(tool.languages ?? [])].filter(Boolean).join(' '),
     );
-    const kwTokens = tokenizeKeywords(tool.keyword_sentence ?? '');
+    const kwTokens = expandWithCollapsed(tokenizeKeywords(tool.keyword_sentence ?? ''));
     const len =
       nameTokens.length +
       namePartTokens.length +
@@ -159,7 +190,9 @@ const KW_PARTIAL_WEIGHT = FIELD_WEIGHTS.keywordSentence * 0.5;
 
 export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
   const queryTokens = tokenize(query);
-  const queryKwTokens = tokenizeKeywords(query);
+  // Expand query keyword tokens with collapsed variants: next.js → nextjs,
+  // database indexing → databaseindexing. Matches cross-format doc tokens.
+  const queryKwTokens = expandWithCollapsed(tokenizeKeywords(query));
   // Extra word-level tokens from splitting multi-word keyword phrases.
   // "document database" (compound) → also adds "document", "database" (words).
   // Skips tokens already covered by queryKwTokens to avoid double-counting.
