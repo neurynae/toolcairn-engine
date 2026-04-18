@@ -126,7 +126,7 @@ export function buildBm25Index(tools: ToolNode[]): Bm25IndexData {
     const langTokens = tokenize(
       [tool.language, ...(tool.languages ?? [])].filter(Boolean).join(' '),
     );
-    const kwTokens = expandWithCollapsed(tokenizeKeywords(tool.keyword_sentence ?? ''));
+    const kwTokens = tokenizeKeywords(tool.keyword_sentence ?? '');
     const len =
       nameTokens.length +
       namePartTokens.length +
@@ -190,9 +190,7 @@ const KW_PARTIAL_WEIGHT = FIELD_WEIGHTS.keywordSentence * 0.5;
 
 export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
   const queryTokens = tokenize(query);
-  // Expand query keyword tokens with collapsed variants: next.js → nextjs,
-  // database indexing → databaseindexing. Matches cross-format doc tokens.
-  const queryKwTokens = expandWithCollapsed(tokenizeKeywords(query));
+  const queryKwTokens = tokenizeKeywords(query);
   // Extra word-level tokens from splitting multi-word keyword phrases.
   // "document database" (compound) → also adds "document", "database" (words).
   // Skips tokens already covered by queryKwTokens to avoid double-counting.
@@ -234,16 +232,27 @@ export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
       }
     }
 
-    // ── keywordSentence: compound tokens (exact match, full weight) ──────
-    // Compound keywords (database_indexing, audio-intelligence-lab) are
-    // single tokens — exact compound match gets full weight (4.0).
+    // ── keywordSentence: compound + collapsed matching (no double counting) ─
+    // For each query keyword token, try exact compound match first (weight 4.0).
+    // If no exact match, try collapsed form (strip separators) at same weight.
+    // next.js ↔ nextjs, database_indexing ↔ database indexing match via collapsed.
+    // One match per query token — collapsed never double-counts an exact match.
     const kwFieldTokens = doc.keywordSentence;
     const kwFieldLen = kwFieldTokens.length;
+    const kwCollapsedDoc = kwFieldTokens.map(collapseToken);
     for (const token of queryKwTokens) {
-      const idfScore = index.idf.get(token) ?? 0;
-      if (idfScore === 0) continue;
-      const tf = kwFieldTokens.filter((t) => t === token).length;
+      // Try exact compound match first
+      let tf = kwFieldTokens.filter((t) => t === token).length;
+      let idfToken = token;
+      if (tf === 0) {
+        // Fallback: try collapsed form (next.js → nextjs)
+        const collapsed = collapseToken(token);
+        tf = kwCollapsedDoc.filter((t) => t === collapsed).length;
+        idfToken = collapsed;
+      }
       if (tf === 0) continue;
+      const idfScore = index.idf.get(idfToken) ?? index.idf.get(token) ?? 0;
+      if (idfScore === 0) continue;
       const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (kwFieldLen / index.avgDocLen)));
       score += idfScore * tfNorm * FIELD_WEIGHTS.keywordSentence;
     }
