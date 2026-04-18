@@ -154,9 +154,17 @@ function computeMaxIdf(corpusSize: number): number {
   return Math.log(corpusSize + 1);
 }
 
+/** Half the compound weight — rewards word-level overlap without overriding exact compound matches. */
+const KW_PARTIAL_WEIGHT = FIELD_WEIGHTS.keywordSentence * 0.5;
+
 export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
   const queryTokens = tokenize(query);
   const queryKwTokens = tokenizeKeywords(query);
+  // Extra word-level tokens from splitting multi-word keyword phrases.
+  // "document database" (compound) → also adds "document", "database" (words).
+  // Skips tokens already covered by queryKwTokens to avoid double-counting.
+  const kwTokenSet = new Set(queryKwTokens);
+  const queryKwWordTokens = queryTokens.filter((t) => !kwTokenSet.has(t));
   const scores = new Map<string, number>();
   const maxIdf = computeMaxIdf(index.docs.size);
 
@@ -193,21 +201,38 @@ export function bm25Search(query: string, index: Bm25IndexData): Bm25Score[] {
       }
     }
 
-    // ── keywordSentence: use keyword-aware query tokens ─────────────────
+    // ── keywordSentence: compound tokens (exact match, full weight) ──────
     // Compound keywords (database_indexing, audio-intelligence-lab) are
-    // single tokens — they only match when the query also contains the
-    // exact compound. Vector fallback handles non-exact matches.
+    // single tokens — exact compound match gets full weight (4.0).
+    const kwFieldTokens = doc.keywordSentence;
+    const kwFieldLen = kwFieldTokens.length;
     for (const token of queryKwTokens) {
       const idfScore = index.idf.get(token) ?? 0;
       if (idfScore === 0) continue;
-
-      const fieldTokens = doc.keywordSentence;
-      const tf = fieldTokens.filter((t) => t === token).length;
+      const tf = kwFieldTokens.filter((t) => t === token).length;
       if (tf === 0) continue;
-
-      const fieldLen = fieldTokens.length;
-      const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (fieldLen / index.avgDocLen)));
+      const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (kwFieldLen / index.avgDocLen)));
       score += idfScore * tfNorm * FIELD_WEIGHTS.keywordSentence;
+    }
+
+    // ── keywordSentence: word-level tokens (partial match, half weight) ─
+    // Catches cross-format matches: query "data processing" (compound) splits
+    // to words "data", "processing" which match tool keywords "data_processing"
+    // (which tokenizeKeywords stores as single token, but its individual words
+    // are also indexed via standard tokenize in the doc's keyword tokens).
+    // This pass only runs for words NOT already matched as compounds above.
+    if (queryKwWordTokens.length > 0) {
+      // Build word-level tokens from doc's keyword_sentence for matching
+      const kwDocWords = tokenize(kwFieldTokens.join(' '));
+      for (const token of queryKwWordTokens) {
+        const idfScore = index.idf.get(token) ?? 0;
+        if (idfScore === 0) continue;
+        const tf = kwDocWords.filter((t) => t === token).length;
+        if (tf === 0) continue;
+        const docWordLen = kwDocWords.length;
+        const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (docWordLen / index.avgDocLen)));
+        score += idfScore * tfNorm * KW_PARTIAL_WEIGHT;
+      }
     }
 
     score += bestTopicMatch;

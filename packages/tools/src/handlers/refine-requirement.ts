@@ -66,8 +66,8 @@ ${projectContext}${languageContext}${frameworkContext}
 
 For each distinct functional layer, output a JSON object with:
 - "sub_need_type": the stack layer type as a 1-3 word noun phrase (e.g. "database", "auth", "web-framework", "cache", "message-queue"). Be specific.
-- "keyword_sentence": 10-20 comma-separated lowercase keywords that a developer tool in this category would use to describe itself in its README. Include: the tool category, primary capabilities, ecosystem terms, technical nouns. Do NOT include specific tool names. Do NOT include generic words like "open source", "platform", "service", "solution".
-  Example: for an ORM layer: "orm, database, schema, migration, query builder, postgresql, mysql, typescript, data modeling, relations"
+- "keyword_sentence": 10-20 comma-separated lowercase keywords that a developer tool in this category would use to describe itself in its README. ALWAYS include the target programming language or runtime as the first keyword (e.g. python, node.js, go, rust, java, ruby, php, dart, typescript). Then include: the tool category, primary capabilities, ecosystem terms, technical nouns. Do NOT include specific tool names. Do NOT include generic words like "open source", "platform", "service", "solution".
+  Example: for an ORM layer in a Python project: "python, orm, database, schema, migration, query builder, postgresql, mysql, data modeling, relations"
 - "use_cases": array of 1-3 relevant tags from [${categoryList}]
 - "constraints": object with: language (if known), deployment_model (self-hosted/cloud/serverless)
 - "why": one sentence on why this layer is needed
