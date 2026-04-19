@@ -61,6 +61,8 @@ describe('check_compatibility handler', () => {
               source: 'declared_dependency',
             },
             b_to_a: null,
+            a_runtime_b: null,
+            b_runtime_a: null,
           },
         }),
       });
@@ -95,6 +97,8 @@ describe('check_compatibility handler', () => {
               source: 'declared_dependency',
             },
             b_to_a: null,
+            a_runtime_b: null,
+            b_runtime_a: null,
           },
         }),
       });
@@ -122,6 +126,8 @@ describe('check_compatibility handler', () => {
               source: 'declared_dependency',
             },
             b_to_a: null,
+            a_runtime_b: null,
+            b_runtime_a: null,
           },
         }),
       });
@@ -129,6 +135,52 @@ describe('check_compatibility handler', () => {
       const res = unwrap<{ status: string }>(raw);
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.data.status).toBe('unknown');
+    });
+
+    it('fires version-path on runtime edge alone (no peer edges)', async () => {
+      const handler = createCheckCompatibilityHandler({
+        graphRepo: buildStubRepo({
+          versionRow: {
+            version_a: '5.6.2',
+            version_b: null,
+            registry_a: 'npm',
+            registry_b: null,
+            a_to_b: null,
+            b_to_a: null,
+            a_runtime_b: {
+              range: '>=20.9.0',
+              range_system: 'semver',
+              source: 'declared_dependency',
+            },
+            b_runtime_a: null,
+          },
+          runtimes: {
+            typescript: [
+              {
+                version: '5.6.2',
+                runtime: 'node',
+                range: '>=20.9.0',
+                range_system: 'semver',
+                source: 'declared_dependency',
+              },
+            ],
+          },
+        }),
+      });
+      const raw = await handler({ tool_a: 'typescript', tool_b: 'node' });
+      const res = unwrap<{
+        status: string;
+        source: string;
+        runtime_requirements: Array<{ runtime: string; range: string }>;
+        signals: string[];
+      }>(raw);
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.data.source).toBe('declared_dependency');
+        expect(res.data.status).toBe('requires');
+        expect(res.data.runtime_requirements[0]?.runtime).toBe('node');
+        expect(res.data.signals.join(' ')).toMatch(/requires runtime node/);
+      }
     });
 
     it('includes runtime requirements when present', async () => {
@@ -146,6 +198,8 @@ describe('check_compatibility handler', () => {
               source: 'declared_dependency',
             },
             b_to_a: null,
+            a_runtime_b: null,
+            b_runtime_a: null,
           },
           runtimes: {
             django: [
@@ -222,6 +276,8 @@ describe('check_compatibility handler', () => {
             registry_b: 'npm',
             a_to_b: null,
             b_to_a: null,
+            a_runtime_b: null,
+            b_runtime_a: null,
           },
           directEdges: [],
         }),

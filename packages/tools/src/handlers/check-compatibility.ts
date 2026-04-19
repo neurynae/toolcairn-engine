@@ -243,9 +243,17 @@ export function createCheckCompatibilityHandler(deps: Pick<ToolDeps, 'graphRepo'
   };
 }
 
-/** Only take the version path if at least one direction carries a declared range. */
+/**
+ * Take the version path whenever any declared edge exists between the two tools —
+ * peer (VERSION_COMPATIBLE_WITH) or runtime (REQUIRES_RUNTIME) in either direction.
+ */
 function shouldUseVersionPath(row: VersionCompatibilityRow): boolean {
-  return Boolean(row.a_to_b) || Boolean(row.b_to_a);
+  return (
+    Boolean(row.a_to_b) ||
+    Boolean(row.b_to_a) ||
+    Boolean(row.a_runtime_b) ||
+    Boolean(row.b_runtime_a)
+  );
 }
 
 function evaluateVersionRow(
@@ -257,12 +265,15 @@ function evaluateVersionRow(
   confidence: number;
   checks: VersionCheck[];
   signals: string[];
+  runtime_edges: RuntimeRequirement[];
 } {
   const checks: VersionCheck[] = [];
   const signals: string[] = [];
+  const runtime_edges: RuntimeRequirement[] = [];
   let anyUnsatisfied = false;
   let anySatisfied = false;
   let anyOptionalFail = false;
+  let anyRuntimeDeclared = false;
 
   if (row.a_to_b && row.version_b) {
     const system = row.a_to_b.range_system as RangeSystem;
@@ -326,6 +337,33 @@ function evaluateVersionRow(
     }
   }
 
+  // Runtime edges: tool_a's version declares tool_b as a runtime requirement
+  // (or vice versa). Runtimes have no VersionNode of their own, so we can't
+  // satisfy-check against a concrete version — we just report the declared
+  // constraint and mark the relationship as "compatible" at declared confidence.
+  if (row.a_runtime_b) {
+    anyRuntimeDeclared = true;
+    runtime_edges.push({
+      tool: nameA,
+      runtime: nameB,
+      range: row.a_runtime_b.range,
+      range_system: row.a_runtime_b.range_system as RangeSystem,
+      source: row.a_runtime_b.source,
+    });
+    signals.push(`${nameA}@${row.version_a} requires runtime ${nameB} ${row.a_runtime_b.range}`);
+  }
+  if (row.b_runtime_a) {
+    anyRuntimeDeclared = true;
+    runtime_edges.push({
+      tool: nameB,
+      runtime: nameA,
+      range: row.b_runtime_a.range,
+      range_system: row.b_runtime_a.range_system as RangeSystem,
+      source: row.b_runtime_a.source,
+    });
+    signals.push(`${nameB}@${row.version_b} requires runtime ${nameA} ${row.b_runtime_a.range}`);
+  }
+
   let status: CompatibilityStatus;
   let confidence: number;
   if (anyUnsatisfied) {
@@ -334,6 +372,11 @@ function evaluateVersionRow(
   } else if (anySatisfied) {
     status = 'compatible';
     confidence = 0.95;
+  } else if (anyRuntimeDeclared) {
+    // Runtime declared but no concrete version to check against — still a
+    // strong, authoritative signal (declared_dependency in the manifest).
+    status = 'requires';
+    confidence = 0.95;
   } else if (anyOptionalFail) {
     status = 'unknown';
     confidence = 0.65;
@@ -341,7 +384,7 @@ function evaluateVersionRow(
     status = 'unknown';
     confidence = 0.5;
   }
-  return { status, confidence, checks, signals };
+  return { status, confidence, checks, signals, runtime_edges };
 }
 
 function buildRecommendation(

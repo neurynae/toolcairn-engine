@@ -19,8 +19,14 @@ export interface VersionCompatibilityRow {
   version_b: string | null;
   registry_a: string | null;
   registry_b: string | null;
+  /** Peer dep from A's version to B. */
   a_to_b: { range: string; range_system: string; kind: string; source: string } | null;
+  /** Peer dep from B's version to A. */
   b_to_a: { range: string; range_system: string; kind: string; source: string } | null;
+  /** Runtime requirement from A's version declaring B as runtime. */
+  a_runtime_b: { range: string; range_system: string; source: string } | null;
+  /** Runtime requirement from B's version declaring A as runtime. */
+  b_runtime_a: { range: string; range_system: string; source: string } | null;
 }
 
 export interface RuntimeConstraintRow {

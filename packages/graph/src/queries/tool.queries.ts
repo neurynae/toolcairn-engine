@@ -184,16 +184,28 @@ export const LINK_TOOL_VERSION = {
 
 /**
  * Fetch version-aware compatibility rows between two tools.
- * When ver_a / ver_b are null, falls back to is_latest versions.
- * Returns both directions of VERSION_COMPATIBLE_WITH + REQUIRES_RUNTIME edges.
+ *
+ * Handles three cases uniformly:
+ *   1. Peer-to-peer (both tools have VersionNodes + VERSION_COMPATIBLE_WITH edge)
+ *   2. Runtime relationship (one tool REQUIRES_RUNTIME the other, which is a
+ *      canonical runtime Tool like `node`/`python` — no VersionNode on that side)
+ *   3. Mixed (e.g. tool_a has a peer edge to tool_b AND a runtime edge to a
+ *      different runtime — only the peer row is returned; runtime constraints
+ *      are fetched separately via GET_RUNTIME_CONSTRAINTS per tool)
+ *
+ * When ver_a / ver_b are null, falls back to is_latest versions. The second
+ * HAS_VERSION MATCH is OPTIONAL so queries like "typescript + node" (where
+ * node is a runtime with no Version nodes) still return a row.
  */
 export const GET_VERSION_COMPATIBILITY_BETWEEN = {
   text: `MATCH (a:Tool { name: $name_a })-[ha:HAS_VERSION]->(va:Version)
    WHERE ($ver_a IS NULL AND ha.is_latest = true) OR va.version = $ver_a
-   MATCH (b:Tool { name: $name_b })-[hb:HAS_VERSION]->(vb:Version)
-   WHERE ($ver_b IS NULL AND hb.is_latest = true) OR vb.version = $ver_b
-   OPTIONAL MATCH (va)-[c1:VERSION_COMPATIBLE_WITH]->(b)
-   OPTIONAL MATCH (vb)-[c2:VERSION_COMPATIBLE_WITH]->(a)
+   OPTIONAL MATCH (b:Tool { name: $name_b })-[hb:HAS_VERSION]->(vb:Version)
+     WHERE ($ver_b IS NULL AND hb.is_latest = true) OR vb.version = $ver_b
+   OPTIONAL MATCH (va)-[c1:VERSION_COMPATIBLE_WITH]->(:Tool { name: $name_b })
+   OPTIONAL MATCH (vb)-[c2:VERSION_COMPATIBLE_WITH]->(:Tool { name: $name_a })
+   OPTIONAL MATCH (va)-[r1:REQUIRES_RUNTIME]->(:Tool { name: $name_b })
+   OPTIONAL MATCH (vb)-[r2:REQUIRES_RUNTIME]->(:Tool { name: $name_a })
    RETURN va.version AS version_a,
           vb.version AS version_b,
           va.registry AS registry_a,
@@ -205,7 +217,13 @@ export const GET_VERSION_COMPATIBILITY_BETWEEN = {
           c2.range AS b_to_a_range,
           c2.range_system AS b_to_a_range_system,
           c2.kind AS b_to_a_kind,
-          c2.source AS b_to_a_source
+          c2.source AS b_to_a_source,
+          r1.range AS a_runtime_b_range,
+          r1.range_system AS a_runtime_b_range_system,
+          r1.source AS a_runtime_b_source,
+          r2.range AS b_runtime_a_range,
+          r2.range_system AS b_runtime_a_range_system,
+          r2.source AS b_runtime_a_source
    LIMIT 1`,
 };
 

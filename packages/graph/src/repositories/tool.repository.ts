@@ -512,6 +512,8 @@ export class MemgraphToolRepository implements ToolRepository {
       if (!record) return { ok: true, data: null };
       const a_to_b_range = record.get('a_to_b_range');
       const b_to_a_range = record.get('b_to_a_range');
+      const a_runtime_b_range = record.get('a_runtime_b_range');
+      const b_runtime_a_range = record.get('b_runtime_a_range');
       const row: VersionCompatibilityRow = {
         version_a: record.get('version_a') ?? null,
         version_b: record.get('version_b') ?? null,
@@ -531,6 +533,20 @@ export class MemgraphToolRepository implements ToolRepository {
               range_system: record.get('b_to_a_range_system'),
               kind: record.get('b_to_a_kind') ?? 'dep',
               source: record.get('b_to_a_source') ?? 'declared_dependency',
+            }
+          : null,
+        a_runtime_b: a_runtime_b_range
+          ? {
+              range: a_runtime_b_range,
+              range_system: record.get('a_runtime_b_range_system'),
+              source: record.get('a_runtime_b_source') ?? 'declared_dependency',
+            }
+          : null,
+        b_runtime_a: b_runtime_a_range
+          ? {
+              range: b_runtime_a_range,
+              range_system: record.get('b_runtime_a_range_system'),
+              source: record.get('b_runtime_a_source') ?? 'declared_dependency',
             }
           : null,
       };
