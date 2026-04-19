@@ -19,7 +19,11 @@ import { PrismaClient } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
 import { getMemgraphSession } from '@toolcairn/graph';
 import { enqueueIndexJob } from '@toolcairn/queue';
-import { discoverReposAcrossTopics } from '../crawlers/github-discovery.js';
+import {
+  DISCOVERY_LANGUAGES,
+  discoverReposAcrossTopics,
+  pickSortModeForToday,
+} from '../crawlers/github-discovery.js';
 import { setProgress } from '../progress.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:discovery-scheduler' });
@@ -577,16 +581,19 @@ export async function runDiscoveryScheduler(): Promise<DiscoveryResult> {
     const indexedUrls = await getIndexedUrls(prisma);
     logger.info({ indexedCount: indexedUrls.size }, 'Fetched already-indexed tools');
 
+    const sortMode = pickSortModeForToday();
     await setProgress(
-      `Searching GitHub across ${settings.topics.length} topics (min ${settings.minStars}★)…`,
+      `Searching GitHub across ${settings.topics.length} topics + ${DISCOVERY_LANGUAGES.length} languages (min ${settings.minStars}★, sort=${sortMode})…`,
       `Topics: ${settings.topics.slice(0, 5).join(', ')}${settings.topics.length > 5 ? ` +${settings.topics.length - 5} more` : ''}`,
     );
-    const discovered = await discoverReposAcrossTopics(
-      settings.topics,
-      settings.minStars,
-      settings.lastPushedDays,
-      settings.batchSize * 2,
-    );
+    const discovered = await discoverReposAcrossTopics({
+      topics: settings.topics,
+      languages: DISCOVERY_LANGUAGES,
+      minStars: settings.minStars,
+      pushedWithinDays: settings.lastPushedDays,
+      pagesPerTopic: 3,
+      sortMode,
+    });
 
     logger.info({ discovered: discovered.length }, 'GitHub discovery complete');
 
