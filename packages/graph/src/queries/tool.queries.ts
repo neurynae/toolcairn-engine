@@ -58,6 +58,35 @@ export interface UpsertEdgeParams {
   decay_rate: number;
   evidence_count?: number;
   evidence_links?: string[];
+  /** Version range (only on VERSION_COMPATIBLE_WITH / REQUIRES_RUNTIME). */
+  range?: string;
+  /** Range syntax (semver, pep440, etc.). */
+  range_system?: string;
+  /** Constraint kind ('peer' | 'optional_peer' | 'dep'). */
+  kind?: string;
+}
+
+export interface UpsertVersionParams {
+  id: string;
+  tool_id: string;
+  version: string;
+  registry: string;
+  package_name: string;
+  release_date: string;
+  is_stable: boolean;
+  is_latest: boolean;
+  deprecated: boolean;
+  peer_ranges_json: string;
+  engines_json: string;
+  source: string;
+  created_at: string;
+}
+
+export interface LinkToolVersionParams {
+  tool_name: string;
+  version_id: string;
+  is_latest: boolean;
+  last_verified: string;
 }
 
 export interface FindByNameParams {
@@ -82,6 +111,13 @@ export function buildUpsertEdgeQuery(params: UpsertEdgeParams): {
 } {
   // Relationship type must appear as literal token in MERGE pattern.
   // It comes from EdgeType enum which is controlled by internal code.
+  const hasRange = params.range !== undefined && params.range_system !== undefined;
+  const rangeSet = hasRange
+    ? `,
+         e.range = $range,
+         e.range_system = $range_system,
+         e.kind = $kind`
+    : '';
   return {
     text: `MATCH (source { id: $source_id })
      MATCH (target { id: $target_id })
@@ -92,7 +128,7 @@ export function buildUpsertEdgeQuery(params: UpsertEdgeParams): {
          e.source = $source,
          e.decay_rate = $decay_rate,
          e.evidence_count = $evidence_count,
-         e.evidence_links = $evidence_links`,
+         e.evidence_links = $evidence_links${rangeSet}`,
     parameters: {
       source_id: params.source_id,
       target_id: params.target_id,
@@ -103,9 +139,87 @@ export function buildUpsertEdgeQuery(params: UpsertEdgeParams): {
       decay_rate: params.decay_rate,
       evidence_count: params.evidence_count ?? 0,
       evidence_links: params.evidence_links ?? [],
+      ...(hasRange && {
+        range: params.range,
+        range_system: params.range_system,
+        kind: params.kind ?? 'dep',
+      }),
     },
   };
 }
+
+/** MERGE a Version node keyed by its deterministic id. Idempotent. */
+export const MERGE_VERSION_NODE = {
+  text: `MERGE (v:Version { id: $id })
+   SET v.tool_id = $tool_id,
+       v.version = $version,
+       v.registry = $registry,
+       v.package_name = $package_name,
+       v.release_date = $release_date,
+       v.is_stable = $is_stable,
+       v.is_latest = $is_latest,
+       v.deprecated = $deprecated,
+       v.peer_ranges_json = $peer_ranges_json,
+       v.engines_json = $engines_json,
+       v.source = $source,
+       v.created_at = $created_at
+   RETURN v`,
+};
+
+/**
+ * Link a Tool to its Version via HAS_VERSION. Unsets is_latest on prior latest
+ * versions of the same tool so only one carries the flag at any time.
+ */
+export const LINK_TOOL_VERSION = {
+  text: `MATCH (t:Tool { name: $tool_name })
+   MATCH (v:Version { id: $version_id })
+   WITH t, v
+   OPTIONAL MATCH (t)-[old:HAS_VERSION]->(:Version)
+   SET old.is_latest = false
+   WITH t, v
+   MERGE (t)-[e:HAS_VERSION]->(v)
+   SET e.is_latest = $is_latest,
+       e.last_verified = $last_verified`,
+};
+
+/**
+ * Fetch version-aware compatibility rows between two tools.
+ * When ver_a / ver_b are null, falls back to is_latest versions.
+ * Returns both directions of VERSION_COMPATIBLE_WITH + REQUIRES_RUNTIME edges.
+ */
+export const GET_VERSION_COMPATIBILITY_BETWEEN = {
+  text: `MATCH (a:Tool { name: $name_a })-[ha:HAS_VERSION]->(va:Version)
+   WHERE ($ver_a IS NULL AND ha.is_latest = true) OR va.version = $ver_a
+   MATCH (b:Tool { name: $name_b })-[hb:HAS_VERSION]->(vb:Version)
+   WHERE ($ver_b IS NULL AND hb.is_latest = true) OR vb.version = $ver_b
+   OPTIONAL MATCH (va)-[c1:VERSION_COMPATIBLE_WITH]->(b)
+   OPTIONAL MATCH (vb)-[c2:VERSION_COMPATIBLE_WITH]->(a)
+   RETURN va.version AS version_a,
+          vb.version AS version_b,
+          va.registry AS registry_a,
+          vb.registry AS registry_b,
+          c1.range AS a_to_b_range,
+          c1.range_system AS a_to_b_range_system,
+          c1.kind AS a_to_b_kind,
+          c1.source AS a_to_b_source,
+          c2.range AS b_to_a_range,
+          c2.range_system AS b_to_a_range_system,
+          c2.kind AS b_to_a_kind,
+          c2.source AS b_to_a_source
+   LIMIT 1`,
+};
+
+/** Fetch runtime constraints (REQUIRES_RUNTIME edges) for a tool's version. */
+export const GET_RUNTIME_CONSTRAINTS = {
+  text: `MATCH (t:Tool { name: $tool_name })-[ha:HAS_VERSION]->(v:Version)
+   WHERE ($version IS NULL AND ha.is_latest = true) OR v.version = $version
+   OPTIONAL MATCH (v)-[r:REQUIRES_RUNTIME]->(rt:Tool)
+   RETURN v.version AS version,
+          rt.name AS runtime,
+          r.range AS range,
+          r.range_system AS range_system,
+          r.source AS source`,
+};
 
 // ─── Static query strings ─────────────────────────────────────────────────────
 

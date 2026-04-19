@@ -19,6 +19,9 @@ CREATE CONSTRAINT ON (p:Pattern) ASSERT p.name IS UNIQUE;
 // Requirements: unique name
 CREATE CONSTRAINT ON (r:Requirement) ASSERT r.name IS UNIQUE;
 
+// Versions: unique deterministic id (ver:{registry}:{pkg}:{version})
+CREATE CONSTRAINT ON (v:Version) ASSERT v.id IS UNIQUE;
+
 // ─── Indexes ─────────────────────────────────────────────────────────────────
 
 // Tool lookups by category
@@ -26,3 +29,10 @@ CREATE INDEX ON :Tool(category);
 
 // Tool lookups by primary language
 CREATE INDEX ON :Tool(language);
+
+// Version lookups by owning tool (drives HAS_VERSION traversal)
+CREATE INDEX ON :Version(tool_id);
+
+// Version lookups by registry + package name
+CREATE INDEX ON :Version(registry);
+CREATE INDEX ON :Version(package_name);

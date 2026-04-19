@@ -15,6 +15,38 @@
 
 export type TimeWindow = 'weekly' | 'monthly' | '90d' | 'alltime';
 
+/**
+ * Which extractor handles version metadata for this registry.
+ * - Tier A (registry-specific): parses rich dep data from the existing metadataUrl payload.
+ * - deps_dev: calls deps.dev API for the 7 ecosystems it covers.
+ * - version_only: stores just `{version, release_date}` — no edges.
+ * - none: skip version extraction entirely.
+ */
+export type VersionExtractor =
+  | 'npm'
+  | 'pypi'
+  | 'crates'
+  | 'rubygems'
+  | 'packagist'
+  | 'pub'
+  | 'hex'
+  | 'deps_dev'
+  | 'version_only'
+  | 'none';
+
+/** Range constraint syntax used for edges sourced from this registry. */
+export type RegistryRangeSystem =
+  | 'semver'
+  | 'pep440'
+  | 'maven'
+  | 'composer'
+  | 'ruby'
+  | 'cargo'
+  | 'opaque';
+
+/** deps.dev system name (as used in https://api.deps.dev/v3/systems/{sys}/...). */
+export type DepsDevSystem = 'NPM' | 'PYPI' | 'CARGO' | 'MAVEN' | 'GO' | 'NUGET' | 'PACKAGIST';
+
 export interface RegistryConfig {
   /** Human-readable name */
   name: string;
@@ -38,6 +70,12 @@ export interface RegistryConfig {
    * threshold (logScale/100) before the weekly percentile cron provides real values.
    */
   logScale?: number;
+  /** Which version extractor handles this registry. Default: 'version_only'. */
+  versionExtractor?: VersionExtractor;
+  /** Default range system for edges from this registry. */
+  rangeSystem?: RegistryRangeSystem;
+  /** deps.dev system identifier (only for Tier B registries). */
+  depsDevSystem?: DepsDevSystem;
 }
 
 export interface InstallPattern {
@@ -60,6 +98,9 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     repoUrlField: 'repository.url',
     hasDownloadApi: true,
     logScale: 1_000_000,
+    versionExtractor: 'npm',
+    rangeSystem: 'semver',
+    depsDevSystem: 'NPM',
   },
   pypi: {
     name: 'PyPI',
@@ -70,6 +111,9 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     repoUrlField: 'info.project_urls',
     hasDownloadApi: true,
     logScale: 1_000_000,
+    versionExtractor: 'pypi',
+    rangeSystem: 'pep440',
+    depsDevSystem: 'PYPI',
   },
   crates: {
     name: 'crates.io',
@@ -81,6 +125,9 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     headers: { 'User-Agent': 'toolcairn-indexer (https://github.com/neurynae/toolcairn-engine)' },
     hasDownloadApi: true,
     logScale: 100_000,
+    versionExtractor: 'crates',
+    rangeSystem: 'cargo',
+    depsDevSystem: 'CARGO',
   },
   rubygems: {
     name: 'RubyGems',
@@ -91,6 +138,8 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     repoUrlField: 'source_code_uri',
     hasDownloadApi: true,
     logScale: 50_000,
+    versionExtractor: 'rubygems',
+    rangeSystem: 'ruby',
   },
   packagist: {
     name: 'Packagist',
@@ -102,6 +151,9 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     headers: { 'User-Agent': 'toolcairn-indexer (mailto:admin@neurynae.com)' },
     hasDownloadApi: true,
     logScale: 200_000,
+    versionExtractor: 'packagist',
+    rangeSystem: 'composer',
+    depsDevSystem: 'PACKAGIST',
   },
   nuget: {
     name: 'NuGet',
@@ -111,6 +163,9 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     timeWindow: 'alltime',
     hasDownloadApi: true,
     logScale: 500_000,
+    versionExtractor: 'deps_dev',
+    rangeSystem: 'semver',
+    depsDevSystem: 'NUGET',
   },
   pub: {
     name: 'pub.dev',
@@ -120,6 +175,8 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     timeWindow: 'monthly',
     hasDownloadApi: true,
     logScale: 50_000,
+    versionExtractor: 'pub',
+    rangeSystem: 'semver',
   },
   hex: {
     name: 'Hex.pm',
@@ -131,6 +188,8 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
     headers: { 'User-Agent': 'toolcairn-indexer' },
     hasDownloadApi: true,
     logScale: 10_000,
+    versionExtractor: 'hex',
+    rangeSystem: 'semver',
   },
   cran: {
     name: 'CRAN',
@@ -248,13 +307,32 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
   },
 
   // ── Registries WITHOUT download APIs ──────────────────────────────────────
-  go: { name: 'Go Modules', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
-  maven: { name: 'Maven Central', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
+  go: {
+    name: 'Go Modules',
+    downloadField: '',
+    timeWindow: 'weekly',
+    hasDownloadApi: false,
+    versionExtractor: 'deps_dev',
+    rangeSystem: 'semver',
+    depsDevSystem: 'GO',
+  },
+  maven: {
+    name: 'Maven Central',
+    downloadField: '',
+    timeWindow: 'weekly',
+    hasDownloadApi: false,
+    versionExtractor: 'deps_dev',
+    rangeSystem: 'maven',
+    depsDevSystem: 'MAVEN',
+  },
   gradle: {
     name: 'Gradle Plugin Portal',
     downloadField: '',
     timeWindow: 'weekly',
     hasDownloadApi: false,
+    versionExtractor: 'deps_dev',
+    rangeSystem: 'maven',
+    depsDevSystem: 'MAVEN',
   },
   hackage: { name: 'Hackage', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },
   cpan: { name: 'CPAN', downloadField: '', timeWindow: 'weekly', hasDownloadApi: false },

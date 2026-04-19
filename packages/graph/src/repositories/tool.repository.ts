@@ -14,8 +14,12 @@ import {
   GET_DIRECT_EDGES_BETWEEN,
   GET_PAIRWISE_EDGES,
   GET_RELATED_TOOLS,
+  GET_RUNTIME_CONSTRAINTS,
   GET_TOOL_NEIGHBORHOOD,
   GET_TOOL_USE_CASES,
+  GET_VERSION_COMPATIBILITY_BETWEEN,
+  LINK_TOOL_VERSION,
+  MERGE_VERSION_NODE,
   type PairwiseEdge,
   TOOL_EXISTS,
   type ToolUseCases,
@@ -26,7 +30,15 @@ import {
 } from '../queries/tool.queries.js';
 import type { ToolNeighborhood } from '../queries/tool.queries.js';
 import { FIND_TOOLS_BY_USE_CASES } from '../queries/usecase.queries.js';
-import type { DirectEdge, RepositoryError, ToolRepository } from './interfaces.js';
+import type {
+  DirectEdge,
+  RepositoryError,
+  RuntimeConstraintRow,
+  ToolRepository,
+  UpsertVersionEdgeParams,
+  UpsertVersionNodeParams,
+  VersionCompatibilityRow,
+} from './interfaces.js';
 
 type ToolResult<T> = { ok: true; data: T } | { ok: false; error: RepositoryError };
 
@@ -387,6 +399,173 @@ export class MemgraphToolRepository implements ToolRepository {
           ? (raw as { low: number; high: number }).low
           : Number(raw);
       return { ok: true, data: total };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  async upsertVersion(params: UpsertVersionNodeParams): Promise<ToolResult<void>> {
+    const session = this.session();
+    try {
+      await session.run(MERGE_VERSION_NODE.text, {
+        id: params.id,
+        tool_id: params.tool_id,
+        version: params.version,
+        registry: params.registry,
+        package_name: params.package_name,
+        release_date: params.release_date,
+        is_stable: params.is_stable,
+        is_latest: params.is_latest,
+        deprecated: params.deprecated,
+        peer_ranges_json: JSON.stringify(params.peer_ranges ?? {}),
+        engines_json: JSON.stringify(params.engines ?? {}),
+        source: params.source,
+        created_at: new Date().toISOString(),
+      });
+      return { ok: true, data: undefined };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  async linkToolVersion(
+    toolName: string,
+    versionId: string,
+    isLatest: boolean,
+  ): Promise<ToolResult<void>> {
+    const session = this.session();
+    try {
+      await session.run(LINK_TOOL_VERSION.text, {
+        tool_name: toolName,
+        version_id: versionId,
+        is_latest: isLatest,
+        last_verified: new Date().toISOString(),
+      });
+      return { ok: true, data: undefined };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
+   * Upsert a Version→Tool edge (VERSION_COMPATIBLE_WITH or REQUIRES_RUNTIME).
+   * Matches on Version.id and Tool.name because Version nodes don't share the
+   * same "name" property — uses a bespoke Cypher instead of buildUpsertEdgeQuery.
+   */
+  async upsertVersionEdge(params: UpsertVersionEdgeParams): Promise<ToolResult<void>> {
+    const session = this.session();
+    try {
+      const text = `MATCH (v:Version { id: $source_version_id })
+         MATCH (t:Tool { name: $target_tool_name })
+         MERGE (v)-[e:${params.edge_type}]->(t)
+         SET e.range = $range,
+             e.range_system = $range_system,
+             e.kind = $kind,
+             e.source = $source,
+             e.confidence = $confidence,
+             e.last_verified = $last_verified,
+             e.weight = 1.0,
+             e.decay_rate = 0.0`;
+      await session.run(text, {
+        source_version_id: params.source_version_id,
+        target_tool_name: params.target_tool_name,
+        range: params.range,
+        range_system: params.range_system,
+        kind: params.kind,
+        source: params.source,
+        confidence: params.confidence,
+        last_verified: params.last_verified,
+      });
+      return { ok: true, data: undefined };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  async getVersionCompatibilityBetween(
+    nameA: string,
+    nameB: string,
+    versionA?: string,
+    versionB?: string,
+  ): Promise<ToolResult<VersionCompatibilityRow | null>> {
+    const session = this.session();
+    try {
+      const result = await session.run(GET_VERSION_COMPATIBILITY_BETWEEN.text, {
+        name_a: nameA,
+        name_b: nameB,
+        ver_a: versionA ?? null,
+        ver_b: versionB ?? null,
+      });
+      const record = result.records[0];
+      if (!record) return { ok: true, data: null };
+      const a_to_b_range = record.get('a_to_b_range');
+      const b_to_a_range = record.get('b_to_a_range');
+      const row: VersionCompatibilityRow = {
+        version_a: record.get('version_a') ?? null,
+        version_b: record.get('version_b') ?? null,
+        registry_a: record.get('registry_a') ?? null,
+        registry_b: record.get('registry_b') ?? null,
+        a_to_b: a_to_b_range
+          ? {
+              range: a_to_b_range,
+              range_system: record.get('a_to_b_range_system'),
+              kind: record.get('a_to_b_kind') ?? 'dep',
+              source: record.get('a_to_b_source') ?? 'declared_dependency',
+            }
+          : null,
+        b_to_a: b_to_a_range
+          ? {
+              range: b_to_a_range,
+              range_system: record.get('b_to_a_range_system'),
+              kind: record.get('b_to_a_kind') ?? 'dep',
+              source: record.get('b_to_a_source') ?? 'declared_dependency',
+            }
+          : null,
+      };
+      return { ok: true, data: row };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  async getRuntimeConstraints(
+    toolName: string,
+    version?: string,
+  ): Promise<ToolResult<RuntimeConstraintRow[]>> {
+    const session = this.session();
+    try {
+      const result = await session.run(GET_RUNTIME_CONSTRAINTS.text, {
+        tool_name: toolName,
+        version: version ?? null,
+      });
+      const rows: RuntimeConstraintRow[] = [];
+      for (const record of result.records) {
+        const runtime = record.get('runtime');
+        if (!runtime) continue;
+        rows.push({
+          version: record.get('version'),
+          runtime,
+          range: record.get('range') ?? '',
+          range_system: record.get('range_system') ?? 'opaque',
+          source: record.get('source') ?? 'declared_dependency',
+        });
+      }
+      return { ok: true, data: rows };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return { ok: false, error: { code: 'DB_ERROR', message } };

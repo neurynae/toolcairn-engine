@@ -15,7 +15,9 @@ export type EdgeSource =
   | 'co_occurrence'
   | 'changelog'
   | 'declared_dependency'
-  | 'vector_similarity';
+  | 'vector_similarity'
+  | 'deps_dev'
+  | 'version_only';
 
 export type EdgeType =
   | 'SOLVES'
@@ -29,7 +31,28 @@ export type EdgeType =
   | 'BREAKS_FROM'
   | 'HAS_VERSION'
   | 'COMPATIBLE_WITH'
-  | 'CO_OCCURS_WITH';
+  | 'CO_OCCURS_WITH'
+  | 'VERSION_COMPATIBLE_WITH'
+  | 'REQUIRES_RUNTIME';
+
+/**
+ * Range constraint systems used for version compatibility edges.
+ * - semver: npm / node semver (^, ~, ||, &&)
+ * - pep440: Python PEP 440 (>=X,<Y)
+ * - maven: Maven interval notation ([1.0,2.0))
+ * - composer: PHP Composer (allows || across majors)
+ * - ruby: RubyGems (~> twiddle-waka)
+ * - cargo: Cargo semver (special 0.x caret behavior)
+ * - opaque: unparseable — handler treats as unknown unless exact string match
+ */
+export type RangeSystem =
+  | 'semver'
+  | 'pep440'
+  | 'maven'
+  | 'composer'
+  | 'ruby'
+  | 'cargo'
+  | 'opaque';
 
 export type NodeType = 'Tool' | 'UseCase' | 'Stack' | 'Pattern' | 'Requirement' | 'Version';
 
@@ -215,6 +238,21 @@ export interface VersionNode {
   is_latest: boolean;
   breaking_changes: BreakingChange[];
   created_at: string;
+  /** Registry this version was extracted from (npm, pypi, crates, ...). */
+  registry: string;
+  /** Canonical package name within the registry. */
+  package_name: string;
+  /**
+   * Declared peer dependencies with version ranges, keyed by target package name.
+   * Retained even when the target Tool isn't indexed yet — promoted to edges lazily.
+   */
+  peer_ranges?: Record<string, string>;
+  /** Runtime engine constraints (node, python, dart sdk, etc.). */
+  engines?: Record<string, string>;
+  /** Deprecation flag (npm `deprecated`, PyPI Development Status 7). */
+  deprecated?: boolean;
+  /** Which extraction tier produced this node. */
+  source: 'declared_dependency' | 'deps_dev' | 'version_only';
 }
 
 // ─── Edge Types ────────────────────────────────────────────────────────────
@@ -235,6 +273,12 @@ export interface EdgeProperties {
   decay_rate: number;
   evidence_count?: number;
   evidence_links?: string[];
+  /** Version range constraint (only set on VERSION_COMPATIBLE_WITH / REQUIRES_RUNTIME). */
+  range?: string;
+  /** Range syntax used (semver, pep440, maven, composer, ruby, cargo, opaque). */
+  range_system?: RangeSystem;
+  /** Constraint kind: "peer" (required), "optional_peer", or "dep". */
+  kind?: 'peer' | 'optional_peer' | 'dep';
 }
 
 export interface GraphEdge {

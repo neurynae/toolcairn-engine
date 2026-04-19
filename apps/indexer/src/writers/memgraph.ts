@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { EdgeSource, EdgeType, ToolNode } from '@toolcairn/core';
+import type { EdgeSource, EdgeType, ToolNode, VersionMetadata } from '@toolcairn/core';
 import { createLogger } from '@toolcairn/errors';
 import { MemgraphToolRepository, MemgraphUseCaseRepository } from '@toolcairn/graph';
+import { buildVersionId } from '../crawlers/version-extractors/index.js';
 import { IndexerError } from '../errors.js';
 import type { TopicEdge } from '../types.js';
 
@@ -84,6 +85,8 @@ export async function writeEdgeToMemgraph(
       'BREAKS_FROM',
       'HAS_VERSION',
       'COMPATIBLE_WITH',
+      'VERSION_COMPATIBLE_WITH',
+      'REQUIRES_RUNTIME',
     ];
 
     const resolvedEdgeType: EdgeType = validEdgeTypes.includes(edgeType as EdgeType)
@@ -99,6 +102,8 @@ export async function writeEdgeToMemgraph(
       'co_occurrence',
       'changelog',
       'declared_dependency',
+      'deps_dev',
+      'version_only',
     ];
 
     const resolvedSource: EdgeSource = validEdgeSources.includes(source as EdgeSource)
@@ -180,5 +185,146 @@ export async function writeTopicNodes(toolId: string, topicEdges: TopicEdge[]): 
         'Topic node write failed (non-fatal)',
       );
     }
+  }
+}
+
+/**
+ * Persist a VersionNode + HAS_VERSION edge + per-peer/engine Version→Tool edges.
+ *
+ * Strategy:
+ * 1. Upsert the VersionNode (deterministic id, MERGE-safe).
+ * 2. Link Tool→Version via HAS_VERSION and mark as is_latest=true (clearing
+ *    is_latest on any prior latest version of the same tool).
+ * 3. For each peer/dep whose target Tool exists in the graph, write a
+ *    VERSION_COMPATIBLE_WITH edge. Unresolved peers remain on
+ *    VersionNode.peer_ranges_json (already persisted in step 1) — they'll
+ *    resolve on a future reindex once the target Tool is indexed.
+ * 4. For each engine constraint, write REQUIRES_RUNTIME to the canonical
+ *    runtime Tool (e.g. node, python). Runtime Tools are seeded once via
+ *    scripts/seed-runtime-tools.ts.
+ *
+ * All failures are logged but non-fatal — version writes must never block
+ * the main tool-index pipeline.
+ */
+export async function writeVersionToMemgraph(
+  toolName: string,
+  toolId: string,
+  meta: VersionMetadata,
+): Promise<void> {
+  const repo = getRepository();
+  const versionId = buildVersionId(meta.registry, meta.packageName, meta.version);
+  const now = new Date().toISOString();
+
+  // Build peer_ranges + engines maps for storage on the node.
+  const peerRanges: Record<string, string> = {};
+  for (const p of meta.peers) peerRanges[p.packageName] = p.range;
+  const engines: Record<string, string> = {};
+  for (const e of meta.engines) engines[e.runtime] = e.range;
+
+  try {
+    const upsert = await repo.upsertVersion({
+      id: versionId,
+      tool_id: toolId,
+      version: meta.version,
+      registry: meta.registry,
+      package_name: meta.packageName,
+      release_date: meta.releaseDate ?? '',
+      is_stable: meta.isStable,
+      is_latest: true,
+      deprecated: meta.deprecated ?? false,
+      peer_ranges: peerRanges,
+      engines,
+      source: meta.source,
+    });
+    if (!upsert.ok) {
+      logger.warn(
+        { toolName, versionId, err: upsert.error.message },
+        'upsertVersion failed (non-fatal)',
+      );
+      return;
+    }
+
+    const link = await repo.linkToolVersion(toolName, versionId, true);
+    if (!link.ok) {
+      logger.warn(
+        { toolName, versionId, err: link.error.message },
+        'linkToolVersion failed (non-fatal)',
+      );
+      return;
+    }
+
+    // Resolve peer edges only for already-indexed Tools.
+    for (const peer of meta.peers) {
+      const target = await repo.findByName(peer.packageName);
+      if (!target.ok || !target.data) {
+        logger.debug(
+          { toolName, peer: peer.packageName },
+          'Peer target not in graph — stored as peer_ranges_json only',
+        );
+        continue;
+      }
+      const edgeResult = await repo.upsertVersionEdge({
+        source_version_id: versionId,
+        target_tool_name: peer.packageName,
+        edge_type: 'VERSION_COMPATIBLE_WITH',
+        range: peer.range,
+        range_system: peer.rangeSystem,
+        kind: peer.kind,
+        source: meta.source,
+        confidence: meta.source === 'declared_dependency' ? 0.95 : 0.8,
+        last_verified: now,
+      });
+      if (!edgeResult.ok) {
+        logger.warn(
+          { toolName, peer: peer.packageName, err: edgeResult.error.message },
+          'upsertVersionEdge (peer) failed (non-fatal)',
+        );
+      }
+    }
+
+    // Runtime edges — requires runtime Tools to be seeded.
+    for (const eng of meta.engines) {
+      const target = await repo.findByName(eng.runtime);
+      if (!target.ok || !target.data) {
+        logger.debug(
+          { toolName, runtime: eng.runtime },
+          'Runtime Tool not seeded — REQUIRES_RUNTIME edge skipped',
+        );
+        continue;
+      }
+      const edgeResult = await repo.upsertVersionEdge({
+        source_version_id: versionId,
+        target_tool_name: eng.runtime,
+        edge_type: 'REQUIRES_RUNTIME',
+        range: eng.range,
+        range_system: eng.rangeSystem,
+        kind: 'dep',
+        source: meta.source,
+        confidence: 0.95,
+        last_verified: now,
+      });
+      if (!edgeResult.ok) {
+        logger.warn(
+          { toolName, runtime: eng.runtime, err: edgeResult.error.message },
+          'upsertVersionEdge (runtime) failed (non-fatal)',
+        );
+      }
+    }
+
+    logger.info(
+      {
+        toolName,
+        versionId,
+        peers: meta.peers.length,
+        engines: meta.engines.length,
+        source: meta.source,
+      },
+      'Version written to Memgraph',
+    );
+  } catch (e) {
+    logger.warn(
+      { toolName, versionId, err: e },
+      'Version write threw — non-fatal, continuing index pipeline',
+    );
   }
 }

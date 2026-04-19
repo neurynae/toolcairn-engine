@@ -4,7 +4,12 @@ import { MemgraphToolRepository } from '@toolcairn/graph';
 import { runCrawler } from '../crawlers/index.js';
 import { REGISTRY_CONFIGS } from '../crawlers/registry-config.js';
 import { processTool } from '../processors/index.js';
-import { writeEdgeToMemgraph, writeToolToMemgraph, writeTopicNodes } from '../writers/memgraph.js';
+import {
+  writeEdgeToMemgraph,
+  writeToolToMemgraph,
+  writeTopicNodes,
+  writeVersionToMemgraph,
+} from '../writers/memgraph.js';
 import { type IndexedToolMeta, upsertIndexedTool } from '../writers/prisma.js';
 import { upsertToolVector } from '../writers/qdrant.js';
 
@@ -156,9 +161,28 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
 
     // 2. Skip-if-unchanged check — read existing state from Memgraph and compare.
     //    If nothing meaningful changed, update last_indexed_at and return early.
+    //    Version metadata is still persisted on skip so the version sub-graph
+    //    fills in during the natural 7-day reindex cycle without forcing a
+    //    full re-embed. Writes are cheap: MERGE on deterministic Version.id.
     const changeCheck = await checkIfUnchanged(source, crawlerResult);
     if (changeCheck.skip) {
       await upsertIndexedTool(canonicalUrl, changeCheck.existingId, 'indexed');
+      if (crawlerResult.versionMetadata?.length) {
+        for (const meta of crawlerResult.versionMetadata) {
+          try {
+            await writeVersionToMemgraph(
+              crawlerResult.extracted.name,
+              changeCheck.existingId,
+              meta,
+            );
+          } catch (e) {
+            logger.warn(
+              { toolId, versionRegistry: meta.registry, err: e },
+              'Version write on skip path failed (non-fatal)',
+            );
+          }
+        }
+      }
       return;
     }
 
@@ -245,6 +269,23 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     // 6. Write topic concept nodes
     if (memgraphWriteSucceeded) {
       await writeTopicNodes(processedTool.node.id, processedTool.topicEdges);
+    }
+
+    // 6b. Write version nodes + version edges (non-fatal — graceful degradation).
+    //     versionMetadata is populated by crawler dispatcher for registries that
+    //     have a version extractor registered (npm/pypi/crates in Tier A today;
+    //     extensible to rubygems/packagist/pub/hex once their crawlers run).
+    if (memgraphWriteSucceeded && crawlerResult.versionMetadata?.length) {
+      for (const meta of crawlerResult.versionMetadata) {
+        try {
+          await writeVersionToMemgraph(processedTool.node.name, processedTool.node.id, meta);
+        } catch (e) {
+          logger.warn(
+            { toolId, versionRegistry: meta.registry, err: e },
+            'Version write failed (non-fatal)',
+          );
+        }
+      }
     }
 
     // 7. Incremental REPLACES edges — fire-and-forget.

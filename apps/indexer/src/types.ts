@@ -1,4 +1,4 @@
-import type { PackageChannel, ToolNode } from '@toolcairn/core';
+import type { PackageChannel, ToolNode, VersionMetadata } from '@toolcairn/core';
 
 export interface ExtractedToolData {
   name: string;
@@ -23,6 +23,13 @@ export interface CrawlerResult {
   url: string;
   raw: unknown;
   extracted: ExtractedToolData;
+  /**
+   * Optional version metadata pulled from the registry response (or deps.dev).
+   * When present, drives HAS_VERSION + VERSION_COMPATIBLE_WITH + REQUIRES_RUNTIME
+   * edge writes. Absent for GitHub-source crawls or Tier C registries that
+   * the crawler dispatcher hasn't probed.
+   */
+  versionMetadata?: VersionMetadata[];
 }
 
 export interface TopicEdge {

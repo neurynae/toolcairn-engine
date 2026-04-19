@@ -14,6 +14,50 @@ export interface DirectEdge {
   direction: 'a_to_b' | 'b_to_a';
 }
 
+export interface VersionCompatibilityRow {
+  version_a: string | null;
+  version_b: string | null;
+  registry_a: string | null;
+  registry_b: string | null;
+  a_to_b: { range: string; range_system: string; kind: string; source: string } | null;
+  b_to_a: { range: string; range_system: string; kind: string; source: string } | null;
+}
+
+export interface RuntimeConstraintRow {
+  version: string;
+  runtime: string;
+  range: string;
+  range_system: string;
+  source: string;
+}
+
+export interface UpsertVersionEdgeParams {
+  source_version_id: string;
+  target_tool_name: string;
+  edge_type: 'VERSION_COMPATIBLE_WITH' | 'REQUIRES_RUNTIME';
+  range: string;
+  range_system: string;
+  kind: 'peer' | 'optional_peer' | 'dep';
+  source: 'declared_dependency' | 'deps_dev' | 'version_only';
+  confidence: number;
+  last_verified: string;
+}
+
+export interface UpsertVersionNodeParams {
+  id: string;
+  tool_id: string;
+  version: string;
+  registry: string;
+  package_name: string;
+  release_date: string;
+  is_stable: boolean;
+  is_latest: boolean;
+  deprecated: boolean;
+  peer_ranges: Record<string, string>;
+  engines: Record<string, string>;
+  source: 'declared_dependency' | 'deps_dev' | 'version_only';
+}
+
 export interface ToolRepository {
   createTool(tool: ToolNode): Promise<Result<ToolNode, RepositoryError>>;
   findByName(name: string): Promise<Result<ToolNode | null, RepositoryError>>;
@@ -34,6 +78,23 @@ export interface ToolRepository {
   findByGitHubUrl(urlFragment: string): Promise<Result<ToolNode | null, RepositoryError>>;
   getPairwiseEdges(names: string[]): Promise<Result<PairwiseEdge[], RepositoryError>>;
   getToolUseCases(names: string[]): Promise<Result<ToolUseCases[], RepositoryError>>;
+  upsertVersion(params: UpsertVersionNodeParams): Promise<Result<void, RepositoryError>>;
+  linkToolVersion(
+    toolName: string,
+    versionId: string,
+    isLatest: boolean,
+  ): Promise<Result<void, RepositoryError>>;
+  upsertVersionEdge(params: UpsertVersionEdgeParams): Promise<Result<void, RepositoryError>>;
+  getVersionCompatibilityBetween(
+    nameA: string,
+    nameB: string,
+    versionA?: string,
+    versionB?: string,
+  ): Promise<Result<VersionCompatibilityRow | null, RepositoryError>>;
+  getRuntimeConstraints(
+    toolName: string,
+    version?: string,
+  ): Promise<Result<RuntimeConstraintRow[], RepositoryError>>;
 }
 
 export type TopicNodeType = 'UseCase' | 'Pattern' | 'Stack';

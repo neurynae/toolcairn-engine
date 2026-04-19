@@ -69,6 +69,14 @@ export const checkIssueSchema = {
 export const checkCompatibilitySchema = {
   tool_a: z.string(),
   tool_b: z.string(),
+  tool_a_version: z
+    .string()
+    .optional()
+    .describe('Specific version of tool_a to evaluate (e.g., "14.0.0"). Default: latest.'),
+  tool_b_version: z
+    .string()
+    .optional()
+    .describe('Specific version of tool_b to evaluate (e.g., "18.2.0"). Default: latest.'),
 };
 
 export const suggestGraphUpdateSchema = {
@@ -90,6 +98,9 @@ export const suggestGraphUpdateSchema = {
           'POPULAR_WITH',
           'BREAKS_FROM',
           'COMPATIBLE_WITH',
+          'HAS_VERSION',
+          'VERSION_COMPATIBLE_WITH',
+          'REQUIRES_RUNTIME',
         ]),
         evidence: z.string().optional(),
       })

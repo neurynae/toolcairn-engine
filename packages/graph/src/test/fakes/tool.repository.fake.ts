@@ -1,6 +1,14 @@
 import type { GraphEdge, Result, ToolCategory, ToolNode } from '@toolcairn/core';
 import type { PairwiseEdge, ToolNeighborhood, ToolUseCases } from '../../queries/tool.queries.js';
-import type { DirectEdge, RepositoryError, ToolRepository } from '../../repositories/interfaces.js';
+import type {
+  DirectEdge,
+  RepositoryError,
+  RuntimeConstraintRow,
+  ToolRepository,
+  UpsertVersionEdgeParams,
+  UpsertVersionNodeParams,
+  VersionCompatibilityRow,
+} from '../../repositories/interfaces.js';
 
 type ToolResult<T> = { ok: true; data: T } | { ok: false; error: RepositoryError };
 
@@ -173,5 +181,37 @@ export class FakeToolRepository implements ToolRepository {
   /** Get all stored edges - useful for test assertions */
   getAllEdges(): GraphEdge[] {
     return [...this.edges];
+  }
+
+  async upsertVersion(_params: UpsertVersionNodeParams): Promise<ToolResult<void>> {
+    return { ok: true, data: undefined };
+  }
+
+  async linkToolVersion(
+    _toolName: string,
+    _versionId: string,
+    _isLatest: boolean,
+  ): Promise<ToolResult<void>> {
+    return { ok: true, data: undefined };
+  }
+
+  async upsertVersionEdge(_params: UpsertVersionEdgeParams): Promise<ToolResult<void>> {
+    return { ok: true, data: undefined };
+  }
+
+  async getVersionCompatibilityBetween(
+    _nameA: string,
+    _nameB: string,
+    _versionA?: string,
+    _versionB?: string,
+  ): Promise<ToolResult<VersionCompatibilityRow | null>> {
+    return { ok: true, data: null };
+  }
+
+  async getRuntimeConstraints(
+    _toolName: string,
+    _version?: string,
+  ): Promise<ToolResult<RuntimeConstraintRow[]>> {
+    return { ok: true, data: [] };
   }
 }

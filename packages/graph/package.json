@@ -23,11 +23,13 @@
     "@toolcairn/errors": "workspace:*",
     "@toolcairn/core": "workspace:*",
     "neo4j-driver": "^5.27.0",
-    "pino": "^9.6.0"
+    "pino": "^9.6.0",
+    "semver": "^7.7.1"
   },
   "devDependencies": {
     "@toolcairn/tsconfig": "workspace:*",
     "@types/node": "^22.10.7",
+    "@types/semver": "^7.5.8",
     "rimraf": "^6.0.1",
     "typescript": "^5.7.2",
     "vitest": "^3.0.4"

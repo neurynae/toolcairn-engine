@@ -19,10 +19,14 @@ export {
   GET_INTEGRATION_NEIGHBORS,
   GET_PAIRWISE_EDGES,
   GET_RELATED_TOOLS,
+  GET_RUNTIME_CONSTRAINTS,
   GET_TOOL_CO_OCCURRENCES,
   GET_TOOL_GRAPH_RERANK,
   GET_TOOL_NEIGHBORHOOD,
   GET_TOOL_USE_CASES,
+  GET_VERSION_COMPATIBILITY_BETWEEN,
+  LINK_TOOL_VERSION,
+  MERGE_VERSION_NODE,
   TOOL_EXISTS,
   buildDecrementEdgeWeightQuery,
   buildIncrementEdgeWeightQuery,
@@ -35,22 +39,28 @@ export {
   type FindByNameParams,
   type GetRelatedParams,
   type GetToolNeighborhoodParams,
+  type LinkToolVersionParams,
   type PairwiseEdge,
   type ToolNeighborEdge,
   type ToolNeighborhood,
   type ToolUseCases,
   type UpsertEdgeParams,
+  type UpsertVersionParams,
 } from './queries/tool.queries.js';
 
 // Repository interfaces
 export type {
   DirectEdge,
   RepositoryError,
+  RuntimeConstraintRow,
   ToolRepository,
   TopicNodeType,
   TopicNode,
   TopicEdgeParams,
+  UpsertVersionEdgeParams,
+  UpsertVersionNodeParams,
   UseCaseRepository,
+  VersionCompatibilityRow,
 } from './repositories/interfaces.js';
 
 // Repository implementations
@@ -80,3 +90,6 @@ export {
 
 // In-memory fakes (for unit testing)
 export { FakeToolRepository } from './test/fakes/tool.repository.fake.js';
+
+// Version range evaluator (semver / pep440 / maven / composer / ruby / cargo / opaque)
+export { satisfies, type SatisfiesResult } from './versioning/range-evaluator.js';
