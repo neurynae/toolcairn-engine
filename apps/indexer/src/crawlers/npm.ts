@@ -31,7 +31,10 @@ function extractRepositoryUrl(repository: unknown): string {
 }
 
 export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
-  const url = `https://registry.npmjs.org/${encodeURIComponent(name)}/latest`;
+  // Full packument — contains version history needed by the version extractor.
+  // The packument's top-level tool-description fields are duplicated from the
+  // latest version, so we synthesise the "latest view" locally after fetching.
+  const url = `https://registry.npmjs.org/${encodeURIComponent(name)}`;
 
   try {
     logger.info({ name }, 'Crawling npm package');
@@ -41,11 +44,24 @@ export async function crawlNpmPackage(name: string): Promise<CrawlerResult> {
       throw new IndexerError({ message: `npm registry returned ${response.status} for ${name}` });
     }
 
-    const raw: NpmPackageResponse = (await response.json()) as NpmPackageResponse;
+    const packument = (await response.json()) as Record<string, unknown> & {
+      'dist-tags'?: { latest?: string };
+      versions?: Record<string, Record<string, unknown>>;
+    };
 
-    const keywords = Array.isArray((raw as Record<string, unknown>).keywords)
-      ? ((raw as Record<string, unknown>).keywords as string[])
-      : [];
+    // Lift the latest version's manifest to the top level so all existing
+    // extraction logic (description / homepage / license / repository / readme /
+    // keywords) keeps working unchanged. Packument already has `readme` at the
+    // top level for the latest version, so that's safe to reuse.
+    const latestTag = packument['dist-tags']?.latest;
+    const latestVersion =
+      latestTag && packument.versions ? packument.versions[latestTag] : undefined;
+    const raw = {
+      ...(latestVersion ?? {}),
+      ...packument,
+    } as NpmPackageResponse & Record<string, unknown>;
+
+    const keywords = Array.isArray(raw.keywords) ? (raw.keywords as string[]) : [];
 
     const pkgName = extractString(raw.name) || name;
     const description = extractString(raw.description);

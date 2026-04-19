@@ -74,8 +74,8 @@ export async function runCrawler(
 
   const registry = registryKeyFor(result.source);
   if (registry) {
-    const meta = await extractVersionMetadata({ registry, packageName: url, raw: result.raw });
-    if (meta) result.versionMetadata = [meta];
+    const metas = await extractVersionMetadata({ registry, packageName: url, raw: result.raw });
+    if (metas.length) result.versionMetadata = metas;
   } else if (result.source === 'github') {
     // GitHub-sourced tool — fetch metadata for each detected channel and run
     // the registered extractor. Bounded I/O: 1 fetch per channel (typical 0-2).
@@ -83,18 +83,16 @@ export async function runCrawler(
     for (const channel of result.extracted.package_managers) {
       const cfg = REGISTRY_CONFIGS[channel.registry];
       if (!cfg) continue;
-      // Skip 'none' explicitly; default 'version_only' still runs (cheap, just
-      // captures the latest version string for display).
       if (cfg.versionExtractor === 'none') continue;
       const raw = await fetchRegistryMetadata(channel.registry, channel.packageName);
       if (raw === null && cfg.versionExtractor !== 'deps_dev') continue;
       try {
-        const meta = await extractVersionMetadata({
+        const metas = await extractVersionMetadata({
           registry: channel.registry,
           packageName: channel.packageName,
           raw,
         });
-        if (meta) collected.push(meta);
+        collected.push(...metas);
       } catch (e) {
         logger.debug(
           { err: e, registry: channel.registry, pkg: channel.packageName },

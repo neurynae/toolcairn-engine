@@ -206,16 +206,16 @@ export async function writeTopicNodes(toolId: string, topicEdges: TopicEdge[]): 
  * All failures are logged but non-fatal — version writes must never block
  * the main tool-index pipeline.
  */
-export async function writeVersionToMemgraph(
+async function writeSingleVersion(
   toolName: string,
   toolId: string,
   meta: VersionMetadata,
-): Promise<void> {
+  isLatest: boolean,
+): Promise<boolean> {
   const repo = getRepository();
   const versionId = buildVersionId(meta.registry, meta.packageName, meta.version);
   const now = new Date().toISOString();
 
-  // Build peer_ranges + engines maps for storage on the node.
   const peerRanges: Record<string, string> = {};
   for (const p of meta.peers) peerRanges[p.packageName] = p.range;
   const engines: Record<string, string> = {};
@@ -230,7 +230,7 @@ export async function writeVersionToMemgraph(
       package_name: meta.packageName,
       release_date: meta.releaseDate ?? '',
       is_stable: meta.isStable,
-      is_latest: true,
+      is_latest: isLatest,
       deprecated: meta.deprecated ?? false,
       peer_ranges: peerRanges,
       engines,
@@ -241,28 +241,21 @@ export async function writeVersionToMemgraph(
         { toolName, versionId, err: upsert.error.message },
         'upsertVersion failed (non-fatal)',
       );
-      return;
+      return false;
     }
 
-    const link = await repo.linkToolVersion(toolName, versionId, true);
+    const link = await repo.linkToolVersion(toolName, versionId, isLatest);
     if (!link.ok) {
       logger.warn(
         { toolName, versionId, err: link.error.message },
         'linkToolVersion failed (non-fatal)',
       );
-      return;
+      return false;
     }
 
-    // Resolve peer edges only for already-indexed Tools.
     for (const peer of meta.peers) {
       const target = await repo.findByName(peer.packageName);
-      if (!target.ok || !target.data) {
-        logger.debug(
-          { toolName, peer: peer.packageName },
-          'Peer target not in graph — stored as peer_ranges_json only',
-        );
-        continue;
-      }
+      if (!target.ok || !target.data) continue;
       const edgeResult = await repo.upsertVersionEdge({
         source_version_id: versionId,
         target_tool_name: peer.packageName,
@@ -282,16 +275,9 @@ export async function writeVersionToMemgraph(
       }
     }
 
-    // Runtime edges — requires runtime Tools to be seeded.
     for (const eng of meta.engines) {
       const target = await repo.findByName(eng.runtime);
-      if (!target.ok || !target.data) {
-        logger.debug(
-          { toolName, runtime: eng.runtime },
-          'Runtime Tool not seeded — REQUIRES_RUNTIME edge skipped',
-        );
-        continue;
-      }
+      if (!target.ok || !target.data) continue;
       const edgeResult = await repo.upsertVersionEdge({
         source_version_id: versionId,
         target_tool_name: eng.runtime,
@@ -310,21 +296,56 @@ export async function writeVersionToMemgraph(
         );
       }
     }
-
-    logger.info(
-      {
-        toolName,
-        versionId,
-        peers: meta.peers.length,
-        engines: meta.engines.length,
-        source: meta.source,
-      },
-      'Version written to Memgraph',
-    );
+    return true;
   } catch (e) {
     logger.warn(
       { toolName, versionId, err: e },
       'Version write threw — non-fatal, continuing index pipeline',
+    );
+    return false;
+  }
+}
+
+/**
+ * Persist a batch of VersionNodes for a single (tool, registry, package_name)
+ * group. Expects `metas` ordered newest-first.
+ *
+ * Ordering trick: write historic versions FIRST with is_latest=false, then
+ * write metas[0] LAST with is_latest=true. LINK_TOOL_VERSION unsets is_latest
+ * on all prior HAS_VERSION edges on each call, so writing latest last leaves
+ * the graph in the correct state without a dedicated "mark latest" Cypher.
+ */
+export async function writeVersionToMemgraph(
+  toolName: string,
+  toolId: string,
+  metas: VersionMetadata | VersionMetadata[],
+): Promise<void> {
+  const list = Array.isArray(metas) ? metas : [metas];
+  if (!list.length) return;
+
+  // Historic first, oldest-to-newest (reverse of the newest-first input).
+  for (let i = list.length - 1; i >= 1; i--) {
+    const meta = list[i];
+    if (!meta) continue;
+    await writeSingleVersion(toolName, toolId, meta, false);
+  }
+
+  const latest = list[0];
+  if (!latest) return;
+  const ok = await writeSingleVersion(toolName, toolId, latest, true);
+  if (ok) {
+    logger.info(
+      {
+        toolName,
+        registry: latest.registry,
+        packageName: latest.packageName,
+        latestVersion: latest.version,
+        historicCount: list.length - 1,
+        peers: latest.peers.length,
+        engines: latest.engines.length,
+        source: latest.source,
+      },
+      'Version batch written to Memgraph',
     );
   }
 }

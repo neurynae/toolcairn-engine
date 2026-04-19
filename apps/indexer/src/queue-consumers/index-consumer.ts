@@ -1,3 +1,4 @@
+import type { VersionMetadata } from '@toolcairn/core';
 import { PrismaClient } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
 import { MemgraphToolRepository } from '@toolcairn/graph';
@@ -12,6 +13,23 @@ import {
 } from '../writers/memgraph.js';
 import { type IndexedToolMeta, upsertIndexedTool } from '../writers/prisma.js';
 import { upsertToolVector } from '../writers/qdrant.js';
+
+/**
+ * Group a flat versionMetadata array by (registry, package_name). The extractor
+ * returns history for a single registry/package in one pass; the GitHub path
+ * can return multiple groups when a tool is published across several registries.
+ * Each group is written as a batch so is_latest flags are set coherently.
+ */
+function groupVersions(metas: VersionMetadata[]): VersionMetadata[][] {
+  const groups = new Map<string, VersionMetadata[]>();
+  for (const m of metas) {
+    const key = `${m.registry}:${m.packageName}`;
+    const list = groups.get(key);
+    if (list) list.push(m);
+    else groups.set(key, [m]);
+  }
+  return [...groups.values()];
+}
 
 // Fallback thresholds derived from REGISTRY_CONFIGS.logScale at 1%.
 // Single source of truth — logScale lives in registry-config.ts.
@@ -168,16 +186,18 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     if (changeCheck.skip) {
       await upsertIndexedTool(canonicalUrl, changeCheck.existingId, 'indexed');
       if (crawlerResult.versionMetadata?.length) {
-        for (const meta of crawlerResult.versionMetadata) {
+        for (const group of groupVersions(crawlerResult.versionMetadata)) {
+          const first = group[0];
+          if (!first) continue;
           try {
             await writeVersionToMemgraph(
               crawlerResult.extracted.name,
               changeCheck.existingId,
-              meta,
+              group,
             );
           } catch (e) {
             logger.warn(
-              { toolId, versionRegistry: meta.registry, err: e },
+              { toolId, versionRegistry: first.registry, err: e },
               'Version write on skip path failed (non-fatal)',
             );
           }
@@ -272,16 +292,18 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     }
 
     // 6b. Write version nodes + version edges (non-fatal — graceful degradation).
-    //     versionMetadata is populated by crawler dispatcher for registries that
-    //     have a version extractor registered (npm/pypi/crates in Tier A today;
-    //     extensible to rubygems/packagist/pub/hex once their crawlers run).
+    //     versionMetadata is populated by crawler dispatcher per registry; each
+    //     group (registry, package_name) is written as a coherent batch so the
+    //     is_latest flag settles on exactly one version per group.
     if (memgraphWriteSucceeded && crawlerResult.versionMetadata?.length) {
-      for (const meta of crawlerResult.versionMetadata) {
+      for (const group of groupVersions(crawlerResult.versionMetadata)) {
+        const first = group[0];
+        if (!first) continue;
         try {
-          await writeVersionToMemgraph(processedTool.node.name, processedTool.node.id, meta);
+          await writeVersionToMemgraph(processedTool.node.name, processedTool.node.id, group);
         } catch (e) {
           logger.warn(
-            { toolId, versionRegistry: meta.registry, err: e },
+            { toolId, versionRegistry: first.registry, err: e },
             'Version write failed (non-fatal)',
           );
         }

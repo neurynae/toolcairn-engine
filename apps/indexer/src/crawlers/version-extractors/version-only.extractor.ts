@@ -2,10 +2,8 @@ import type { VersionMetadata } from '@toolcairn/core';
 
 /**
  * Generic extractor for Tier C registries where the metadata endpoint returns
- * a version string but no machine-readable dependency graph. Produces a bare
- * VersionNode (with `release_date` when we can find it) and no edges. Still
- * valuable — enables version display, future changelog ingestion, and consistent
- * traversal semantics (HAS_VERSION edge exists for every indexed tool).
+ * a version string but no machine-readable dependency graph. Produces a single-
+ * entry array (there's no history probe for these registries in MVP).
  *
  * Probes a set of common field names across registry shapes. Order of probes:
  * version → latest_version → latest.version → latest_release.version → crate.max_version.
@@ -34,7 +32,6 @@ function extractVersionString(raw: Record<string, unknown> | null): {
       }
     }
     if (typeof v === 'string' && v.trim()) {
-      // Best-effort release date lookup on same object.
       const dateProbes = ['updated_at', 'published_at', 'time', 'last_updated', 'date'];
       let date = '';
       for (const k of dateProbes) {
@@ -54,18 +51,20 @@ export function extractVersionOnly(ctx: {
   registry: string;
   packageName: string;
   raw: unknown;
-}): VersionMetadata | null {
+}): VersionMetadata[] {
   const raw = (ctx.raw as Record<string, unknown>) ?? null;
   const found = extractVersionString(raw);
-  if (!found) return null;
-  return {
-    registry: ctx.registry,
-    packageName: ctx.packageName,
-    version: found.version,
-    releaseDate: found.releaseDate,
-    isStable: !/[-+]/.test(found.version),
-    source: 'version_only',
-    peers: [],
-    engines: [],
-  };
+  if (!found) return [];
+  return [
+    {
+      registry: ctx.registry,
+      packageName: ctx.packageName,
+      version: found.version,
+      releaseDate: found.releaseDate,
+      isStable: !/[-+]/.test(found.version),
+      source: 'version_only',
+      peers: [],
+      engines: [],
+    },
+  ];
 }

@@ -232,6 +232,7 @@ export const CREATE_TOOL = {
                  t.search_weight = 1.0,
                  t.is_canonical = false
    SET t.id = $id,
+       t.name = $name,
        t.display_name = $display_name,
        t.description = $description,
        t.category = $category,
