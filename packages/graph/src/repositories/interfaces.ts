@@ -37,6 +37,32 @@ export interface RuntimeConstraintRow {
   source: string;
 }
 
+export interface StackVersionRow {
+  tool: string;
+  version: string | null;
+  registry: string | null;
+  release_date: string | null;
+  is_stable: boolean;
+  is_latest: boolean;
+}
+
+export interface StackEdgeRow {
+  from_tool: string;
+  from_version: string;
+  from_registry: string;
+  to_tool: string;
+  edge_type: 'VERSION_COMPATIBLE_WITH' | 'REQUIRES_RUNTIME';
+  range: string;
+  range_system: string;
+  kind: string | null;
+  source: string;
+}
+
+export interface StackVersionInfo {
+  versions: StackVersionRow[];
+  edges: StackEdgeRow[];
+}
+
 export interface UpsertVersionEdgeParams {
   source_version_id: string;
   target_tool_name: string;
@@ -101,6 +127,13 @@ export interface ToolRepository {
     toolName: string,
     version?: string,
   ): Promise<Result<RuntimeConstraintRow[], RepositoryError>>;
+  /**
+   * Fetch stack-level version data: every VersionNode for the given tools
+   * plus every VERSION_COMPATIBLE_WITH / REQUIRES_RUNTIME edge between them
+   * (filtered to edges from latest versions). Powers get_stack's cross-tool
+   * version resolution without N separate round-trips.
+   */
+  getStackVersionInfo(names: string[]): Promise<Result<StackVersionInfo, RepositoryError>>;
 }
 
 export type TopicNodeType = 'UseCase' | 'Pattern' | 'Stack';

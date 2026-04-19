@@ -4,6 +4,7 @@ import type {
   DirectEdge,
   RepositoryError,
   RuntimeConstraintRow,
+  StackVersionInfo,
   ToolRepository,
   UpsertVersionEdgeParams,
   UpsertVersionNodeParams,
@@ -213,5 +214,9 @@ export class FakeToolRepository implements ToolRepository {
     _version?: string,
   ): Promise<ToolResult<RuntimeConstraintRow[]>> {
     return { ok: true, data: [] };
+  }
+
+  async getStackVersionInfo(_names: string[]): Promise<ToolResult<StackVersionInfo>> {
+    return { ok: true, data: { versions: [], edges: [] } };
   }
 }

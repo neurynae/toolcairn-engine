@@ -8,8 +8,66 @@ import {
 } from '../format-results.js';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
+import { type StackResolution, resolveStackVersions } from './stack-version-resolver.js';
 
 const logger = createLogger({ name: '@toolcairn/tools:get-stack' });
+
+/**
+ * Pull VersionNode data for every tool in the stack and run the cross-tool
+ * resolver. Failures are non-fatal — returns undefined so the caller can
+ * emit the stack without version annotations when the graph is unavailable.
+ */
+async function enrichWithVersions(
+  stackNames: string[],
+  deps: Pick<ToolDeps, 'graphRepo'>,
+): Promise<StackResolution | undefined> {
+  if (!stackNames.length) return undefined;
+  try {
+    const res = await deps.graphRepo.getStackVersionInfo(stackNames);
+    if (!res.ok) {
+      logger.warn({ err: res.error.message }, 'getStackVersionInfo failed — skipping enrichment');
+      return undefined;
+    }
+    return resolveStackVersions(res.data, stackNames);
+  } catch (e) {
+    logger.warn({ err: e }, 'Stack version enrichment threw — skipping');
+    return undefined;
+  }
+}
+
+/**
+ * Merge a StackResolution into a formatted stack array, annotating each entry.
+ * Keyed on `tool` (the field formatResults emits), not `name`.
+ */
+function mergeResolutionIntoStack<T extends { tool: string }>(
+  stack: T[],
+  resolution: StackResolution | undefined,
+): Array<T & { version?: ResolvedVersionFacet }> {
+  if (!resolution) return stack;
+  const byName = new Map(resolution.resolved.map((r) => [r.tool, r]));
+  return stack.map((entry) => {
+    const r = byName.get(entry.tool);
+    if (!r || !r.recommended_version) return entry;
+    return {
+      ...entry,
+      version: {
+        recommended: r.recommended_version,
+        latest: r.latest_version,
+        registry: r.registry,
+        release_date: r.release_date,
+        status: r.status,
+      },
+    };
+  });
+}
+
+interface ResolvedVersionFacet {
+  recommended: string | null;
+  latest: string | null;
+  registry: string | null;
+  release_date: string | null;
+  status: StackResolution['resolved'][number]['status'];
+}
 
 /** Tools fetched per sub-need via full BM25+vector pipeline. */
 const TOOLS_PER_NEED = 5;
@@ -89,7 +147,7 @@ export function createGetStackHandler(deps: Pick<ToolDeps, 'pipeline' | 'graphRe
       const pairwiseEdges = edgeResult.ok ? edgeResult.data : [];
 
       const composed = composeStack(candidates, toolUseCases, pairwiseEdges, limit);
-      return formatAndReturn(use_case, composed, 'fallback');
+      return await formatAndReturn(use_case, composed, 'fallback', deps);
     } catch (e) {
       logger.error({ err: e }, 'get_stack threw');
       return errResult('internal_error', e instanceof Error ? e.message : String(e));
@@ -190,11 +248,17 @@ async function buildStackFromSubNeeds(
     false,
   );
 
-  const stack = formatted.map((f, i) => ({
+  const baseStack = formatted.map((f, i) => ({
     ...f,
     // biome-ignore lint/style/noNonNullAssertion: same length
     role: selected[i]!.role,
   }));
+
+  const resolution = await enrichWithVersions(
+    baseStack.map((s) => s.tool),
+    deps,
+  );
+  const stack = mergeResolutionIntoStack(baseStack, resolution);
 
   const credWarning = buildLowCredibilityWarning(stack);
   const guidance = buildNonIndexedGuidance(stack, useCase);
@@ -205,6 +269,8 @@ async function buildStackFromSubNeeds(
       stackSize: stack.length,
       roles: stack.map((s) => s.role),
       mode: 'decomposed',
+      stackCompatibility: resolution?.stack_compatibility ?? 'unknown',
+      matrixRows: resolution?.compatibility_matrix.length ?? 0,
     },
     'get_stack complete',
   );
@@ -213,6 +279,12 @@ async function buildStackFromSubNeeds(
     use_case: useCase,
     stack,
     ...(integrationNotes.length > 0 ? { integration_notes: integrationNotes } : {}),
+    ...(resolution && resolution.compatibility_matrix.length > 0
+      ? {
+          compatibility_matrix: resolution.compatibility_matrix,
+          stack_compatibility: resolution.stack_compatibility,
+        }
+      : {}),
     ...(credWarning ? { credibility_warning: credWarning } : {}),
     ...(guidance ? { non_indexed_guidance: guidance } : {}),
   });
@@ -324,11 +396,17 @@ async function buildStackFromKeywordNeeds(
     false,
   );
 
-  const stack = formatted.map((f, i) => ({
+  const baseStack = formatted.map((f, i) => ({
     ...f,
     // biome-ignore lint/style/noNonNullAssertion: same length
     role: selected[i]!.role,
   }));
+
+  const resolution = await enrichWithVersions(
+    baseStack.map((s) => s.tool),
+    deps,
+  );
+  const stack = mergeResolutionIntoStack(baseStack, resolution);
 
   const credWarning = buildLowCredibilityWarning(stack);
   const guidance = buildNonIndexedGuidance(stack, useCase);
@@ -339,6 +417,8 @@ async function buildStackFromKeywordNeeds(
       stackSize: stack.length,
       roles: stack.map((s) => s.role),
       mode: 'keyword',
+      stackCompatibility: resolution?.stack_compatibility ?? 'unknown',
+      matrixRows: resolution?.compatibility_matrix.length ?? 0,
     },
     'get_stack complete',
   );
@@ -348,6 +428,12 @@ async function buildStackFromKeywordNeeds(
     stack,
     ...(integrationNotes.length > 0 ? { integration_notes: integrationNotes } : {}),
     ...(requiresNotes.length > 0 ? { requires_notes: requiresNotes } : {}),
+    ...(resolution && resolution.compatibility_matrix.length > 0
+      ? {
+          compatibility_matrix: resolution.compatibility_matrix,
+          stack_compatibility: resolution.stack_compatibility,
+        }
+      : {}),
     ...(credWarning ? { credibility_warning: credWarning } : {}),
     ...(guidance ? { non_indexed_guidance: guidance } : {}),
   });
@@ -427,27 +513,41 @@ function buildRequiresNotes(
 }
 
 /** Format and return the final stack response. */
-function formatAndReturn(
+async function formatAndReturn(
   useCase: string,
   composed: { tools: Array<ToolScoredResult & { role: string }>; integrationNotes: string[] },
   mode: string,
+  deps: Pick<ToolDeps, 'graphRepo'>,
 ) {
   const formatted = formatResults(
     composed.tools.map((t) => ({ tool: t.tool, score: t.score })),
     false,
   );
 
-  const stack = formatted.map((f, i) => ({
+  const baseStack = formatted.map((f, i) => ({
     ...f,
     // biome-ignore lint/style/noNonNullAssertion: same length
     role: composed.tools[i]!.role,
   }));
 
+  const resolution = await enrichWithVersions(
+    baseStack.map((s) => s.tool),
+    deps,
+  );
+  const stack = mergeResolutionIntoStack(baseStack, resolution);
+
   const credWarning = buildLowCredibilityWarning(stack);
   const guidance = buildNonIndexedGuidance(stack, useCase);
 
   logger.info(
-    { use_case: useCase, stackSize: stack.length, roles: stack.map((s) => s.role), mode },
+    {
+      use_case: useCase,
+      stackSize: stack.length,
+      roles: stack.map((s) => s.role),
+      mode,
+      stackCompatibility: resolution?.stack_compatibility ?? 'unknown',
+      matrixRows: resolution?.compatibility_matrix.length ?? 0,
+    },
     'get_stack complete',
   );
 
@@ -456,6 +556,12 @@ function formatAndReturn(
     stack,
     ...(composed.integrationNotes.length > 0
       ? { integration_notes: composed.integrationNotes }
+      : {}),
+    ...(resolution && resolution.compatibility_matrix.length > 0
+      ? {
+          compatibility_matrix: resolution.compatibility_matrix,
+          stack_compatibility: resolution.stack_compatibility,
+        }
       : {}),
     ...(credWarning ? { credibility_warning: credWarning } : {}),
     ...(guidance ? { non_indexed_guidance: guidance } : {}),

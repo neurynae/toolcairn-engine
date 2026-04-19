@@ -227,6 +227,49 @@ export const GET_VERSION_COMPATIBILITY_BETWEEN = {
    LIMIT 1`,
 };
 
+/**
+ * Batch-fetch every VersionNode for a set of tools, one row per version.
+ *
+ * Used by get_stack to resolve the "best cross-compatible version" per tool
+ * without N separate round-trips. Returns the full known history (capped by
+ * the extractor-level MAX_VERSIONS_PER_TOOL) so the resolver can fall back
+ * to historic versions if the latest violates an incoming peer constraint.
+ */
+export const GET_STACK_VERSION_INFO = {
+  text: `UNWIND $names AS name
+   OPTIONAL MATCH (t:Tool { name: name })-[h:HAS_VERSION]->(v:Version)
+   RETURN name AS tool,
+          v.version AS version,
+          v.registry AS registry,
+          v.release_date AS release_date,
+          v.is_stable AS is_stable,
+          h.is_latest AS is_latest
+   ORDER BY name, h.is_latest DESC, v.release_date DESC`,
+};
+
+/**
+ * All VERSION_COMPATIBLE_WITH + REQUIRES_RUNTIME edges between tools in the
+ * stack. Only considers edges from the latest version of each source tool —
+ * historic-version edges would explode the combinatorics without improving
+ * typical-case accuracy (peer ranges rarely differ dramatically across minor
+ * versions).
+ */
+export const GET_STACK_VERSION_EDGES = {
+  text: `MATCH (src:Tool)-[h:HAS_VERSION]->(v:Version)-[r]->(tgt:Tool)
+   WHERE src.name IN $names AND tgt.name IN $names
+     AND h.is_latest = true
+     AND type(r) IN ['VERSION_COMPATIBLE_WITH', 'REQUIRES_RUNTIME']
+   RETURN src.name AS from_tool,
+          v.version AS from_version,
+          v.registry AS from_registry,
+          tgt.name AS to_tool,
+          type(r) AS edge_type,
+          r.range AS range,
+          r.range_system AS range_system,
+          r.kind AS kind,
+          r.source AS source`,
+};
+
 /** Fetch runtime constraints (REQUIRES_RUNTIME edges) for a tool's version. */
 export const GET_RUNTIME_CONSTRAINTS = {
   text: `MATCH (t:Tool { name: $tool_name })-[ha:HAS_VERSION]->(v:Version)

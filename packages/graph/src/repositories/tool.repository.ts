@@ -15,6 +15,8 @@ import {
   GET_PAIRWISE_EDGES,
   GET_RELATED_TOOLS,
   GET_RUNTIME_CONSTRAINTS,
+  GET_STACK_VERSION_EDGES,
+  GET_STACK_VERSION_INFO,
   GET_TOOL_NEIGHBORHOOD,
   GET_TOOL_USE_CASES,
   GET_VERSION_COMPATIBILITY_BETWEEN,
@@ -34,6 +36,9 @@ import type {
   DirectEdge,
   RepositoryError,
   RuntimeConstraintRow,
+  StackEdgeRow,
+  StackVersionInfo,
+  StackVersionRow,
   ToolRepository,
   UpsertVersionEdgeParams,
   UpsertVersionNodeParams,
@@ -587,6 +592,52 @@ export class MemgraphToolRepository implements ToolRepository {
       return { ok: false, error: { code: 'DB_ERROR', message } };
     } finally {
       await session.close();
+    }
+  }
+
+  async getStackVersionInfo(names: string[]): Promise<ToolResult<StackVersionInfo>> {
+    if (!names.length) return { ok: true, data: { versions: [], edges: [] } };
+    const versionsSession = this.session();
+    const edgesSession = this.session();
+    try {
+      const [vRes, eRes] = await Promise.all([
+        versionsSession.run(GET_STACK_VERSION_INFO.text, { names }),
+        edgesSession.run(GET_STACK_VERSION_EDGES.text, { names }),
+      ]);
+      const versions: StackVersionRow[] = [];
+      for (const rec of vRes.records) {
+        const version = rec.get('version');
+        if (!version) continue;
+        versions.push({
+          tool: rec.get('tool'),
+          version,
+          registry: rec.get('registry'),
+          release_date: rec.get('release_date'),
+          is_stable: rec.get('is_stable') ?? true,
+          is_latest: rec.get('is_latest') === true,
+        });
+      }
+      const edges: StackEdgeRow[] = [];
+      for (const rec of eRes.records) {
+        edges.push({
+          from_tool: rec.get('from_tool'),
+          from_version: rec.get('from_version'),
+          from_registry: rec.get('from_registry'),
+          to_tool: rec.get('to_tool'),
+          edge_type: rec.get('edge_type') as StackEdgeRow['edge_type'],
+          range: rec.get('range') ?? '*',
+          range_system: rec.get('range_system') ?? 'opaque',
+          kind: rec.get('kind') ?? null,
+          source: rec.get('source') ?? 'declared_dependency',
+        });
+      }
+      return { ok: true, data: { versions, edges } };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await versionsSession.close();
+      await edgesSession.close();
     }
   }
 }
