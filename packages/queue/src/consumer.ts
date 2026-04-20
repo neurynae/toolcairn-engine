@@ -333,10 +333,20 @@ export async function startConsumer(
                 ),
               ]);
             } else if (msg.type === 'run-discovery' && handlers.onRunDiscovery) {
-              await handlers.onRunDiscovery();
+              // Fire-and-forget (same reason as main loop) so PEL drain
+              // doesn't block on a 25-30 min discovery sweep at startup.
+              handlers
+                .onRunDiscovery()
+                .catch((err) =>
+                  logger.error({ err, messageId: msg.id }, 'PEL drain: discovery failed'),
+                );
             } else if (msg.type === 'run-reindex' && handlers.onRunReindex) {
               const { triggeredBy } = (msg.payload ?? {}) as { triggeredBy?: string };
-              await handlers.onRunReindex(triggeredBy === 'manual');
+              handlers
+                .onRunReindex(triggeredBy === 'manual')
+                .catch((err) =>
+                  logger.error({ err, messageId: msg.id }, 'PEL drain: reindex failed'),
+                );
             }
           } catch (e) {
             logger.error({ err: e, messageId: msg.id }, 'PEL drain: message processing failed');
@@ -427,17 +437,33 @@ export async function startConsumer(
         );
       }
 
-      // Process non-index messages sequentially
+      // Process non-index messages.
+      // search-event is fast → await and XACK in-loop as before.
+      // run-discovery / run-reindex are LONG-running (discovery = 25-30 min
+      // across 300+ topics). If we await them here, the outer while-loop is
+      // frozen for the entire duration, and new index-jobs stack up unread in
+      // the stream. Fire-and-forget these so the consumer keeps polling the
+      // index stream while the scheduler task runs in the background.
+      const schedulerAckIds: string[] = [];
       for (const msg of otherMessages) {
         try {
           if (msg.type === 'search-event') {
             const { query, sessionId } = msg.payload as { query: string; sessionId: string };
             await handlers.onSearchEvent(query, sessionId);
           } else if (msg.type === 'run-discovery' && handlers.onRunDiscovery) {
-            await handlers.onRunDiscovery();
+            // XACK first so subsequent reads don't redeliver; then kick off
+            // the sweep in the background. Errors land in the handler's own
+            // try/catch (runDiscovery/runReindex in index-worker.ts).
+            handlers
+              .onRunDiscovery()
+              .catch((err) => logger.error({ err }, 'Background discovery sweep failed'));
+            schedulerAckIds.push(msg._entryId);
           } else if (msg.type === 'run-reindex' && handlers.onRunReindex) {
             const { triggeredBy } = (msg.payload ?? {}) as { triggeredBy?: string };
-            await handlers.onRunReindex(triggeredBy === 'manual');
+            handlers
+              .onRunReindex(triggeredBy === 'manual')
+              .catch((err) => logger.error({ err }, 'Background reindex sweep failed'));
+            schedulerAckIds.push(msg._entryId);
           }
         } catch (e) {
           logger.error(
@@ -449,16 +475,20 @@ export async function startConsumer(
 
       // XACK non-index messages (search, scheduler) — these are fast and don't hang.
       // Index messages are already XACK'd per-message above.
+      // Scheduler triggers are XACK'd above when fire-and-forget is dispatched
+      // so the consumer loop keeps draining even though the handler is still running.
       const redis = getRedisClient();
       const searchIds = messages
         .filter((m) => m._streamKey === SEARCH_STREAM)
         .map((m) => m._entryId);
-      const schedulerIds = messages
-        .filter((m) => m._streamKey === SCHEDULER_STREAM)
+      const schedulerIdsNotAcked = messages
+        .filter((m) => m._streamKey === SCHEDULER_STREAM && !schedulerAckIds.includes(m._entryId))
         .map((m) => m._entryId);
 
       if (searchIds.length > 0) await redis.xack(SEARCH_STREAM, group, ...searchIds);
-      if (schedulerIds.length > 0) await redis.xack(SCHEDULER_STREAM, group, ...schedulerIds);
+      if (schedulerAckIds.length > 0) await redis.xack(SCHEDULER_STREAM, group, ...schedulerAckIds);
+      if (schedulerIdsNotAcked.length > 0)
+        await redis.xack(SCHEDULER_STREAM, group, ...schedulerIdsNotAcked);
     }
   } finally {
     process.off('SIGTERM', shutdown);
