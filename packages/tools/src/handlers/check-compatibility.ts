@@ -98,16 +98,32 @@ export function createCheckCompatibilityHandler(deps: Pick<ToolDeps, 'graphRepo'
 
       if (versionRows.ok && versionRows.data && shouldUseVersionPath(versionRows.data)) {
         const row = versionRows.data;
-        const evaluation = evaluateVersionRow(row, resolvedA, resolvedB);
+        const evaluation = evaluateVersionRow(
+          row,
+          resolvedA,
+          resolvedB,
+          args.tool_a_version,
+          args.tool_b_version,
+        );
 
         const [runtimeA, runtimeB] = await Promise.all([
           deps.graphRepo.getRuntimeConstraints(resolvedA, row.version_a ?? undefined),
           deps.graphRepo.getRuntimeConstraints(resolvedB, row.version_b ?? undefined),
         ]);
+        // Dedupe by (tool, runtime) — the Cypher can return the same runtime
+        // edge multiple times when a tool has multiple Version nodes flagged
+        // as is_latest (a write-path invariant we can't always guarantee).
+        const seen = new Set<string>();
         const runtime_requirements: RuntimeRequirement[] = [];
+        const pushUnique = (r: RuntimeRequirement) => {
+          const key = `${r.tool}::${r.runtime}::${r.range}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          runtime_requirements.push(r);
+        };
         if (runtimeA.ok) {
           for (const r of runtimeA.data) {
-            runtime_requirements.push({
+            pushUnique({
               tool: resolvedA,
               runtime: r.runtime,
               range: r.range,
@@ -118,7 +134,7 @@ export function createCheckCompatibilityHandler(deps: Pick<ToolDeps, 'graphRepo'
         }
         if (runtimeB.ok) {
           for (const r of runtimeB.data) {
-            runtime_requirements.push({
+            pushUnique({
               tool: resolvedB,
               runtime: r.runtime,
               range: r.range,
@@ -131,8 +147,8 @@ export function createCheckCompatibilityHandler(deps: Pick<ToolDeps, 'graphRepo'
         return okResult({
           tool_a: resolvedA,
           tool_b: resolvedB,
-          tool_a_version: row.version_a,
-          tool_b_version: row.version_b,
+          tool_a_version: row.version_a ?? args.tool_a_version ?? null,
+          tool_b_version: row.version_b ?? args.tool_b_version ?? null,
           status: evaluation.status,
           confidence: Math.round(evaluation.confidence * 100) / 100,
           direct_edges: [],
@@ -260,6 +276,8 @@ function evaluateVersionRow(
   row: VersionCompatibilityRow,
   nameA: string,
   nameB: string,
+  userVersionA?: string,
+  userVersionB?: string,
 ): {
   status: CompatibilityStatus;
   confidence: number;
@@ -275,9 +293,17 @@ function evaluateVersionRow(
   let anyOptionalFail = false;
   let anyRuntimeDeclared = false;
 
-  if (row.a_to_b && row.version_b) {
+  // Satisfy-check target: prefer the graph's VersionNode version, else the
+  // user-supplied version string. When user pins a version we don't have as
+  // a VersionNode (e.g. 15 historic versions doesn't include "14.0.0"), we
+  // still evaluate the declared range against the supplied string — we'd
+  // rather emit a real verdict than "unknown".
+  const versionADisplay = row.version_a ?? userVersionA ?? null;
+  const versionBDisplay = row.version_b ?? userVersionB ?? null;
+
+  if (row.a_to_b && versionBDisplay) {
     const system = row.a_to_b.range_system as RangeSystem;
-    const result = satisfies(row.version_b, row.a_to_b.range, system);
+    const result = satisfies(versionBDisplay, row.a_to_b.range, system);
     const check: VersionCheck = {
       from: nameA,
       to: nameB,
@@ -291,24 +317,24 @@ function evaluateVersionRow(
     if (result.ok) {
       anySatisfied = true;
       signals.push(
-        `${nameA}@${row.version_a} declares ${row.a_to_b.kind} ${nameB} ${row.a_to_b.range} — ${row.version_b} satisfies`,
+        `${nameA}@${versionADisplay ?? 'latest'} declares ${row.a_to_b.kind} ${nameB} ${row.a_to_b.range} — ${versionBDisplay} satisfies`,
       );
     } else if (row.a_to_b.kind === 'optional_peer') {
       anyOptionalFail = true;
       signals.push(
-        `${nameA}@${row.version_a} declares optional peer ${nameB} ${row.a_to_b.range} — ${row.version_b} does not satisfy (${result.reason ?? 'unknown'})`,
+        `${nameA}@${versionADisplay ?? 'latest'} declares optional peer ${nameB} ${row.a_to_b.range} — ${versionBDisplay} does not satisfy (${result.reason ?? 'unknown'})`,
       );
     } else {
       anyUnsatisfied = true;
       signals.push(
-        `${nameA}@${row.version_a} requires ${nameB} ${row.a_to_b.range} — ${row.version_b} fails (${result.reason ?? 'unknown'})`,
+        `${nameA}@${versionADisplay ?? 'latest'} requires ${nameB} ${row.a_to_b.range} — ${versionBDisplay} fails (${result.reason ?? 'unknown'})`,
       );
     }
   }
 
-  if (row.b_to_a && row.version_a) {
+  if (row.b_to_a && versionADisplay) {
     const system = row.b_to_a.range_system as RangeSystem;
-    const result = satisfies(row.version_a, row.b_to_a.range, system);
+    const result = satisfies(versionADisplay, row.b_to_a.range, system);
     const check: VersionCheck = {
       from: nameB,
       to: nameA,
@@ -322,17 +348,17 @@ function evaluateVersionRow(
     if (result.ok) {
       anySatisfied = true;
       signals.push(
-        `${nameB}@${row.version_b} declares ${row.b_to_a.kind} ${nameA} ${row.b_to_a.range} — ${row.version_a} satisfies`,
+        `${nameB}@${versionBDisplay ?? 'latest'} declares ${row.b_to_a.kind} ${nameA} ${row.b_to_a.range} — ${versionADisplay} satisfies`,
       );
     } else if (row.b_to_a.kind === 'optional_peer') {
       anyOptionalFail = true;
       signals.push(
-        `${nameB}@${row.version_b} declares optional peer ${nameA} ${row.b_to_a.range} — ${row.version_a} does not satisfy (${result.reason ?? 'unknown'})`,
+        `${nameB}@${versionBDisplay ?? 'latest'} declares optional peer ${nameA} ${row.b_to_a.range} — ${versionADisplay} does not satisfy (${result.reason ?? 'unknown'})`,
       );
     } else {
       anyUnsatisfied = true;
       signals.push(
-        `${nameB}@${row.version_b} requires ${nameA} ${row.b_to_a.range} — ${row.version_a} fails (${result.reason ?? 'unknown'})`,
+        `${nameB}@${versionBDisplay ?? 'latest'} requires ${nameA} ${row.b_to_a.range} — ${versionADisplay} fails (${result.reason ?? 'unknown'})`,
       );
     }
   }
