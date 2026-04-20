@@ -217,6 +217,29 @@ function detectPackageManagers(contents: string[]): Record<string, string> {
   return managers;
 }
 
+// ─── Size-gate config ────────────────────────────────────────────────────────
+
+/**
+ * Star ceiling above which a repo is considered "mega" and gets a reduced-work
+ * crawl path. These repos (torvalds/linux, freeCodeCamp/freeCodeCamp, etc.)
+ * OOM the indexer's Node heap during full processing because their contributor
+ * + commit + readme payloads are 10-100x larger than a typical tool. At this
+ * threshold the full-crawl path would add ~no value anyway (the tool catalogue
+ * isn't about the Linux kernel), so we fail fast with a clear skip reason.
+ */
+const MEGA_REPO_STAR_THRESHOLD = 150_000;
+
+export class MegaRepoSkip extends Error {
+  readonly skipReason: string;
+  readonly stars: number;
+  constructor(repoKey: string, stars: number) {
+    super(`Skipping mega-repo ${repoKey} (${stars}★) — exceeds size threshold`);
+    this.name = 'MegaRepoSkip';
+    this.skipReason = 'repo_too_large_for_index';
+    this.stars = stars;
+  }
+}
+
 // ─── Main crawler ─────────────────────────────────────────────────────────────
 
 export async function crawlGitHubRepo(owner: string, repo: string): Promise<CrawlerResult> {
@@ -237,6 +260,19 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
           headers: Record<string, string | undefined>;
         }>,
     );
+
+    // ── Mega-repo size gate ─────────────────────────────────────────────────
+    // Abort before loading contributors/commits/readme for repos that would
+    // OOM the Node heap during processing. Thrown here so the consumer can
+    // mark the tool 'skipped' with a clear reason instead of retrying forever.
+    const starCount = repoData.stargazers_count ?? 0;
+    if (starCount >= MEGA_REPO_STAR_THRESHOLD) {
+      logger.warn(
+        { repo: repoKey, stars: starCount, threshold: MEGA_REPO_STAR_THRESHOLD },
+        'Mega-repo detected — skipping to avoid OOM',
+      );
+      throw new MegaRepoSkip(repoKey, starCount);
+    }
 
     const languages = await githubRequest<Record<string, number>>(
       `languages:${repoKey}`,

@@ -361,6 +361,25 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
 
     logger.info({ toolId, nodeId: processedTool.node.id }, 'Index job complete');
   } catch (e) {
+    // Crawler-signalled "too large to index" — record as skipped with a clear
+    // reason so the pending-watchdog doesn't keep re-enqueueing it. Must match
+    // the error's `skipReason` field from the MegaRepoSkip class.
+    const isMegaSkip =
+      e instanceof Error &&
+      e.name === 'MegaRepoSkip' &&
+      'skipReason' in e &&
+      typeof (e as { skipReason: unknown }).skipReason === 'string';
+    if (isMegaSkip) {
+      const skipReason = (e as { skipReason: string }).skipReason;
+      logger.warn({ toolId, skipReason }, 'Skipping oversized repo');
+      try {
+        await upsertIndexedTool(canonicalUrl, '', 'skipped', { skipReason });
+      } catch (prismaErr) {
+        logger.error({ toolId, err: prismaErr }, 'Failed to record skip in staging DB');
+      }
+      return;
+    }
+
     logger.error({ toolId, err: e }, 'Index job failed');
     try {
       await upsertIndexedTool(canonicalUrl, '', 'failed');
