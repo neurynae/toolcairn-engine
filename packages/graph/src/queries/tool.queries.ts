@@ -592,10 +592,20 @@ function requireString(value: unknown, field: string): string {
 }
 
 function requireNumber(value: unknown, field: string): number {
-  if (typeof value !== 'number') {
-    throw new Error(`mapRecordToToolNode: field '${field}' expected number, got ${typeof value}`);
+  if (typeof value === 'number') return value;
+  // neo4j-driver returns bigint or Integer{low,high} for some numeric paths
+  // (e.g. toInteger() in Cypher). Unwrap these instead of throwing — a single
+  // Integer-typed field in the result set used to short-circuit the entire
+  // .map() and produce an empty response from /v1/analytics/top-quality.
+  if (typeof value === 'bigint') return Number(value);
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as { toNumber?: () => number }).toNumber === 'function'
+  ) {
+    return (value as { toNumber: () => number }).toNumber();
   }
-  return value;
+  throw new Error(`mapRecordToToolNode: field '${field}' expected number, got ${typeof value}`);
 }
 
 function requireStringArray(value: unknown, field: string): string[] {
