@@ -17,6 +17,31 @@ const BATCH_SIZE = 100;
 const PRESERVED_PAYLOAD_FIELDS = ['keyword_sentence'] as const;
 
 /**
+ * Derive a flat indexable key per PackageChannel for Qdrant payload filtering.
+ * Form: "<registry>:<packageName>", one per entry in tool.package_managers.
+ *
+ * This powers the MCP's toolcairn_init → batch-resolve lookup: given a manifest
+ * declaration like {"next": "^14"} inside a user's package.json, the resolver
+ * queries Qdrant for points whose registry_package_keys array contains
+ * "npm:next". A keyword payload index makes this O(log N).
+ *
+ * Kept in sync with the existing package_managers array — they always describe
+ * the same data, this is just a denormalised view optimised for lookups.
+ */
+export function deriveRegistryPackageKeys(tool: ToolNode): string[] {
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  for (const pc of tool.package_managers ?? []) {
+    if (!pc?.registry || !pc?.packageName) continue;
+    const key = `${pc.registry}:${pc.packageName}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keys.push(key);
+  }
+  return keys;
+}
+
+/**
  * Fetch the existing payload for `id` from Qdrant and return an object
  * containing only the fields we preserve across reindex. Empty object if
  * no prior point exists or on error — preservation is best-effort.
@@ -91,6 +116,7 @@ export async function upsertToolVector(tool: ToolNode, vector: number[]): Promis
     const mergedPayload: Record<string, unknown> = {
       ...preserved,
       ...(tool as unknown as Record<string, unknown>),
+      registry_package_keys: deriveRegistryPackageKeys(tool),
     };
     // Re-assert preserved fields in case ToolNode has an explicit undefined
     // for the key (which would have overwritten via spread).
@@ -150,6 +176,7 @@ export async function upsertToolVectorBatch(
     const mergedPayload: Record<string, unknown> = {
       ...preserved,
       ...(tool as unknown as Record<string, unknown>),
+      registry_package_keys: deriveRegistryPackageKeys(tool),
     };
     for (const key of PRESERVED_PAYLOAD_FIELDS) {
       if (preserved[key] !== undefined) mergedPayload[key] = preserved[key];
