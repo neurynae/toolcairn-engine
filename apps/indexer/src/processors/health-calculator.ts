@@ -124,26 +124,44 @@ export function calculateHealth(
   const lastReleaseDate = extractString(repo.updated_at) || new Date().toISOString();
   const contributorCount = extractNumber(repo.subscribers_count);
 
-  // Real velocity from snapshot delta
+  // Real velocity from snapshot delta. Two historical bugs produced absurd
+  // values (e.g. react stored velocity_90d=22M, growth_pct=2.2 billion %):
+  //
+  //   1. `prev.stars >= 0` accepted prev.stars = 0, so a brand-new snapshot
+  //      where the previous row had not yet recorded stars produced
+  //      delta = stars - 0 = full stars → velocity exploded.
+  //   2. daysElapsed was floored at 1 day. If the indexer re-ran minutes
+  //      after a previous run, the real rate (×N hours) got projected out
+  //      ×90 days, amplifying errors instead of damping them.
+  //
+  // Fix: only use the snapshot path when prev has REAL stars AND at least
+  // one full day of elapsed time has passed. Cap each velocity at the
+  // current stars count (you can't have gained more stars than you have).
   let starsVelocity90d: number;
   let starsVelocity30d: number;
   let starsVelocity7d: number;
   let starsSnapshotAt: string;
 
-  if (prev && prev.stars >= 0) {
-    const prevDate = new Date(prev.updatedAt);
-    const daysElapsed = Math.max(1, (Date.now() - prevDate.getTime()) / 86_400_000);
+  const MIN_DAYS_FOR_VELOCITY = 1;
+  const useSnapshotDelta =
+    prev &&
+    prev.stars > 0 &&
+    (Date.now() - new Date(prev.updatedAt).getTime()) / 86_400_000 >= MIN_DAYS_FOR_VELOCITY;
+
+  if (useSnapshotDelta && prev) {
+    const daysElapsed = (Date.now() - new Date(prev.updatedAt).getTime()) / 86_400_000;
     const delta = Math.max(0, stars - prev.stars);
-    starsVelocity90d = Math.round((delta / daysElapsed) * 90);
-    starsVelocity30d = Math.round((delta / daysElapsed) * 30);
-    starsVelocity7d = Math.round((delta / daysElapsed) * 7);
-    starsSnapshotAt = new Date().toISOString();
+    starsVelocity90d = Math.min(stars, Math.round((delta / daysElapsed) * 90));
+    starsVelocity30d = Math.min(stars, Math.round((delta / daysElapsed) * 30));
+    starsVelocity7d = Math.min(stars, Math.round((delta / daysElapsed) * 7));
   } else {
-    starsVelocity90d = Math.round(stars * 0.05); // first-index estimate
+    // First index OR snapshot too fresh to compute reliable rate —
+    // fall back to the conservative percent-of-stars estimate.
+    starsVelocity90d = Math.round(stars * 0.05);
     starsVelocity30d = Math.round(stars * 0.015);
     starsVelocity7d = Math.round(stars * 0.003);
-    starsSnapshotAt = new Date().toISOString();
   }
+  starsSnapshotAt = new Date().toISOString();
 
   const commitVelocity30d =
     recencyScore(lastCommitDate) > 0.8 ? 10 : recencyScore(lastCommitDate) > 0.5 ? 3 : 1;

@@ -222,9 +222,12 @@ export function analyticsRoutes() {
       const entries = result.data.map((t, idx) => {
         const velocity = t.health.stars_velocity_90d ?? 0;
         const stars = t.health.stars ?? 0;
-        // Approximate growth percent: stars gained in 90d as % of base
-        const base = Math.max(1, stars - velocity);
-        const growth_pct = Math.round((velocity / base) * 100);
+        // "% of current stars that were gained in the last 90 days".
+        // Previous formula `velocity / (stars - velocity) * 100` was the
+        // growth-over-baseline ratio but exploded when velocity ≈ stars
+        // (hot new tools). Clamp at 100 so first-index estimates and
+        // explosive tools both render sensibly.
+        const growth_pct = stars > 0 ? Math.min(100, Math.round((velocity / stars) * 100)) : 0;
         return {
           rank: idx + 1,
           tool_name: t.name,
