@@ -183,23 +183,21 @@ export function analyticsRoutes() {
   app.get('/top-popular', async (c) => {
     try {
       const limit = Math.min(50, Math.max(1, Number(c.req.query('limit') ?? 10)));
-      const result = await repo.findAll();
+      // findTopByStars pushes sort + LIMIT into Memgraph — findAll was timing
+      // out across 24k+ nodes and returning empty.
+      const result = await repo.findTopByStars(limit);
       if (!result.ok) return c.json({ ok: true, data: { entries: [] } });
 
-      const entries = result.data
-        .filter((t) => (t.health.stars ?? 0) > 0)
-        .sort((a, b) => (b.health.stars ?? 0) - (a.health.stars ?? 0))
-        .slice(0, limit)
-        .map((t, idx) => ({
-          rank: idx + 1,
-          tool_name: t.name,
-          display_name: t.display_name,
-          category: t.category,
-          stars: t.health.stars ?? 0,
-          stars_velocity_90d: t.health.stars_velocity_90d ?? 0,
-          quality_score: computeQualityBreakdown(t.health).overall,
-          github_url: t.github_url,
-        }));
+      const entries = result.data.map((t, idx) => ({
+        rank: idx + 1,
+        tool_name: t.name,
+        display_name: t.display_name,
+        category: t.category,
+        stars: t.health.stars ?? 0,
+        stars_velocity_90d: t.health.stars_velocity_90d ?? 0,
+        quality_score: computeQualityBreakdown(t.health).overall,
+        github_url: t.github_url,
+      }));
 
       return c.json({ ok: true, data: { entries } }, 200, {
         'Cache-Control': 'public, max-age=3600, stale-while-revalidate=7200',
@@ -218,30 +216,26 @@ export function analyticsRoutes() {
   app.get('/top-trending', async (c) => {
     try {
       const limit = Math.min(50, Math.max(1, Number(c.req.query('limit') ?? 10)));
-      const result = await repo.findAll();
+      const result = await repo.findTopByStarsVelocity(limit);
       if (!result.ok) return c.json({ ok: true, data: { entries: [] } });
 
-      const entries = result.data
-        .filter((t) => (t.health.stars_velocity_90d ?? 0) > 0)
-        .sort((a, b) => (b.health.stars_velocity_90d ?? 0) - (a.health.stars_velocity_90d ?? 0))
-        .slice(0, limit)
-        .map((t, idx) => {
-          const velocity = t.health.stars_velocity_90d ?? 0;
-          const stars = t.health.stars ?? 0;
-          // Approximate growth percent: stars gained in 90d as % of base
-          const base = Math.max(1, stars - velocity);
-          const growth_pct = Math.round((velocity / base) * 100);
-          return {
-            rank: idx + 1,
-            tool_name: t.name,
-            display_name: t.display_name,
-            category: t.category,
-            stars,
-            stars_velocity_90d: velocity,
-            growth_pct,
-            github_url: t.github_url,
-          };
-        });
+      const entries = result.data.map((t, idx) => {
+        const velocity = t.health.stars_velocity_90d ?? 0;
+        const stars = t.health.stars ?? 0;
+        // Approximate growth percent: stars gained in 90d as % of base
+        const base = Math.max(1, stars - velocity);
+        const growth_pct = Math.round((velocity / base) * 100);
+        return {
+          rank: idx + 1,
+          tool_name: t.name,
+          display_name: t.display_name,
+          category: t.category,
+          stars,
+          stars_velocity_90d: velocity,
+          growth_pct,
+          github_url: t.github_url,
+        };
+      });
 
       return c.json({ ok: true, data: { entries } }, 200, {
         'Cache-Control': 'public, max-age=3600, stale-while-revalidate=7200',

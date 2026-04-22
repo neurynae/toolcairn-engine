@@ -10,6 +10,8 @@ import {
   FIND_TOOLS_BY_CATEGORY,
   FIND_TOOL_BY_GITHUB_URL,
   FIND_TOOL_BY_NAME,
+  FIND_TOP_TOOLS_BY_STARS,
+  FIND_TOP_TOOLS_BY_STARS_VELOCITY,
   GET_ALL_TOOL_NAMES,
   GET_DIRECT_EDGES_BETWEEN,
   GET_PAIRWISE_EDGES,
@@ -146,6 +148,40 @@ export class MemgraphToolRepository implements ToolRepository {
     const session = this.session();
     try {
       const result = await session.run(FIND_ALL_TOOLS.text);
+      const tools = result.records.map((r) => mapRecordToToolNode(r.toObject()));
+      return { ok: true, data: tools };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /** Top-N tools by absolute GitHub stars. Sort + limit pushed into Memgraph. */
+  async findTopByStars(limit: number): Promise<ToolResult<ToolNode[]>> {
+    const session = this.session();
+    try {
+      const result = await session.run(FIND_TOP_TOOLS_BY_STARS.text, {
+        limit: neo4j.int(Math.floor(Number(limit))),
+      });
+      const tools = result.records.map((r) => mapRecordToToolNode(r.toObject()));
+      return { ok: true, data: tools };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /** Top-N tools by 90-day stars velocity. Sort + limit pushed into Memgraph. */
+  async findTopByStarsVelocity(limit: number): Promise<ToolResult<ToolNode[]>> {
+    const session = this.session();
+    try {
+      const result = await session.run(FIND_TOP_TOOLS_BY_STARS_VELOCITY.text, {
+        limit: neo4j.int(Math.floor(Number(limit))),
+      });
       const tools = result.records.map((r) => mapRecordToToolNode(r.toObject()));
       return { ok: true, data: tools };
     } catch (e) {

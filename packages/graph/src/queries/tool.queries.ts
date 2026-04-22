@@ -360,6 +360,25 @@ export const FIND_ALL_TOOLS = {
    ORDER BY t.health_maintenance_score DESC`,
 };
 
+// Targeted top-N queries that push sort + limit into Memgraph. FIND_ALL_TOOLS
+// returns empty on 24k+ node graphs (no LIMIT → materialises everything in
+// memory, hits Memgraph's query timeout). Use these instead for analytics.
+export const FIND_TOP_TOOLS_BY_STARS = {
+  text: `MATCH (t:Tool)
+   WHERE t.health_stars IS NOT NULL AND t.health_stars > 0
+   RETURN t
+   ORDER BY t.health_stars DESC
+   LIMIT $limit`,
+};
+
+export const FIND_TOP_TOOLS_BY_STARS_VELOCITY = {
+  text: `MATCH (t:Tool)
+   WHERE t.health_stars_velocity_90d IS NOT NULL AND t.health_stars_velocity_90d > 0
+   RETURN t
+   ORDER BY t.health_stars_velocity_90d DESC
+   LIMIT $limit`,
+};
+
 export const FIND_TOOLS_BY_TOPICS = {
   text: `MATCH (t:Tool)
    WHERE ANY(topic IN t.topics WHERE topic IN $topics)
