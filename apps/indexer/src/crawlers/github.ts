@@ -4,7 +4,7 @@ import { createLogger } from '@toolcairn/errors';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
-import { fetchAllDownloadCounts } from './download-fetcher.js';
+import { verifyAndFetchAllChannels } from './download-fetcher.js';
 import {
   corePreFlight,
   getBestCoreSlot,
@@ -385,23 +385,23 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
         topics,
       );
       if (channels.length > 0) {
-        const allResults = await fetchAllDownloadCounts(channels, ownerLogin, repoData.name);
-        // Map download counts back to each channel
-        packageChannels = channels.map((ch) => {
-          const result = allResults.find(
-            (r) => r.registry === ch.registry && r.packageName === ch.packageName,
-          );
-          return {
-            registry: ch.registry,
-            packageName: ch.packageName,
-            installCommand: ch.rawCommand,
-            weeklyDownloads: result?.weeklyEquivalent ?? 0,
-          };
-        });
+        // Gate EVERY channel through registry-side ownership verification.
+        // `verifyAndFetchAllChannels` drops channels the registry disowns
+        // (bad README captures like llm-scraper claiming npm:zod) and passes
+        // through unverifiable registries (hackage, cpan, spm…) as a trusted
+        // fallback. Downloads are enriched in the same pass for registries
+        // with a download API — zero duplicate HTTP work.
+        const verified = await verifyAndFetchAllChannels(channels, ownerLogin, repoData.name);
+        packageChannels = verified.map((ch) => ({
+          registry: ch.registry,
+          packageName: ch.packageName,
+          installCommand: ch.installCommand,
+          weeklyDownloads: ch.weeklyDownloads,
+        }));
       }
     } catch (e) {
-      // Non-fatal — download fetching should never block the main crawl
-      logger.debug({ repo: repoKey, err: e }, 'Download discovery failed (non-fatal)');
+      // Non-fatal — verification / download fetching should never block the main crawl.
+      logger.debug({ repo: repoKey, err: e }, 'Channel verification failed (non-fatal)');
     }
 
     const extracted: ExtractedToolData = {

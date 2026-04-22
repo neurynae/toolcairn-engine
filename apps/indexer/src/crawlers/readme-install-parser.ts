@@ -194,10 +194,28 @@ export function filterOwnPackages(
 // ─── Installation Heading Fallback ──────────────────────────────────────────
 
 /**
- * If no fuzzy match found, find the first install command under an
- * "Installation" or "Getting Started" heading.
+ * If no fuzzy match was found by the primary path, look for install commands
+ * under an "Installation" / "Getting Started" heading — but require each
+ * candidate to fuzzy-match the repo/owner name before accepting it.
+ *
+ * Why the guard: the previous version returned the first install command in
+ * the section regardless of target, which poisoned `package_managers` for
+ * many tools (e.g. a README that documents `npm install zod` as a setup step
+ * marked zod as the tool's own distribution channel). Post-discovery the
+ * engine runs full registry-side ownership verification via
+ * `verifyAndFetchAllChannels`, but this guard doubles as:
+ *   1. A short-circuit that avoids a wasted HTTP call per obvious mismatch.
+ *   2. The only defense for registries without a metadataUrl in
+ *      registry-config.ts (hackage, cpan, luarocks, nimble, opam, vcpkg,
+ *      conan, spm, elm, nix) — those are trusted as-discovered, so the
+ *      fuzzy check is the last line of defense before they become
+ *      `package_managers` entries.
  */
-function findFirstInstallUnderHeading(readme: string): DiscoveredPackage | null {
+function findFirstInstallUnderHeading(
+  readme: string,
+  repoName: string,
+  ownerName: string,
+): DiscoveredPackage | null {
   const headingRegex =
     /^#{1,3}\s+(?:install(?:ation)?|getting\s+started|quick\s*start|setup|usage)\s*$/im;
   const headingMatch = headingRegex.exec(readme);
@@ -210,7 +228,10 @@ function findFirstInstallUnderHeading(readme: string): DiscoveredPackage | null 
     nextHeading > 0 ? afterHeading.slice(0, nextHeading) : afterHeading.slice(0, 2000);
 
   const commands = parseInstallCommands(section);
-  return commands.length > 0 ? (commands[0] ?? null) : null;
+  for (const cmd of commands) {
+    if (packageMatchesRepo(cmd.packageName, repoName, ownerName)) return cmd;
+  }
+  return null;
 }
 
 // ─── Main Discovery Function ────────────────────────────────────────────────
@@ -245,9 +266,11 @@ export function discoverDistributionChannels(
       }
     }
 
-    // Fallback: if no match, try first command under installation heading
+    // Fallback: if no match, look under the Installation heading — guarded by
+    // the same fuzzy-match rule used by `filterOwnPackages` so we only accept
+    // captures that plausibly belong to THIS tool.
     if (results.length === 0) {
-      const fallback = findFirstInstallUnderHeading(readme);
+      const fallback = findFirstInstallUnderHeading(readme, repoName, ownerName);
       if (fallback && !seenRegistries.has(fallback.registry)) {
         results.push(fallback);
         seenRegistries.add(fallback.registry);

@@ -82,19 +82,34 @@ export function convertToWeeklyEquivalent(
 // ─── Ownership verification ─────────────────────────────────────────────────
 
 /**
- * Verify that a package on a registry belongs to this GitHub repo.
- * Checks if the package's repository/homepage URL contains the owner/repo.
+ * Per-registry verification outcome.
+ * - `verified` — registry API returned a repo URL that matches `<owner>/<repo>`.
+ * - `unverifiable` — registry has no metadataUrl/repoUrlField in config; we can't
+ *   cross-check. Upstream decides whether to trust the README match.
+ * - `rejected` — registry said NO (either repo URL doesn't match, 404, or fetch error).
  */
-async function verifyOwnership(
+export type OwnershipVerdict = 'verified' | 'unverifiable' | 'rejected';
+
+/**
+ * Cross-check whether a `(registry, packageName)` channel belongs to the given
+ * `<owner>/<repo>` by hitting the registry's own metadata API and comparing
+ * repoUrlField back against the tool's GitHub identity.
+ *
+ * Returns a 3-way verdict so callers can distinguish "registry says no"
+ * (reject the channel) from "we can't tell" (trust the README match because
+ * some registries lack a metadata API — hackage, cpan, luarocks, nimble,
+ * opam, vcpkg, conan, spm, elm, nix, cran, clojars, terraform, ansible,
+ * puppet, chef, flathub, wordpress, vscode, julia, cocoapods).
+ */
+export async function verifyChannelOwnership(
   registry: string,
   packageName: string,
   ownerName: string,
   repoName: string,
-): Promise<boolean> {
+): Promise<OwnershipVerdict> {
   const config = REGISTRY_CONFIGS[registry];
   if (!config?.metadataUrl || !config.repoUrlField) {
-    // No verification possible — trust the README match
-    return true;
+    return 'unverifiable';
   }
 
   try {
@@ -103,26 +118,43 @@ async function verifyOwnership(
       headers: config.headers ?? {},
       signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
-    if (!resp.ok) return false;
+    if (!resp.ok) return 'rejected';
 
     const data = await resp.json();
     const repoUrlValue = getNestedField(data, config.repoUrlField);
 
-    // The repo URL field might be a string or an object (PyPI's project_urls is a dict)
+    // The repo URL field might be a string or an object (PyPI's project_urls is a dict;
+    // hex has meta.links; packagist has package.repository as a string).
     const urlsToCheck: string[] = [];
     if (typeof repoUrlValue === 'string') {
       urlsToCheck.push(repoUrlValue);
     } else if (typeof repoUrlValue === 'object' && repoUrlValue !== null) {
-      // PyPI project_urls: { "Homepage": "...", "Source": "...", "Repository": "..." }
       urlsToCheck.push(...Object.values(repoUrlValue as Record<string, string>));
     }
 
     const ownerRepo = `${ownerName}/${repoName}`.toLowerCase();
-    return urlsToCheck.some((u) => typeof u === 'string' && u.toLowerCase().includes(ownerRepo));
+    const matches = urlsToCheck.some(
+      (u) => typeof u === 'string' && u.toLowerCase().includes(ownerRepo),
+    );
+    return matches ? 'verified' : 'rejected';
   } catch {
-    // Verification failed — be conservative, don't trust the match
-    return false;
+    // Network / parse error — be conservative and reject.
+    return 'rejected';
   }
+}
+
+/**
+ * Internal boolean wrapper used by fetchAllDownloadCounts — keeps the pre-existing
+ * "trust unverifiable" behaviour for its download-count path.
+ */
+async function shouldTrustChannel(
+  registry: string,
+  packageName: string,
+  ownerName: string,
+  repoName: string,
+): Promise<boolean> {
+  const verdict = await verifyChannelOwnership(registry, packageName, ownerName, repoName);
+  return verdict !== 'rejected';
 }
 
 // ─── Download count fetching ────────────────────────────────────────────────
@@ -272,6 +304,96 @@ async function fetchHomebrewDownloads(
  * @param repoName - GitHub repo name
  * @returns All verified download results (may be empty)
  */
+/**
+ * Channel that survived ownership verification, optionally enriched with download
+ * info when the registry has a download API.
+ *
+ * Used by the GitHub crawler to build the final `package_managers` array —
+ * every entry has been cross-verified against the registry API itself (or
+ * passed through as unverifiable for the subset of registries that don't
+ * expose a metadata endpoint with a repo-URL field).
+ */
+export interface VerifiedChannel {
+  registry: string;
+  packageName: string;
+  installCommand: string;
+  /** 0 when the registry lacks a download API or the fetch failed. */
+  weeklyDownloads: number;
+  verdict: OwnershipVerdict;
+}
+
+/**
+ * Verify every discovered channel against its registry's metadata API, drop
+ * the ones the registry explicitly disowns (`rejected`), and enrich the
+ * survivors with download counts where available.
+ *
+ * Unlike `fetchAllDownloadCounts`, this function covers channels that DON'T
+ * have a download API (go, spm, vcpkg, conan, etc.) — those get verified
+ * when possible and otherwise pass through as `unverifiable`. It's the
+ * authoritative filter for constructing `Tool.package_managers`.
+ *
+ * Return order preserves input order. Rejected channels are filtered out.
+ */
+export async function verifyAndFetchAllChannels(
+  channels: DiscoveredPackage[],
+  ownerName: string,
+  repoName: string,
+): Promise<VerifiedChannel[]> {
+  if (channels.length === 0) return [];
+
+  // Verify + (optionally) fetch downloads in parallel per channel.
+  const results = await Promise.all(
+    channels.map(async (ch): Promise<VerifiedChannel | null> => {
+      const verdict = await verifyChannelOwnership(
+        ch.registry,
+        ch.packageName,
+        ownerName,
+        repoName,
+      );
+      if (verdict === 'rejected') {
+        logger.debug(
+          { registry: ch.registry, pkg: ch.packageName, owner: ownerName, repo: repoName },
+          'Channel rejected by registry — dropping from package_managers',
+        );
+        return null;
+      }
+
+      let weekly = 0;
+      const cfg = REGISTRY_CONFIGS[ch.registry];
+      if (cfg?.hasDownloadApi) {
+        const dl = await fetchRegistryDownloads(ch.registry, ch.packageName);
+        if (dl) {
+          weekly = convertToWeeklyEquivalent(dl.downloads, dl.timeWindow, dl.createdAt);
+        }
+      }
+
+      return {
+        registry: ch.registry,
+        packageName: ch.packageName,
+        installCommand: ch.rawCommand,
+        weeklyDownloads: weekly,
+        verdict,
+      };
+    }),
+  );
+
+  const survivors = results.filter((r): r is VerifiedChannel => r !== null);
+
+  if (channels.length !== survivors.length) {
+    logger.info(
+      {
+        repo: `${ownerName}/${repoName}`,
+        discovered: channels.length,
+        kept: survivors.length,
+        dropped: channels.length - survivors.length,
+      },
+      'Channel verification complete',
+    );
+  }
+
+  return survivors;
+}
+
 export async function fetchAllDownloadCounts(
   channels: DiscoveredPackage[],
   ownerName: string,
@@ -290,9 +412,10 @@ export async function fetchAllDownloadCounts(
   // Fetch all in parallel (different registries, different rate limits)
   const results = await Promise.all(
     fetchable.map(async (ch): Promise<DownloadResult | null> => {
-      // Verify ownership first (for registries with metadata API)
-      const verified = await verifyOwnership(ch.registry, ch.packageName, ownerName, repoName);
-      if (!verified) {
+      // Verify ownership first (for registries with metadata API).
+      // Keeps prior behaviour: unverifiable registries pass through (trusted).
+      const trusted = await shouldTrustChannel(ch.registry, ch.packageName, ownerName, repoName);
+      if (!trusted) {
         logger.debug(
           { registry: ch.registry, pkg: ch.packageName, owner: ownerName, repo: repoName },
           'Ownership verification failed — skipping',
