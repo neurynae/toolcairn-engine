@@ -29,25 +29,29 @@ async function ensureCollectionByName(name: string): Promise<void> {
  * so this is safe to call on every startup.
  *
  * - `registry_package_keys`: keyword-array of "<registry>:<packageName>" strings.
- *   Powers the MCP batch-resolve lookup (toolcairn_init discovery → find the
- *   indexed Tool that owns a given manifest declaration like npm:next).
+ *   Tier 1 of the MCP batch-resolve lookup — canonical registry identity.
+ * - `github_url`: single keyword string per point. Tier 2 fallback when the
+ *   registry key misses (covers tools whose `package_managers` is incomplete)
+ *   and primary key when the MCP client provides a repository URL extracted
+ *   from the installed package's own manifest.
  */
 async function ensureToolsPayloadIndexes(): Promise<void> {
   const client = qdrantClient();
-  try {
-    await client.createPayloadIndex(COLLECTION_NAME, {
-      field_name: 'registry_package_keys',
-      field_schema: 'keyword',
-      wait: true,
-    });
-  } catch (e) {
-    // Qdrant throws on duplicate-index in some versions; swallow + log-agnostic.
-    const msg = e instanceof Error ? e.message.toLowerCase() : String(e).toLowerCase();
-    if (!msg.includes('already exists') && !msg.includes('duplicate')) {
-      throw new VectorError({
-        message: `Failed to ensure payload index 'registry_package_keys' on '${COLLECTION_NAME}': ${e instanceof Error ? e.message : String(e)}`,
-        cause: e,
-      });
+  const indexes: Array<{ field_name: string; field_schema: 'keyword' }> = [
+    { field_name: 'registry_package_keys', field_schema: 'keyword' },
+    { field_name: 'github_url', field_schema: 'keyword' },
+  ];
+  for (const idx of indexes) {
+    try {
+      await client.createPayloadIndex(COLLECTION_NAME, { ...idx, wait: true });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message.toLowerCase() : String(e).toLowerCase();
+      if (!msg.includes('already exists') && !msg.includes('duplicate')) {
+        throw new VectorError({
+          message: `Failed to ensure payload index '${idx.field_name}' on '${COLLECTION_NAME}': ${e instanceof Error ? e.message : String(e)}`,
+          cause: e,
+        });
+      }
     }
   }
 }

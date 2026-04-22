@@ -79,6 +79,28 @@ export const batchResolveSchema = {
           'nuget',
           'swift-pm',
         ]),
+        /**
+         * Canonical package name as declared in the INSTALLED package's own
+         * manifest (e.g. node_modules/<dep-key>/package.json#name).
+         * Handles npm aliased installs where the dep key differs from the
+         * true package name. When present, this takes precedence over `name`
+         * for the registry-key lookup.
+         */
+        canonical_package_name: z.string().min(1).max(200).optional(),
+        /**
+         * Repository URL extracted from the installed package's manifest
+         * (normalised: https, no trailing .git). Primary disambiguator —
+         * lets the resolver bypass registry-key gaps and name collisions
+         * entirely when the client supplies a trustworthy URL.
+         */
+        github_url: z
+          .string()
+          .min(1)
+          .max(500)
+          .refine((s) => s.startsWith('http://') || s.startsWith('https://'), {
+            message: 'github_url must be an http(s) URL',
+          })
+          .optional(),
       }),
     )
     .min(1)
