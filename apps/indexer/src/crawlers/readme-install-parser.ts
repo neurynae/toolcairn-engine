@@ -87,11 +87,21 @@ export function parseInstallCommands(readme: string): DiscoveredPackage[] {
         if (!match?.groups?.pkg) continue;
 
         let pkg = match.groups.pkg;
-        // Clean version specifiers: flask[async] → flask, express@latest → express
-        pkg = pkg
-          .replace(/\[.*\]$/, '')
-          .replace(/@\S+$/, '')
-          .replace(/:.*$/, '');
+        // Clean version specifiers:
+        //   flask[async]  → flask
+        //   express@latest → express
+        //   @types/node@latest → @types/node   (don't eat the leading @scope)
+        //   foo:1.0       → foo
+        pkg = pkg.replace(/\[.*\]$/, '');
+        if (pkg.startsWith('@')) {
+          // Scoped npm: only strip @version if we find a SECOND @ in the string.
+          // e.g. "@types/node@latest" → "@types/node"; "@types/node" stays.
+          const secondAt = pkg.indexOf('@', 1);
+          if (secondAt > 0) pkg = pkg.slice(0, secondAt);
+        } else {
+          pkg = pkg.replace(/@\S+$/, '');
+        }
+        pkg = pkg.replace(/:.*$/, '');
         // Clean trailing punctuation from markdown
         pkg = pkg.replace(/['"`,;)}\]]+$/, '');
 

@@ -354,106 +354,307 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
 // ─── README Install Command Patterns ────────────────────────────────────────
 // Each pattern has a named capture group `pkg` for the package name.
 // Patterns are matched inside markdown code blocks only.
+//
+// Two guardrails apply universally:
+//
+//   1. FLAGS consumer — eats any -short / --long / --flag=value tokens
+//      that appear between the command and the package name. Prevents the
+//      previous "first install command wins" behaviour from capturing a
+//      flag (e.g. `--save`) as the package name.
+//
+//   2. Package name MUST start with a non-`-` character. The capture uses
+//      `[A-Za-z0-9_]` as its first char (after an optional `@` for scoped
+//      npm packages). Registry specifications across all 35+ ecosystems
+//      forbid leading dashes — this makes the regex match reality.
+//
+// Together they killed the ~30 cases observed in the v0.10.x backfill where
+// CLI flags like `--save`, `--save-dev`, `--unsafe-perm`, `--locked`,
+// `--upgrade`, `-r`, `-it`, etc. were ending up in `Tool.package_managers`.
+
+/**
+ * Universal flag-consumer prefix. Sits between the command and the package
+ * name capture. Matches zero or more flags of the form:
+ *   -x            short flag (-g, -D, -v, -it)
+ *   --long-flag   long flag (--save, --save-dev, --unsafe-perm)
+ *   --flag=value  long flag with value (--registry=https://...)
+ *   -x=value      short flag with value
+ * Each followed by whitespace. Written as a string to share across patterns.
+ */
+const FLAGS = String.raw`(?:(?:-\w+|--[\w-]+)(?:=\S+)?\s+)*`;
+
+/** Build a regex from parts, hiding the `new RegExp(..., 'i')` boilerplate. */
+function mk(...parts: string[]): RegExp {
+  return new RegExp(parts.join(''), 'i');
+}
+/** Same as mk() but with the multiline-insensitive flag (for go/docker EOL anchoring). */
+function mkM(...parts: string[]): RegExp {
+  return new RegExp(parts.join(''), 'im');
+}
 
 export const INSTALL_PATTERNS: InstallPattern[] = [
   // ── JavaScript/TypeScript (all use npm registry) ──
-  { registry: 'npm', pattern: /npm\s+(?:install|i|add)\s+(?:-[gDSEOB]\s+)*(?<pkg>@?[\w./-]+)/i },
-  { registry: 'npm', pattern: /yarn\s+add\s+(?:--dev\s+)?(?<pkg>@?[\w./-]+)/i },
-  { registry: 'npm', pattern: /pnpm\s+(?:add|install|i)\s+(?:--save-dev\s+)?(?<pkg>@?[\w./-]+)/i },
-  { registry: 'npm', pattern: /bun\s+(?:add|install|i)\s+(?:--dev\s+)?(?<pkg>@?[\w./-]+)/i },
-  { registry: 'npm', pattern: /npx\s+(?<pkg>@?[\w./-]+)/i },
+  {
+    registry: 'npm',
+    pattern: mk(
+      String.raw`npm\s+(?:install|i|add)\s+`,
+      FLAGS,
+      String.raw`(?<pkg>@?[A-Za-z0-9_][\w./-]*)`,
+    ),
+  },
+  {
+    registry: 'npm',
+    pattern: mk(String.raw`yarn\s+add\s+`, FLAGS, String.raw`(?<pkg>@?[A-Za-z0-9_][\w./-]*)`),
+  },
+  {
+    registry: 'npm',
+    pattern: mk(
+      String.raw`pnpm\s+(?:add|install|i)\s+`,
+      FLAGS,
+      String.raw`(?<pkg>@?[A-Za-z0-9_][\w./-]*)`,
+    ),
+  },
+  {
+    registry: 'npm',
+    pattern: mk(
+      String.raw`bun\s+(?:add|install|i)\s+`,
+      FLAGS,
+      String.raw`(?<pkg>@?[A-Za-z0-9_][\w./-]*)`,
+    ),
+  },
+  {
+    registry: 'npm',
+    pattern: mk(String.raw`npx\s+`, FLAGS, String.raw`(?<pkg>@?[A-Za-z0-9_][\w./-]*)`),
+  },
 
   // ── Python (all use PyPI) ──
-  { registry: 'pypi', pattern: /pip3?\s+install\s+(?:-U\s+)?(?<pkg>[\w.-]+)/i },
-  { registry: 'pypi', pattern: /poetry\s+add\s+(?<pkg>[\w.-]+)/i },
-  { registry: 'pypi', pattern: /uv\s+(?:add|pip\s+install)\s+(?<pkg>[\w.-]+)/i },
-  { registry: 'pypi', pattern: /pipenv\s+install\s+(?<pkg>[\w.-]+)/i },
-  { registry: 'pypi', pattern: /pdm\s+add\s+(?<pkg>[\w.-]+)/i },
-  { registry: 'pypi', pattern: /conda\s+install\s+(?:-c\s+\S+\s+)?(?<pkg>[\w.-]+)/i },
+  {
+    registry: 'pypi',
+    pattern: mk(String.raw`pip3?\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
+  },
+  {
+    registry: 'pypi',
+    pattern: mk(String.raw`poetry\s+add\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
+  },
+  {
+    registry: 'pypi',
+    pattern: mk(
+      String.raw`uv\s+(?:add|pip\s+install)\s+`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`,
+    ),
+  },
+  {
+    registry: 'pypi',
+    pattern: mk(String.raw`pipenv\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
+  },
+  {
+    registry: 'pypi',
+    pattern: mk(String.raw`pdm\s+add\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
+  },
+  {
+    registry: 'pypi',
+    pattern: mk(String.raw`conda\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
+  },
 
   // ── Rust ──
-  { registry: 'crates', pattern: /cargo\s+(?:add|install)\s+(?<pkg>[\w-]+)/i },
+  {
+    registry: 'crates',
+    pattern: mk(
+      String.raw`cargo\s+(?:add|install)\s+`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w-]*)`,
+    ),
+  },
 
   // ── Ruby ──
-  { registry: 'rubygems', pattern: /gem\s+install\s+(?<pkg>[\w-]+)/i },
-  { registry: 'rubygems', pattern: /bundle\s+add\s+(?<pkg>[\w-]+)/i },
+  {
+    registry: 'rubygems',
+    pattern: mk(String.raw`gem\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w-]*)`),
+  },
+  {
+    registry: 'rubygems',
+    pattern: mk(String.raw`bundle\s+add\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w-]*)`),
+  },
 
   // ── PHP ──
-  { registry: 'packagist', pattern: /composer\s+require\s+(?<pkg>[\w-]+\/[\w-]+)/i },
+  {
+    registry: 'packagist',
+    pattern: mk(
+      String.raw`composer\s+require\s+`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w-]*\/[A-Za-z0-9_][\w-]*)`,
+    ),
+  },
 
   // ── .NET ──
-  { registry: 'nuget', pattern: /dotnet\s+add\s+package\s+(?<pkg>[\w.]+)/i },
-  { registry: 'nuget', pattern: /Install-Package\s+(?<pkg>[\w.]+)/i },
+  {
+    registry: 'nuget',
+    pattern: mk(
+      String.raw`dotnet\s+add\s+package\s+`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w.]*)`,
+    ),
+  },
+  {
+    registry: 'nuget',
+    pattern: mk(String.raw`Install-Package\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.]*)`),
+  },
 
   // ── Dart/Flutter ──
-  { registry: 'pub', pattern: /(?:dart|flutter)\s+pub\s+add\s+(?<pkg>[\w_]+)/i },
+  {
+    registry: 'pub',
+    pattern: mk(
+      String.raw`(?:dart|flutter)\s+pub\s+add\s+`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_]\w*)`,
+    ),
+  },
 
   // ── Go ──
-  { registry: 'go', pattern: /go\s+(?:install|get)\s+(?<pkg>[\w./-]+?)(?:@\S+)?$/im },
+  // Go module paths are github.com/foo/bar-style. No FLAGS consumer — `go install`
+  // doesn't take flags that precede the module path in typical docs usage.
+  {
+    registry: 'go',
+    pattern: mkM(String.raw`go\s+(?:install|get)\s+(?<pkg>[A-Za-z0-9_][\w./-]*?)(?:@\S+)?$`),
+  },
 
   // ── Elixir/Erlang ──
+  // `{:pkg, "~> ..."}` mix.exs syntax — no flags possible.
   { registry: 'hex', pattern: /\{:(?<pkg>\w+),\s*"~>/i },
 
   // ── R ──
-  { registry: 'cran', pattern: /install\.packages\s*\(\s*["'](?<pkg>[\w.]+)["']/i },
+  // `install.packages("pkg")` — no flags possible.
+  { registry: 'cran', pattern: /install\.packages\s*\(\s*["'](?<pkg>[A-Za-z0-9_][\w.]*)["']/i },
 
   // ── Docker ──
-  { registry: 'docker', pattern: /docker\s+(?:pull|run)\s+(?<pkg>[\w./-]+?)(?::\S+)?$/im },
+  // docker pull/run images — first char can't be `-`.
+  {
+    registry: 'docker',
+    pattern: mkM(
+      String.raw`docker\s+(?:pull|run)\s+`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w./-]*?)(?::\S+)?$`,
+    ),
+  },
 
   // ── Homebrew ──
-  { registry: 'homebrew', pattern: /brew\s+install\s+(?:--cask\s+)?(?<pkg>[\w@.-]+)/i },
+  {
+    registry: 'homebrew',
+    pattern: mk(String.raw`brew\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w@.-]*)`),
+  },
 
   // ── Terraform ──
-  { registry: 'terraform', pattern: /source\s*=\s*"(?<pkg>[\w-]+\/[\w-]+\/[\w-]+)"/i },
+  // `source = "namespace/name/provider"` — first char can't be `-`.
+  {
+    registry: 'terraform',
+    pattern: /source\s*=\s*"(?<pkg>[A-Za-z0-9_][\w-]*\/[A-Za-z0-9_][\w-]*\/[A-Za-z0-9_][\w-]*)"/i,
+  },
 
   // ── Ansible ──
   {
     registry: 'ansible',
-    pattern: /ansible-galaxy\s+(?:collection|role)\s+install\s+(?<pkg>[\w.-]+)/i,
+    pattern: mk(
+      String.raw`ansible-galaxy\s+(?:collection|role)\s+install\s+`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`,
+    ),
   },
 
   // ── Helm ──
-  { registry: 'helm', pattern: /helm\s+(?:install|repo\s+add)\s+\S+\s+(?<pkg>[\w./-]+)/i },
+  // `helm install <release> <chart>` — release-name is `\S+`, chart starts with non-dash.
+  {
+    registry: 'helm',
+    pattern: mk(
+      String.raw`helm\s+(?:install|repo\s+add)\s+\S+\s+`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w./-]*)`,
+    ),
+  },
 
   // ── Haskell ──
-  { registry: 'hackage', pattern: /(?:cabal|stack)\s+install\s+(?<pkg>[\w-]+)/i },
+  {
+    registry: 'hackage',
+    pattern: mk(
+      String.raw`(?:cabal|stack)\s+install\s+`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w-]*)`,
+    ),
+  },
 
   // ── Perl ──
-  { registry: 'cpan', pattern: /cpanm?\s+(?<pkg>[\w:]+)/i },
+  // Perl modules use :: separators (e.g. Net::SSH).
+  {
+    registry: 'cpan',
+    pattern: mk(String.raw`cpanm?\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w:]*)`),
+  },
 
   // ── Lua ──
-  { registry: 'luarocks', pattern: /luarocks\s+install\s+(?<pkg>[\w-]+)/i },
+  {
+    registry: 'luarocks',
+    pattern: mk(String.raw`luarocks\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w-]*)`),
+  },
 
   // ── D ──
-  { registry: 'dub', pattern: /dub\s+add\s+(?<pkg>[\w-]+)/i },
+  {
+    registry: 'dub',
+    pattern: mk(String.raw`dub\s+add\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w-]*)`),
+  },
 
   // ── Nim ──
-  { registry: 'nimble', pattern: /nimble\s+install\s+(?<pkg>[\w-]+)/i },
+  {
+    registry: 'nimble',
+    pattern: mk(String.raw`nimble\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w-]*)`),
+  },
 
   // ── OCaml ──
-  { registry: 'opam', pattern: /opam\s+install\s+(?<pkg>[\w-]+)/i },
+  {
+    registry: 'opam',
+    pattern: mk(String.raw`opam\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w-]*)`),
+  },
 
   // ── Clojure ──
-  { registry: 'clojars', pattern: /\[(?<pkg>[\w.-]+\/[\w.-]+)\s+"[\d.]+"\]/i },
+  // `[group/artifact "version"]` — Leiningen dep coord. No flags apply.
+  {
+    registry: 'clojars',
+    pattern: /\[(?<pkg>[A-Za-z0-9_][\w.-]*\/[A-Za-z0-9_][\w.-]*)\s+"[\d.]+"\]/i,
+  },
 
   // ── Julia ──
-  { registry: 'julia', pattern: /Pkg\.add\s*\(\s*"(?<pkg>[\w]+)"\s*\)/i },
+  { registry: 'julia', pattern: /Pkg\.add\s*\(\s*"(?<pkg>[A-Za-z0-9_]\w*)"\s*\)/i },
 
   // ── WordPress ──
-  { registry: 'wordpress', pattern: /wordpress\.org\/plugins\/(?<pkg>[\w-]+)/i },
+  { registry: 'wordpress', pattern: /wordpress\.org\/plugins\/(?<pkg>[A-Za-z0-9_][\w-]*)/i },
 
   // ── VS Code ──
   {
     registry: 'vscode',
-    pattern: /(?:ext\s+install|marketplace\.visualstudio\.com\/items\?itemName=)(?<pkg>[\w.-]+)/i,
+    pattern:
+      /(?:ext\s+install|marketplace\.visualstudio\.com\/items\?itemName=)(?<pkg>[A-Za-z0-9_][\w.-]*)/i,
   },
 
   // ── Flatpak ──
-  { registry: 'flathub', pattern: /flatpak\s+install\s+(?:flathub\s+)?(?<pkg>[\w.-]+)/i },
+  {
+    registry: 'flathub',
+    pattern: mk(
+      String.raw`flatpak\s+install\s+(?:flathub\s+)?`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`,
+    ),
+  },
 
   // ── System packages ──
-  { registry: 'apt', pattern: /(?:apt|apt-get)\s+install\s+(?:-y\s+)?(?<pkg>[\w.-]+)/i },
-  { registry: 'snap', pattern: /snap\s+install\s+(?<pkg>[\w-]+)/i },
+  {
+    registry: 'apt',
+    pattern: mk(
+      String.raw`(?:apt|apt-get)\s+install\s+`,
+      FLAGS,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`,
+    ),
+  },
+  {
+    registry: 'snap',
+    pattern: mk(String.raw`snap\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w-]*)`),
+  },
 ];
 
 // ─── Topic-to-Registry Mapping ──────────────────────────────────────────────
