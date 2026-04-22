@@ -29,6 +29,19 @@ export interface VersionCompatibilityRow {
   b_runtime_a: { range: string; range_system: string; source: string } | null;
 }
 
+/** Raw row from `batchResolve` — caller combines with ecosystem post-filtering. */
+export interface BatchResolveRow {
+  input: { name: string; ecosystem: string };
+  method: 'tool_name_exact' | 'tool_name_lowercase' | 'none';
+  /** Canonical name from the graph; null when no match. */
+  name: string | null;
+  github_url: string | null;
+  category: string | null;
+  topics: string[] | null;
+  /** JSON-serialised PackageChannel[]; null when no match. */
+  package_managers: string | null;
+}
+
 export interface RuntimeConstraintRow {
   version: string;
   runtime: string;
@@ -93,6 +106,9 @@ export interface UpsertVersionNodeParams {
 export interface ToolRepository {
   createTool(tool: ToolNode): Promise<Result<ToolNode, RepositoryError>>;
   findByName(name: string): Promise<Result<ToolNode | null, RepositoryError>>;
+  batchResolve(
+    inputs: Array<{ name: string; ecosystem: string }>,
+  ): Promise<Result<BatchResolveRow[], RepositoryError>>;
   findByCategory(category: ToolCategory): Promise<Result<ToolNode[], RepositoryError>>;
   findByCategories(categories: ToolCategory[]): Promise<Result<ToolNode[], RepositoryError>>;
   findByTopics(topics: string[]): Promise<Result<ToolNode[], RepositoryError>>;

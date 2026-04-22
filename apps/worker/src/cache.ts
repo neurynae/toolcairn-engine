@@ -14,6 +14,9 @@ const CACHEABLE: Record<string, number> = {
   '/v1/graph/compare': 21_600, // 6 hours
   '/v1/graph/stack': 21_600, // 6 hours
   '/v1/intelligence/refine': 86_400, // 24 hours
+  // Tool name → canonical metadata changes rarely; discovery hits this per
+  // session so the batch-body key hashes well for repeat runs on the same project.
+  '/v1/tools/batch-resolve': 86_400, // 24 hours
 };
 
 export function isCacheable(path: string): boolean {

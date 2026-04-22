@@ -337,6 +337,38 @@ export const FIND_TOOL_BY_NAME = {
   text: 'MATCH (t:Tool { name: $name }) RETURN t',
 };
 
+/**
+ * Batch-resolve a set of (ecosystem, name) tuples against the graph.
+ *
+ * Cascading match per input:
+ *   1. Exact name match — `MATCH (t:Tool { name: input.name })` → 'tool_name_exact'.
+ *   2. Case-insensitive name match — fallback when Stage 1 misses → 'tool_name_lowercase'.
+ *   3. No match → returns NULL tool, match_method handled as 'none' in TS.
+ *
+ * Note: the extra "exact channel match" (registry + packageName inside
+ * tool.package_managers JSON) is handled in the TS handler by post-filtering
+ * the matched tool's package_managers — keeping the Cypher cheap.
+ */
+export const BATCH_RESOLVE_TOOLS = {
+  text: `UNWIND $inputs AS input
+   OPTIONAL MATCH (exact:Tool { name: input.name })
+   WITH input, exact
+   OPTIONAL MATCH (fuzzy:Tool)
+     WHERE exact IS NULL AND toLower(fuzzy.name) = toLower(input.name)
+   WITH input,
+        CASE WHEN exact IS NOT NULL THEN exact ELSE fuzzy END AS t,
+        CASE WHEN exact IS NOT NULL THEN 'tool_name_exact'
+             WHEN fuzzy IS NOT NULL THEN 'tool_name_lowercase'
+             ELSE 'none' END AS method
+   RETURN input AS input,
+          method AS method,
+          CASE WHEN t IS NULL THEN NULL ELSE t.name END AS name,
+          CASE WHEN t IS NULL THEN NULL ELSE t.github_url END AS github_url,
+          CASE WHEN t IS NULL THEN NULL ELSE t.category END AS category,
+          CASE WHEN t IS NULL THEN NULL ELSE t.topics END AS topics,
+          CASE WHEN t IS NULL THEN NULL ELSE t.package_managers END AS package_managers`,
+};
+
 export const FIND_TOOL_BY_GITHUB_URL = {
   text: 'MATCH (t:Tool) WHERE t.github_url CONTAINS $fragment RETURN t LIMIT 1',
 };

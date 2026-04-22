@@ -2,6 +2,7 @@ import type { GraphEdge, ToolCategory, ToolNode } from '@toolcairn/core';
 import neo4j, { type Session } from 'neo4j-driver';
 import { getMemgraphSession } from '../client.js';
 import {
+  BATCH_RESOLVE_TOOLS,
   CREATE_TOOL,
   type CreateToolParams,
   DELETE_TOOL,
@@ -35,6 +36,7 @@ import {
 import type { ToolNeighborhood } from '../queries/tool.queries.js';
 import { FIND_TOOLS_BY_USE_CASES } from '../queries/usecase.queries.js';
 import type {
+  BatchResolveRow,
   DirectEdge,
   RepositoryError,
   RuntimeConstraintRow,
@@ -121,6 +123,39 @@ export class MemgraphToolRepository implements ToolRepository {
         return { ok: true, data: null };
       }
       return { ok: true, data: mapRecordToToolNode(record.toObject()) };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
+   * Batch-resolve a list of (ecosystem, name) tuples against the Tool graph.
+   * Cascading match: exact name → lowercase fallback. Returns raw rows for the
+   * caller to combine with ecosystem-level (package_managers) post-filtering.
+   */
+  async batchResolve(
+    inputs: Array<{ name: string; ecosystem: string }>,
+  ): Promise<ToolResult<BatchResolveRow[]>> {
+    if (inputs.length === 0) return { ok: true, data: [] };
+    const session = this.session();
+    try {
+      const result = await session.run(BATCH_RESOLVE_TOOLS.text, { inputs });
+      const rows: BatchResolveRow[] = result.records.map((record) => {
+        const obj = record.toObject();
+        return {
+          input: obj.input as { name: string; ecosystem: string },
+          method: obj.method as BatchResolveRow['method'],
+          name: obj.name as string | null,
+          github_url: obj.github_url as string | null,
+          category: obj.category as string | null,
+          topics: (obj.topics as string[] | null) ?? null,
+          package_managers: obj.package_managers as string | null,
+        };
+      });
+      return { ok: true, data: rows };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return { ok: false, error: { code: 'DB_ERROR', message } };

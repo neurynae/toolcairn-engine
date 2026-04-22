@@ -58,6 +58,33 @@ export const getStackSchema = {
   limit: z.number().int().positive().max(10).default(5),
 };
 
+export const batchResolveSchema = {
+  /** Request version — allows the server to evolve response shape without breaking old clients. */
+  api_version: z.enum(['1']).default('1'),
+  tools: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(200),
+        ecosystem: z.enum([
+          'npm',
+          'pypi',
+          'cargo',
+          'go',
+          'rubygems',
+          'maven',
+          'gradle',
+          'composer',
+          'hex',
+          'pub',
+          'nuget',
+          'swift-pm',
+        ]),
+      }),
+    )
+    .min(1)
+    .max(500),
+};
+
 export const checkIssueSchema = {
   tool_name: z.string(),
   issue_title: z.string(),

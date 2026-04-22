@@ -1,6 +1,7 @@
 import type { GraphEdge, Result, ToolCategory, ToolNode } from '@toolcairn/core';
 import type { PairwiseEdge, ToolNeighborhood, ToolUseCases } from '../../queries/tool.queries.js';
 import type {
+  BatchResolveRow,
   DirectEdge,
   RepositoryError,
   RuntimeConstraintRow,
@@ -35,6 +36,55 @@ export class FakeToolRepository implements ToolRepository {
     try {
       const tool = this.tools.get(name) ?? null;
       return { ok: true, data: tool };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: { code: 'DB_ERROR', message } };
+    }
+  }
+
+  async batchResolve(
+    inputs: Array<{ name: string; ecosystem: string }>,
+  ): Promise<ToolResult<BatchResolveRow[]>> {
+    try {
+      const rows: BatchResolveRow[] = inputs.map((input) => {
+        const exact = this.tools.get(input.name);
+        if (exact) {
+          return {
+            input,
+            method: 'tool_name_exact',
+            name: exact.name,
+            github_url: exact.github_url,
+            category: exact.category,
+            topics: exact.topics ?? null,
+            package_managers: JSON.stringify(exact.package_managers ?? []),
+          };
+        }
+        // Case-insensitive fallback
+        const lower = input.name.toLowerCase();
+        for (const tool of this.tools.values()) {
+          if (tool.name.toLowerCase() === lower) {
+            return {
+              input,
+              method: 'tool_name_lowercase',
+              name: tool.name,
+              github_url: tool.github_url,
+              category: tool.category,
+              topics: tool.topics ?? null,
+              package_managers: JSON.stringify(tool.package_managers ?? []),
+            };
+          }
+        }
+        return {
+          input,
+          method: 'none',
+          name: null,
+          github_url: null,
+          category: null,
+          topics: null,
+          package_managers: null,
+        };
+      });
+      return { ok: true, data: rows };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return { ok: false, error: { code: 'DB_ERROR', message } };

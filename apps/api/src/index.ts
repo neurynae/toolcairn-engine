@@ -31,6 +31,7 @@ import { intelligenceRoutes } from './routes/intelligence.js';
 import { scanRoutes } from './routes/scan.js';
 import { searchRoutes } from './routes/search.js';
 import { systemRoutes } from './routes/system.js';
+import { toolsRoutes } from './routes/tools.js';
 
 const logger =
   process.env.NODE_ENV === 'production'
@@ -86,6 +87,7 @@ app.route('/v1/search', searchRoutes(handlers));
 app.route('/v1/graph', graphRoutes(handlers));
 app.route('/v1/intelligence', intelligenceRoutes(handlers));
 app.route('/v1/feedback', feedbackRoutes(handlers));
+app.route('/v1/tools', toolsRoutes(handlers));
 app.route('/v1/scan', scanRoutes());
 
 // 404 fallback

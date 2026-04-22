@@ -34,6 +34,7 @@ export { createCheckIssueHandler } from './handlers/check-issue.js';
 export { createReportOutcomeHandler } from './handlers/report-outcome.js';
 export { createSuggestGraphUpdateHandler } from './handlers/suggest-graph-update.js';
 export { createVerifySuggestionHandler } from './handlers/verify-suggestion.js';
+export { createBatchResolveHandler } from './handlers/batch-resolve.js';
 
 // Standalone handlers (LOCAL tools — no deps)
 export { handleClassifyPrompt } from './handlers/classify-prompt.js';
@@ -41,7 +42,7 @@ export { handleToolpilotInit } from './handlers/toolpilot-init.js';
 export { handleInitProjectConfig } from './handlers/init-project-config.js';
 export { handleReadProjectConfig } from './handlers/read-project-config.js';
 export { handleUpdateProjectConfig } from './handlers/update-project-config.js';
-
+import { createBatchResolveHandler } from './handlers/batch-resolve.js';
 import { createCheckCompatibilityHandler } from './handlers/check-compatibility.js';
 import { createCheckIssueHandler } from './handlers/check-issue.js';
 import { handleClassifyPrompt } from './handlers/classify-prompt.js';
@@ -76,6 +77,7 @@ export function createAllHandlers(deps: ToolDeps) {
     handleReportOutcome: createReportOutcomeHandler(deps),
     handleSuggestGraphUpdate: createSuggestGraphUpdateHandler(deps),
     handleVerifySuggestion: createVerifySuggestionHandler(deps),
+    handleBatchResolve: createBatchResolveHandler(deps),
     // LOCAL — no deps
     handleClassifyPrompt,
     handleToolpilotInit,
