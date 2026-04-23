@@ -143,11 +143,13 @@ export const suggestGraphUpdateSchema = {
           tool_name: z.string().min(1),
           github_url: z.string().url().optional(),
           description: z.string().optional(),
+          ecosystem: z.string().min(1).optional(),
         }),
       )
       .min(1)
       .max(200)
       .optional(),
+    ecosystem: z.string().min(1).optional(),
     relationship: z
       .object({
         source_tool: z.string(),

@@ -31,6 +31,7 @@
     "@toolcairn/db": "workspace:*",
     "@toolcairn/graph": "workspace:*",
     "@toolcairn/queue": "workspace:*",
+    "@toolcairn/registry": "workspace:*",
     "@toolcairn/search": "workspace:*",
     "@toolcairn/vector": "workspace:*",
     "ioredis": "^5.4.2",

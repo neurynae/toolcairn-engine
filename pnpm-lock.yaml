@@ -129,6 +129,9 @@ importers:
       '@toolcairn/queue':
         specifier: workspace:*
         version: link:../../packages/queue
+      '@toolcairn/registry':
+        specifier: workspace:*
+        version: link:../../packages/registry
       '@toolcairn/vector':
         specifier: workspace:*
         version: link:../../packages/vector
@@ -333,6 +336,22 @@ importers:
         specifier: ^3.0.4
         version: 3.2.4(@types/node@22.19.17)(jiti@2.6.1)(tsx@4.21.0)
 
+  packages/registry:
+    dependencies:
+      '@toolcairn/errors':
+        specifier: workspace:*
+        version: link:../errors
+    devDependencies:
+      '@toolcairn/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/search:
     dependencies:
       '@toolcairn/config':
@@ -402,6 +421,9 @@ importers:
       '@toolcairn/queue':
         specifier: workspace:*
         version: link:../queue
+      '@toolcairn/registry':
+        specifier: workspace:*
+        version: link:../registry
       '@toolcairn/search':
         specifier: workspace:*
         version: link:../search

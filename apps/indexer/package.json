@@ -25,6 +25,7 @@
     "@toolcairn/db": "workspace:*",
     "@toolcairn/graph": "workspace:*",
     "@toolcairn/queue": "workspace:*",
+    "@toolcairn/registry": "workspace:*",
     "@toolcairn/vector": "workspace:*",
     "ioredis": "^5.4.2",
     "pino": "^9.6.0",

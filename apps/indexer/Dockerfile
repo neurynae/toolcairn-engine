@@ -27,6 +27,7 @@ RUN pnpm --filter @toolcairn/config build && \
     pnpm --filter @toolcairn/vector build && \
     pnpm --filter @toolcairn/graph build && \
     pnpm --filter @toolcairn/queue build && \
+    pnpm --filter @toolcairn/registry build && \
     pnpm --filter @toolcairn/search build && \
     pnpm --filter @toolcairn/indexer build
 
@@ -45,6 +46,7 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/errors/package.json ./packages/errors/
 COPY packages/graph/package.json ./packages/graph/
 COPY packages/queue/package.json ./packages/queue/
+COPY packages/registry/package.json ./packages/registry/
 COPY packages/search/package.json ./packages/search/
 COPY packages/vector/package.json ./packages/vector/
 COPY packages/tools/package.json ./packages/tools/
@@ -62,6 +64,7 @@ COPY --from=builder /app/packages/db/dist ./packages/db/dist
 COPY --from=builder /app/packages/errors/dist ./packages/errors/dist
 COPY --from=builder /app/packages/graph/dist ./packages/graph/dist
 COPY --from=builder /app/packages/queue/dist ./packages/queue/dist
+COPY --from=builder /app/packages/registry/dist ./packages/registry/dist
 COPY --from=builder /app/packages/search/dist ./packages/search/dist
 COPY --from=builder /app/packages/vector/dist ./packages/vector/dist
 COPY --from=builder /app/apps/indexer/dist ./apps/indexer/dist

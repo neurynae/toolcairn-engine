@@ -1,6 +1,7 @@
 import { config } from '@toolcairn/config';
 import type { EdgeType } from '@toolcairn/core';
 import { createLogger } from '@toolcairn/errors';
+import { resolveCanonicalGithubUrl } from '@toolcairn/registry';
 import type { ToolDeps } from '../types.js';
 import { errResult, okResult } from '../utils.js';
 
@@ -47,6 +48,10 @@ interface RepoMeta {
   default_branch: string | null;
   pushed_at: string | null;
   normalised_url: string;
+  /** Where the URL we verified came from. */
+  url_source: 'registry' | 'registry_overrode_submitted' | 'submitted';
+  /** What the caller originally submitted — kept for audit when the registry overrode it. */
+  submitted_url?: string;
 }
 
 type VerifyResult =
@@ -105,25 +110,55 @@ function parseGithubUrl(raw: string): { owner: string; repo: string; canonical: 
 }
 
 /**
- * Option-A verification: light, single GitHub API call per item.
+ * Option-A verification: light, single GitHub API call per item. Before
+ * calling GitHub, consult the tool's own package registry for the canonical
+ * `repository.url` — this mirrors the pattern the indexer uses during
+ * `verifyChannelOwnership` and treats the registry as the authoritative
+ * source. When the registry lookup succeeds and returns a different URL
+ * than what the caller submitted, we use the registry URL and record the
+ * override on the staged row so the admin UI can show it.
+ *
  * Rejects items that clearly shouldn't be staged so the admin review queue
  * stays clean and the indexer doesn't waste a crawl slot on garbage.
  */
-async function verifyStagingCandidate(githubUrl: string | undefined): Promise<VerifyResult> {
-  if (!githubUrl) {
+async function verifyStagingCandidate(
+  submittedUrl: string | undefined,
+  ecosystem: string | undefined,
+  packageName: string,
+): Promise<VerifyResult> {
+  // Registry-first. When we can pull an authoritative github_url from the
+  // package's own registry entry, prefer that over whatever the caller
+  // passed. Silently falls through when the ecosystem has no metadataUrl
+  // (maven/gradle/swift-pm) or the fetch fails.
+  let registryUrl: string | null = null;
+  if (ecosystem && packageName) {
+    const canonical = await resolveCanonicalGithubUrl(ecosystem, packageName).catch(() => null);
+    registryUrl = canonical?.github_url ?? null;
+  }
+
+  const chosenUrl = registryUrl ?? submittedUrl;
+  const urlSource: 'registry' | 'registry_overrode_submitted' | 'submitted' = registryUrl
+    ? registryUrl === submittedUrl
+      ? 'registry'
+      : submittedUrl
+        ? 'registry_overrode_submitted'
+        : 'registry'
+    : 'submitted';
+
+  if (!chosenUrl) {
     return {
       ok: false,
       code: 'missing_url',
-      reason: 'github_url is required for pre-stage verification',
+      reason: `github_url could not be resolved for ${packageName} (${ecosystem ?? 'unknown ecosystem'})`,
     };
   }
 
-  const parsed = parseGithubUrl(githubUrl);
+  const parsed = parseGithubUrl(chosenUrl);
   if (!parsed) {
     return {
       ok: false,
       code: 'invalid_url',
-      reason: `github_url "${githubUrl}" does not parse as a GitHub repo URL`,
+      reason: `github_url "${chosenUrl}" (source: ${urlSource}) does not parse as a GitHub repo URL`,
     };
   }
 
@@ -217,6 +252,9 @@ async function verifyStagingCandidate(githubUrl: string | undefined): Promise<Ve
       default_branch: body.default_branch ?? null,
       pushed_at: body.pushed_at ?? null,
       normalised_url: parsed.canonical,
+      url_source: urlSource,
+      submitted_url:
+        urlSource === 'registry_overrode_submitted' ? (submittedUrl ?? undefined) : undefined,
     },
   };
 }
@@ -225,6 +263,14 @@ export interface BatchToolItem {
   tool_name: string;
   github_url?: string;
   description?: string;
+  /**
+   * Registry key matching `REGISTRY_CONFIGS` in `@toolcairn/registry`
+   * (npm, pypi, cargo, rubygems, composer, hex, pub, nuget, go, maven,
+   * gradle, swift-pm, …). When present the engine looks up the
+   * authoritative github_url from the registry and prefers it over the
+   * caller's submitted URL.
+   */
+  ecosystem?: string;
 }
 
 export function createSuggestGraphUpdateHandler(
@@ -271,6 +317,7 @@ export function createSuggestGraphUpdateHandler(
                       tool_name: args.data.tool_name,
                       github_url: args.data.github_url,
                       description: args.data.description,
+                      ecosystem: (args.data as { ecosystem?: string }).ecosystem,
                     },
                   ]
                 : [];
@@ -286,7 +333,9 @@ export function createSuggestGraphUpdateHandler(
           // Rejected items are returned in the result array (not silently dropped)
           // so the agent can relay the reason back to the user.
           const verdicts = await Promise.all(
-            batch.map((item) => verifyStagingCandidate(item.github_url)),
+            batch.map((item) =>
+              verifyStagingCandidate(item.github_url, item.ecosystem, item.tool_name),
+            ),
           );
 
           type ItemResult = {
@@ -380,6 +429,9 @@ export function createSuggestGraphUpdateHandler(
                     stars: verdict.meta.stars,
                     fork: verdict.meta.fork,
                     owner_type: verdict.meta.owner_type,
+                    ecosystem: item.ecosystem ?? null,
+                    url_source: verdict.meta.url_source,
+                    submitted_url: verdict.meta.submitted_url ?? null,
                   },
                   confidence,
                   source: 'ai_generated',

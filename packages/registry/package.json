@@ -1,0 +1,28 @@
+{
+  "name": "@toolcairn/registry",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@toolcairn/errors": "workspace:*"
+  },
+  "devDependencies": {
+    "@toolcairn/tsconfig": "workspace:*",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.9.3"
+  }
+}
