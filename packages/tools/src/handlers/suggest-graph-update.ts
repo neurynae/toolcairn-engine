@@ -293,6 +293,8 @@ export function createSuggestGraphUpdateHandler(
             tool_name: string;
             verified: boolean;
             staged: boolean;
+            already_staged?: boolean;
+            already_indexed?: boolean;
             staged_id?: string;
             index_queued: boolean;
             reason?: string;
@@ -312,6 +314,57 @@ export function createSuggestGraphUpdateHandler(
                 staged: false,
                 index_queued: false,
                 reason: verdict.reason,
+              });
+              continue;
+            }
+
+            // Dedup: if a pending staging row already exists for this github_url
+            // OR tool_name, skip re-creating it. Also skip if the tool is
+            // already in the indexer pipeline (pending/indexed) — no need to
+            // re-submit something that's already on its way to the live graph.
+            const existingStaged = await deps.prisma.stagedNode.findFirst({
+              where: {
+                node_type: 'Tool',
+                graduated: false,
+                OR: [
+                  { node_data: { path: ['github_url'], equals: verdict.meta.normalised_url } },
+                  { node_data: { path: ['name'], equals: item.tool_name } },
+                ],
+              },
+              select: { id: true, node_data: true },
+            });
+            if (existingStaged) {
+              const matchedBy =
+                (existingStaged.node_data as Record<string, unknown>)?.github_url ===
+                verdict.meta.normalised_url
+                  ? 'github_url'
+                  : 'tool_name';
+              results.push({
+                tool_name: item.tool_name,
+                verified: true,
+                staged: false,
+                already_staged: true,
+                staged_id: existingStaged.id,
+                index_queued: false,
+                reason: `Already pending admin review (matched on ${matchedBy}); skipped duplicate submission`,
+              });
+              continue;
+            }
+            const existingIndexed = await deps.prisma.indexedTool.findFirst({
+              where: {
+                github_url: verdict.meta.normalised_url,
+                index_status: { in: ['indexed', 'pending'] },
+              },
+              select: { index_status: true },
+            });
+            if (existingIndexed) {
+              results.push({
+                tool_name: item.tool_name,
+                verified: true,
+                staged: false,
+                already_indexed: true,
+                index_queued: false,
+                reason: `Tool already in indexer pipeline (index_status=${existingIndexed.index_status}); skipped duplicate submission`,
               });
               continue;
             }
@@ -361,7 +414,10 @@ export function createSuggestGraphUpdateHandler(
 
           const stagedCount = results.filter((r) => r.staged).length;
           const rejectedCount = results.filter((r) => !r.verified).length;
-          const failedCount = results.length - stagedCount - rejectedCount;
+          const alreadyStagedCount = results.filter((r) => r.already_staged).length;
+          const alreadyIndexedCount = results.filter((r) => r.already_indexed).length;
+          const failedCount =
+            results.length - stagedCount - rejectedCount - alreadyStagedCount - alreadyIndexedCount;
           return okResult({
             staged: stagedCount > 0,
             auto_graduated: false,
@@ -370,6 +426,8 @@ export function createSuggestGraphUpdateHandler(
             summary: {
               total: results.length,
               staged: stagedCount,
+              already_staged: alreadyStagedCount,
+              already_indexed: alreadyIndexedCount,
               rejected_by_verification: rejectedCount,
               staged_failed: failedCount,
             },
