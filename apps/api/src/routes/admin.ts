@@ -461,6 +461,15 @@ RETURN edge.toolId AS toolId, topicId, topicNodeType, edge.edgeType AS edgeType
   });
 
   // ── PATCH /v1/admin/review/nodes/:id ──────────────────────────────────────
+  // Approval flow by node_type:
+  //   Tool     → enqueue an indexer job (priority 1) with the staged github_url.
+  //              The indexer runs the full crawl pipeline (registry verify,
+  //              health signals, README parse, vector embedding) and only then
+  //              upserts to Memgraph. The staged row is marked graduated so
+  //              the review queue collapses it.
+  //   UseCase  → no indexer path exists; direct-mark graduated. Admin UI will
+  //              wire a graph-side upsert in a follow-up.
+  //   Other    → direct-mark graduated.
   app.patch('/review/nodes/:id', async (c) => {
     const id = c.req.param('id');
     const body = await c.req.json().catch(() => null);
@@ -479,18 +488,62 @@ RETURN edge.toolId AS toolId, topicId, topicNodeType, edge.edgeType AS edgeType
       if (node.graduated) return c.json({ ok: false, error: 'ALREADY_REVIEWED' }, 409);
 
       if (parsed.data.action === 'approve') {
+        let indexerEnqueued = false;
+        let enqueueError: string | null = null;
+        let githubUrl: string | null = null;
+
+        if (node.node_type === 'Tool') {
+          const data = (node.node_data ?? {}) as Record<string, unknown>;
+          const rawUrl = typeof data.github_url === 'string' ? data.github_url.trim() : '';
+          if (rawUrl) {
+            githubUrl = rawUrl;
+            try {
+              await enqueueIndexJob(rawUrl, 1);
+              indexerEnqueued = true;
+            } catch (enqueueErr) {
+              enqueueError = enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr);
+            }
+          } else {
+            enqueueError =
+              'Tool has no github_url in staged data — cannot enqueue indexer. Reject and re-submit with a valid URL.';
+          }
+        }
+
         await prisma.stagedNode.update({
           where: { id },
-          data: { graduated: true, graduated_at: new Date(), reviewed_by: 'admin' },
+          data: {
+            graduated: true,
+            graduated_at: new Date(),
+            reviewed_by: 'admin',
+            reviewed_at: new Date(),
+          },
         });
-        return c.json(ok({ id, action: 'approved' }));
+
+        return c.json(
+          ok({
+            id,
+            action: 'approved',
+            node_type: node.node_type,
+            indexer_enqueued: indexerEnqueued,
+            indexer_error: enqueueError,
+            github_url: githubUrl,
+            message:
+              node.node_type === 'Tool'
+                ? indexerEnqueued
+                  ? `Tool staged node ${id} approved. Indexer job enqueued for ${githubUrl}; live-graph ingestion follows crawl completion.`
+                  : `Tool staged node ${id} marked approved but indexer enqueue failed: ${enqueueError ?? 'unknown'}. Re-run the indexer trigger manually.`
+                : `${node.node_type} staged node ${id} approved (no indexer path for this node type — direct-mark).`,
+          }),
+        );
       }
+
       await prisma.stagedNode.update({
         where: { id },
         data: {
           graduated: true,
           graduated_at: new Date(),
           reviewed_by: 'admin',
+          reviewed_at: new Date(),
           rejection_reason: parsed.data.reason,
         },
       });
