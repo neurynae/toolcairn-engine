@@ -45,8 +45,13 @@ export async function runReindexScheduler(force = false): Promise<{
     // Enqueue ALL indexed tools — no staleness filter, no batch cap.
     // checkIfUnchanged() in index-consumer handles efficiency: unchanged tools
     // cost only 1 API call and are skipped without full reprocessing.
+    //
+    // `skipped` tools are also included: the quality gate runs a speculative
+    // registry probe now (see speculative-channels.ts), so tools that were
+    // previously skipped for "insufficient stars and downloads" get another
+    // shot with registry data that may not have existed on their first pass.
     const allTools = await prisma.indexedTool.findMany({
-      where: { index_status: { in: ['indexed', 'pending'] } },
+      where: { index_status: { in: ['indexed', 'pending', 'skipped'] } },
       select: { github_url: true },
       orderBy: { last_indexed_at: 'asc' }, // oldest first for priority
     });

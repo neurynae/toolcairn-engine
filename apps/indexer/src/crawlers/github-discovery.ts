@@ -142,8 +142,16 @@ async function runSearchQuery(
       for (const item of items) {
         const isPersonalRepo = item.owner?.type === 'User';
         const stars = item.stargazers_count ?? 0;
-        // Keep org repos at any starcount; skip personal repos under 1000★
-        if (isPersonalRepo && stars < 1000) continue;
+        // Keep org repos at any starcount. For personal repos, use a low floor
+        // (100★) — the quality gate now runs a speculative registry probe
+        // (speculative-channels.ts) so tools with modest star counts but
+        // strong package-registry traction (e.g. smol-toml @ 271★, 11M+ npm
+        // weekly downloads) still pass when a channel verifies. The upstream
+        // `stars:>N` query filter (admin-configurable via
+        // AppSettings.discovery_min_stars, default 500) caps the GitHub API
+        // budget; this post-filter just prevents 0-10★ noise from slipping
+        // through when discovery_min_stars is set very low.
+        if (isPersonalRepo && stars < 100) continue;
         const fullName = item.full_name ?? '';
         if (!fullName || seen.has(fullName)) continue;
         seen.add(fullName);

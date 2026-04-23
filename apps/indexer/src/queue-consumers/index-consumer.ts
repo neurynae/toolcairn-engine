@@ -222,24 +222,37 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
       weeklyDownloads: maxWeeklyDownloads,
     };
 
-    // 3a. Quality gate: stars OR verified package downloads.
-    //     Threshold for downloads comes from AppSettings.download_quality_thresholds
-    //     (25th percentile per registry, computed by weekly percentile cron).
-    //     Falls back to no download bypass if thresholds not yet computed.
+    // 3a. Quality gate — registry-first, no GitHub-star fallback.
+    //
+    // The ONLY pass conditions are:
+    //   (a) at least one package channel whose weekly downloads clear its
+    //       registry's 25th-percentile threshold
+    //       (AppSettings.download_quality_thresholds, updated by the weekly
+    //        percentile cron; falls back to REGISTRY_FALLBACK_THRESHOLDS
+    //        derived from REGISTRY_CONFIGS.logScale), OR
+    //   (b) an explicit grace_until window set by an admin or submission flow.
+    //
+    // Stars used to be an alternative pass on their own (>= 1000★). That gate
+    // is gone — ToolCairn is a TOOL intelligence platform, so a repo has to
+    // actually be a distributable tool (i.e. present in some package registry)
+    // to earn graph space. Channel discovery runs three signals (README install
+    // commands → topic hints → speculative registry probe against every entry
+    // in REGISTRY_CONFIGS), all verified against the registry's own
+    // repoUrlField, so low-star but registry-popular tools like smol-toml
+    // (271★, 11M+ npm weekly downloads) pass on (a).
     const thresholds = await getDownloadThresholds();
-    const hasGitHubPopularity = stars >= 1000;
     const hasPackageUsage = channels.some((ch) => {
       const threshold = thresholds[ch.registry];
       return threshold !== undefined && ch.weeklyDownloads >= threshold;
     });
-    if (!hasGitHubPopularity && !hasPackageUsage && !processedTool.node.grace_until) {
+    if (!hasPackageUsage && !processedTool.node.grace_until) {
       logger.info(
         { toolId, stars, maxWeeklyDownloads, channels: channels.length },
-        'Skipping — insufficient stars and downloads',
+        'Skipping — no verified package channel with qualifying downloads and no grace window',
       );
       await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped', {
         ...baseMeta,
-        skipReason: `stars:${stars} downloads:${maxWeeklyDownloads} thresholds:${JSON.stringify(thresholds)}`,
+        skipReason: `channels:${channels.length} max_weekly_dl:${maxWeeklyDownloads} thresholds:${JSON.stringify(thresholds)}`,
       });
       return;
     }

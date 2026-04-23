@@ -535,8 +535,11 @@ async function getSettings(prisma: PrismaClient): Promise<DiscoverySettings> {
         ? settings.discovery_topics
         : DEFAULT_DISCOVERY_TOPICS,
     batchSize: settings?.discovery_batch_size ?? 20,
-    // 500 allows high-download but under-starred packages to be discovered.
-    // The quality gate in index-consumer accepts: stars>=1000 OR downloads>=10k.
+    // Upstream GitHub search query floor. The real quality gate (index-consumer)
+    // now accepts only tools with a registry-verified channel that clears the
+    // 25th-percentile download threshold for its registry, so this setting
+    // exists purely to cap the GitHub API budget — low-star tools that pass
+    // via registry still have to show up in the search results first.
     minStars: settings?.discovery_min_stars ?? 500,
     lastPushedDays: settings?.discovery_last_pushed_days ?? 90,
   };

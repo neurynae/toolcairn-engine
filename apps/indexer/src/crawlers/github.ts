@@ -1,6 +1,7 @@
 import type { Octokit } from '@octokit/rest';
 import type { PackageChannel } from '@toolcairn/core';
 import { createLogger } from '@toolcairn/errors';
+import { REGISTRY_CONFIGS } from '@toolcairn/registry';
 import { IndexerError } from '../errors.js';
 import type { CrawlerResult, ExtractedToolData } from '../types.js';
 import { enrichDescription } from './description-enricher.js';
@@ -13,7 +14,7 @@ import {
   sleepUntilCoreReset,
   updateSlotFromHeaders,
 } from './rate-limit.js';
-import { discoverDistributionChannels } from './readme-install-parser.js';
+import { type DiscoveredPackage, discoverDistributionChannels } from './readme-install-parser.js';
 import { extractDocsUrl } from './readme-parser.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:github-crawler' });
@@ -384,20 +385,40 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
         ownerLogin,
         topics,
       );
-      if (channels.length > 0) {
-        // Gate EVERY channel through registry-side ownership verification.
-        // `verifyAndFetchAllChannels` drops channels the registry disowns
-        // (bad README captures like llm-scraper claiming npm:zod) and passes
-        // through unverifiable registries (hackage, cpan, spm…) as a trusted
-        // fallback. Downloads are enriched in the same pass for registries
-        // with a download API — zero duplicate HTTP work.
-        const verified = await verifyAndFetchAllChannels(channels, ownerLogin, repoData.name);
+      // Signal 3 (fallback): when README + topics yielded nothing, fan out one
+      // candidate per entry in REGISTRY_CONFIGS using the repo name as the
+      // package name. verifyAndFetchAllChannels already walks each registry's
+      // metadataUrl + repoUrlField and drops any candidate the registry disowns,
+      // so no per-registry heuristics are needed here — unverified guesses are
+      // filtered out by the same machinery used everywhere else. Catches
+      // packages like `smol-toml` (271★, 11M+ npm weekly downloads) whose
+      // READMEs don't have fenced install blocks.
+      const speculative: DiscoveredPackage[] =
+        channels.length === 0
+          ? Object.keys(REGISTRY_CONFIGS).map((registry) => ({
+              registry,
+              packageName: repoData.name,
+              rawCommand: 'speculative:name-match',
+            }))
+          : [];
+      const allCandidates = channels.length > 0 ? channels : speculative;
+      if (allCandidates.length > 0) {
+        const verified = await verifyAndFetchAllChannels(allCandidates, ownerLogin, repoData.name);
         packageChannels = verified.map((ch) => ({
           registry: ch.registry,
           packageName: ch.packageName,
           installCommand: ch.installCommand,
           weeklyDownloads: ch.weeklyDownloads,
         }));
+        if (speculative.length > 0 && packageChannels.length > 0) {
+          logger.info(
+            {
+              repo: repoKey,
+              channels: packageChannels.map((c) => `${c.registry}:${c.packageName}`),
+            },
+            'Speculative registry probe found verified channel(s) — README + topics had none',
+          );
+        }
       }
     } catch (e) {
       // Non-fatal — verification / download fetching should never block the main crawl.
