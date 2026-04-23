@@ -5,8 +5,6 @@ import { errResult, okResult } from '../utils.js';
 
 const logger = createLogger({ name: '@toolcairn/tools:suggest-graph-update' });
 
-const AUTO_GRADUATE_THRESHOLD = 0.8;
-
 const VALID_EDGE_TYPES = new Set<EdgeType>([
   'SOLVES',
   'REQUIRES',
@@ -18,6 +16,12 @@ const VALID_EDGE_TYPES = new Set<EdgeType>([
   'COMPATIBLE_WITH',
 ]);
 
+export interface BatchToolItem {
+  tool_name: string;
+  github_url?: string;
+  description?: string;
+}
+
 export function createSuggestGraphUpdateHandler(
   deps: Pick<ToolDeps, 'graphRepo' | 'prisma' | 'enqueueIndexJob'>,
 ) {
@@ -27,6 +31,7 @@ export function createSuggestGraphUpdateHandler(
       tool_name?: string;
       github_url?: string;
       description?: string;
+      tools?: BatchToolItem[];
       relationship?: {
         source_tool: string;
         target_tool: string;
@@ -50,37 +55,83 @@ export function createSuggestGraphUpdateHandler(
 
       switch (args.suggestion_type) {
         case 'new_tool': {
-          const toolName = args.data.tool_name;
-          if (!toolName) {
+          // Batch shape preferred when the agent drains `unknown_tools[]` from
+          // toolcairn_init. Falls back to single-tool shape for legacy callers.
+          const batch: BatchToolItem[] =
+            Array.isArray(args.data.tools) && args.data.tools.length > 0
+              ? args.data.tools
+              : args.data.tool_name
+                ? [
+                    {
+                      tool_name: args.data.tool_name,
+                      github_url: args.data.github_url,
+                      description: args.data.description,
+                    },
+                  ]
+                : [];
+
+          if (batch.length === 0) {
             return errResult(
               'missing_field',
-              'data.tool_name is required for new_tool suggestions',
+              'new_tool suggestions require either data.tool_name (single) or data.tools[] (batch)',
             );
           }
-          const staged = await deps.prisma.stagedNode.create({
-            data: {
-              node_type: 'Tool',
-              node_data: {
-                name: toolName,
-                github_url: args.data.github_url ?? null,
-                description: args.data.description ?? null,
-              },
-              confidence,
-              source: 'ai_generated',
-              supporting_queries: queryIds,
-            },
-          });
-          let indexQueued = false;
-          if (args.data.github_url) {
-            const indexResult = await deps.enqueueIndexJob(args.data.github_url, 2);
-            indexQueued = indexResult.ok;
+
+          const results = [] as Array<{
+            tool_name: string;
+            staged: boolean;
+            staged_id?: string;
+            index_queued: boolean;
+            error?: string;
+          }>;
+
+          for (const item of batch) {
+            try {
+              const staged = await deps.prisma.stagedNode.create({
+                data: {
+                  node_type: 'Tool',
+                  node_data: {
+                    name: item.tool_name,
+                    github_url: item.github_url ?? null,
+                    description: item.description ?? null,
+                  },
+                  confidence,
+                  source: 'ai_generated',
+                  supporting_queries: queryIds,
+                },
+              });
+              let indexQueued = false;
+              if (item.github_url) {
+                const indexResult = await deps.enqueueIndexJob(item.github_url, 2);
+                indexQueued = indexResult.ok;
+              }
+              results.push({
+                tool_name: item.tool_name,
+                staged: true,
+                staged_id: staged.id,
+                index_queued: indexQueued,
+              });
+            } catch (itemErr) {
+              results.push({
+                tool_name: item.tool_name,
+                staged: false,
+                index_queued: false,
+                error: itemErr instanceof Error ? itemErr.message : String(itemErr),
+              });
+            }
           }
+
+          const stagedCount = results.filter((r) => r.staged).length;
+          const failedCount = results.length - stagedCount;
           return okResult({
-            staged: true,
-            staged_id: staged.id,
+            staged: stagedCount > 0,
             auto_graduated: false,
-            index_queued: indexQueued,
-            message: `Tool "${toolName}" staged for review. ${indexQueued ? 'Indexing queued — full data available in ~2 minutes.' : 'Provide github_url for automatic indexing.'}`,
+            batch: results.length > 1,
+            results,
+            message:
+              results.length === 1
+                ? `Tool "${batch[0]!.tool_name}" staged for admin review. ${results[0]!.index_queued ? 'Indexing queued.' : ''}`
+                : `${stagedCount}/${results.length} tools staged for admin review${failedCount > 0 ? ` (${failedCount} failed)` : ''}. All entries await admin approval before entering the live graph.`,
           });
         }
 
@@ -98,37 +149,15 @@ export function createSuggestGraphUpdateHandler(
               `Edge type "${rel.edge_type}" is not valid. Must be one of: ${Array.from(VALID_EDGE_TYPES).join(', ')}`,
             );
           }
+          // Note: endpoint existence is still recorded on the staging row so the
+          // admin reviewer sees which edges would graduate cleanly — but we NEVER
+          // write to the live graph here. Admin review is the sole promotion path.
           const [existsSource, existsTarget] = await Promise.all([
             deps.graphRepo.toolExists(rel.source_tool),
             deps.graphRepo.toolExists(rel.target_tool),
           ]);
           const bothExist =
             existsSource.ok && existsSource.data && existsTarget.ok && existsTarget.data;
-
-          if (bothExist && confidence >= AUTO_GRADUATE_THRESHOLD) {
-            const now = new Date().toISOString();
-            const edgeResult = await deps.graphRepo.upsertEdge({
-              type: rel.edge_type as EdgeType,
-              source_id: rel.source_tool,
-              target_id: rel.target_tool,
-              properties: {
-                weight: confidence * 0.8,
-                confidence,
-                last_verified: now,
-                source: 'ai_generated',
-                decay_rate: 0.05,
-                evidence_count: 1,
-                evidence_links: rel.evidence ? [rel.evidence] : [],
-              },
-            });
-            if (edgeResult.ok) {
-              return okResult({
-                staged: false,
-                auto_graduated: true,
-                message: `Edge ${rel.source_tool} → ${rel.target_tool} (${rel.edge_type}) written directly to graph (confidence ${confidence} ≥ ${AUTO_GRADUATE_THRESHOLD}).`,
-              });
-            }
-          }
 
           const staged = await deps.prisma.stagedEdge.create({
             data: {
@@ -145,11 +174,8 @@ export function createSuggestGraphUpdateHandler(
             staged: true,
             staged_id: staged.id,
             auto_graduated: false,
-            reason:
-              confidence < AUTO_GRADUATE_THRESHOLD
-                ? `Confidence ${confidence} < ${AUTO_GRADUATE_THRESHOLD} threshold — queued for human review`
-                : 'One or both tools not yet in graph — queued for review',
-            message: `Edge ${rel.source_tool} → ${rel.target_tool} (${rel.edge_type}) staged for review.`,
+            both_tools_indexed: bothExist,
+            message: `Edge ${rel.source_tool} → ${rel.target_tool} (${rel.edge_type}) staged for admin review. Admin approval is required before it enters the live graph.`,
           });
         }
 

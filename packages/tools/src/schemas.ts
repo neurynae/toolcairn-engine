@@ -131,9 +131,23 @@ export const checkCompatibilitySchema = {
 export const suggestGraphUpdateSchema = {
   suggestion_type: z.enum(['new_tool', 'new_edge', 'update_health', 'new_use_case']),
   data: z.object({
+    // Single-tool shape (backward compatible)
     tool_name: z.string().optional(),
     github_url: z.string().url().optional(),
     description: z.string().optional(),
+    // Batch shape — used when the MCP agent drains `unknown_tools[]` from
+    // toolcairn_init's post-auth provisioning. Applies to suggestion_type='new_tool'.
+    tools: z
+      .array(
+        z.object({
+          tool_name: z.string().min(1),
+          github_url: z.string().url().optional(),
+          description: z.string().optional(),
+        }),
+      )
+      .min(1)
+      .max(200)
+      .optional(),
     relationship: z
       .object({
         source_tool: z.string(),
