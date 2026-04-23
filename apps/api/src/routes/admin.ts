@@ -460,6 +460,157 @@ RETURN edge.toolId AS toolId, topicId, topicNodeType, edge.edgeType AS edgeType
     }
   });
 
+  // ── PATCH /v1/admin/review/nodes/bulk ─────────────────────────────────────
+  // Bulk variant of the single-id approve/reject flow. MUST be registered
+  // BEFORE the `/:id` handler below — Hono matches routes in declaration
+  // order, so a literal segment has to come first or `:id` swallows the
+  // word `bulk` as a node id and returns 404.
+  //
+  // Accepts:
+  //   { ids: string[], action: 'approve' }
+  //   { ids: string[], action: 'reject', reason: string }
+  //
+  // Runs the same per-id logic as the single endpoint (graduated flag,
+  // indexer enqueue for Tool approvals) but in one round-trip. Already-
+  // graduated / missing rows are reported in the `results` array with
+  // ok:false + reason so the client can reconcile — the call itself still
+  // returns HTTP 200 unless EVERY item errored.
+  app.patch('/review/nodes/bulk', async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = z
+      .discriminatedUnion('action', [
+        z.object({
+          action: z.literal('approve'),
+          ids: z.array(z.string().min(1)).min(1).max(200),
+        }),
+        z.object({
+          action: z.literal('reject'),
+          ids: z.array(z.string().min(1)).min(1).max(200),
+          reason: z.string().min(1),
+        }),
+      ])
+      .safeParse(body);
+
+    if (!parsed.success) return c.json({ ok: false, error: 'INVALID_INPUT' }, 400);
+
+    try {
+      const nodes = await prisma.stagedNode.findMany({
+        where: { id: { in: parsed.data.ids } },
+      });
+      const byId = new Map(nodes.map((n) => [n.id, n]));
+
+      const results: Array<{
+        id: string;
+        ok: boolean;
+        action?: 'approved' | 'rejected';
+        indexer_enqueued?: boolean;
+        reason?: string;
+      }> = [];
+
+      const now = new Date();
+
+      if (parsed.data.action === 'approve') {
+        const toUpdateIds: string[] = [];
+        const indexerJobs: Array<{ id: string; url: string }> = [];
+
+        for (const id of parsed.data.ids) {
+          const node = byId.get(id);
+          if (!node) {
+            results.push({ id, ok: false, reason: 'NOT_FOUND' });
+            continue;
+          }
+          if (node.graduated) {
+            results.push({ id, ok: false, reason: 'ALREADY_REVIEWED' });
+            continue;
+          }
+          toUpdateIds.push(id);
+
+          if (node.node_type === 'Tool') {
+            const data = (node.node_data ?? {}) as Record<string, unknown>;
+            const rawUrl = typeof data.github_url === 'string' ? data.github_url.trim() : '';
+            if (rawUrl) indexerJobs.push({ id, url: rawUrl });
+          }
+        }
+
+        if (toUpdateIds.length > 0) {
+          await prisma.stagedNode.updateMany({
+            where: { id: { in: toUpdateIds } },
+            data: {
+              graduated: true,
+              graduated_at: now,
+              reviewed_by: 'admin',
+              reviewed_at: now,
+            },
+          });
+        }
+
+        const enqueueResults = await Promise.all(
+          indexerJobs.map((j) =>
+            enqueueIndexJob(j.url, 1)
+              .then(() => ({ id: j.id, ok: true }))
+              .catch(() => ({ id: j.id, ok: false })),
+          ),
+        );
+        const enqueueOk = new Map(enqueueResults.map((r) => [r.id, r.ok]));
+
+        for (const id of toUpdateIds) {
+          const isTool = byId.get(id)?.node_type === 'Tool';
+          const hadUrl = indexerJobs.some((j) => j.id === id);
+          results.push({
+            id,
+            ok: true,
+            action: 'approved',
+            indexer_enqueued: isTool ? (hadUrl ? (enqueueOk.get(id) ?? false) : false) : undefined,
+          });
+        }
+      } else {
+        const toUpdateIds: string[] = [];
+        for (const id of parsed.data.ids) {
+          const node = byId.get(id);
+          if (!node) {
+            results.push({ id, ok: false, reason: 'NOT_FOUND' });
+            continue;
+          }
+          if (node.graduated) {
+            results.push({ id, ok: false, reason: 'ALREADY_REVIEWED' });
+            continue;
+          }
+          toUpdateIds.push(id);
+        }
+
+        if (toUpdateIds.length > 0) {
+          await prisma.stagedNode.updateMany({
+            where: { id: { in: toUpdateIds } },
+            data: {
+              graduated: true,
+              graduated_at: now,
+              reviewed_by: 'admin',
+              reviewed_at: now,
+              rejection_reason: parsed.data.reason,
+            },
+          });
+        }
+
+        for (const id of toUpdateIds) {
+          results.push({ id, ok: true, action: 'rejected' });
+        }
+      }
+
+      const okCount = results.filter((r) => r.ok).length;
+      return c.json(
+        ok({
+          action: parsed.data.action,
+          requested: parsed.data.ids.length,
+          applied: okCount,
+          skipped: results.length - okCount,
+          results,
+        }),
+      );
+    } catch (e) {
+      return c.json(err(e instanceof Error ? e.message : 'Bulk review action error'), 500);
+    }
+  });
+
   // ── PATCH /v1/admin/review/nodes/:id ──────────────────────────────────────
   // Approval flow by node_type:
   //   Tool     → enqueue an indexer job (priority 1) with the staged github_url.
@@ -550,161 +701,6 @@ RETURN edge.toolId AS toolId, topicId, topicNodeType, edge.edgeType AS edgeType
       return c.json(ok({ id, action: 'rejected' }));
     } catch (e) {
       return c.json(err(e instanceof Error ? e.message : 'Review action error'), 500);
-    }
-  });
-
-  // ── PATCH /v1/admin/review/nodes/bulk ─────────────────────────────────────
-  // Bulk variant of the single-id approve/reject flow. Accepts:
-  //   { ids: string[], action: 'approve' }
-  //   { ids: string[], action: 'reject', reason: string }
-  //
-  // Runs the same per-id logic as the single endpoint (graduated flag, indexer
-  // enqueue for Tool approvals) but in one round-trip. Already-graduated /
-  // missing rows are skipped with `ok: false, reason` in the results array
-  // so the client can reconcile — the call itself still returns HTTP 200
-  // unless EVERY item errored.
-  app.patch('/review/nodes/bulk', async (c) => {
-    const body = await c.req.json().catch(() => null);
-    const parsed = z
-      .discriminatedUnion('action', [
-        z.object({
-          action: z.literal('approve'),
-          ids: z.array(z.string().min(1)).min(1).max(200),
-        }),
-        z.object({
-          action: z.literal('reject'),
-          ids: z.array(z.string().min(1)).min(1).max(200),
-          reason: z.string().min(1),
-        }),
-      ])
-      .safeParse(body);
-
-    if (!parsed.success) return c.json({ ok: false, error: 'INVALID_INPUT' }, 400);
-
-    try {
-      // Load every targeted row in ONE DB round-trip so we can skip-with-reason
-      // for missing/already-graduated ids without issuing 200 individual
-      // findUnique queries.
-      const nodes = await prisma.stagedNode.findMany({
-        where: { id: { in: parsed.data.ids } },
-      });
-      const byId = new Map(nodes.map((n) => [n.id, n]));
-
-      const results: Array<{
-        id: string;
-        ok: boolean;
-        action?: 'approved' | 'rejected';
-        indexer_enqueued?: boolean;
-        reason?: string;
-      }> = [];
-
-      const now = new Date();
-
-      if (parsed.data.action === 'approve') {
-        // Split targets into (update-eligible, indexer-enqueueable). Tools
-        // with no github_url still get graduated but indexer_enqueued=false,
-        // matching the single-id endpoint's semantics.
-        const toUpdateIds: string[] = [];
-        const indexerJobs: Array<{ id: string; url: string }> = [];
-
-        for (const id of parsed.data.ids) {
-          const node = byId.get(id);
-          if (!node) {
-            results.push({ id, ok: false, reason: 'NOT_FOUND' });
-            continue;
-          }
-          if (node.graduated) {
-            results.push({ id, ok: false, reason: 'ALREADY_REVIEWED' });
-            continue;
-          }
-          toUpdateIds.push(id);
-
-          if (node.node_type === 'Tool') {
-            const data = (node.node_data ?? {}) as Record<string, unknown>;
-            const rawUrl = typeof data.github_url === 'string' ? data.github_url.trim() : '';
-            if (rawUrl) indexerJobs.push({ id, url: rawUrl });
-          }
-        }
-
-        // One UPDATE for every eligible row — dramatically cheaper than N.
-        if (toUpdateIds.length > 0) {
-          await prisma.stagedNode.updateMany({
-            where: { id: { in: toUpdateIds } },
-            data: {
-              graduated: true,
-              graduated_at: now,
-              reviewed_by: 'admin',
-              reviewed_at: now,
-            },
-          });
-        }
-
-        // Enqueue in parallel — each call is one Redis XADD, tiny cost.
-        const enqueueResults = await Promise.all(
-          indexerJobs.map((j) =>
-            enqueueIndexJob(j.url, 1)
-              .then(() => ({ id: j.id, ok: true }))
-              .catch(() => ({ id: j.id, ok: false })),
-          ),
-        );
-        const enqueueOk = new Map(enqueueResults.map((r) => [r.id, r.ok]));
-
-        for (const id of toUpdateIds) {
-          const isTool = byId.get(id)?.node_type === 'Tool';
-          const hadUrl = indexerJobs.some((j) => j.id === id);
-          results.push({
-            id,
-            ok: true,
-            action: 'approved',
-            indexer_enqueued: isTool ? (hadUrl ? (enqueueOk.get(id) ?? false) : false) : undefined,
-          });
-        }
-      } else {
-        // Reject — no indexer interaction, just a single updateMany.
-        const toUpdateIds: string[] = [];
-        for (const id of parsed.data.ids) {
-          const node = byId.get(id);
-          if (!node) {
-            results.push({ id, ok: false, reason: 'NOT_FOUND' });
-            continue;
-          }
-          if (node.graduated) {
-            results.push({ id, ok: false, reason: 'ALREADY_REVIEWED' });
-            continue;
-          }
-          toUpdateIds.push(id);
-        }
-
-        if (toUpdateIds.length > 0) {
-          await prisma.stagedNode.updateMany({
-            where: { id: { in: toUpdateIds } },
-            data: {
-              graduated: true,
-              graduated_at: now,
-              reviewed_by: 'admin',
-              reviewed_at: now,
-              rejection_reason: parsed.data.reason,
-            },
-          });
-        }
-
-        for (const id of toUpdateIds) {
-          results.push({ id, ok: true, action: 'rejected' });
-        }
-      }
-
-      const okCount = results.filter((r) => r.ok).length;
-      return c.json(
-        ok({
-          action: parsed.data.action,
-          requested: parsed.data.ids.length,
-          applied: okCount,
-          skipped: results.length - okCount,
-          results,
-        }),
-      );
-    } catch (e) {
-      return c.json(err(e instanceof Error ? e.message : 'Bulk review action error'), 500);
     }
   });
 
