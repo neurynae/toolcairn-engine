@@ -162,5 +162,48 @@ export function internalNotificationsRoutes(): Hono {
     return c.json({ ok: true, totalEnqueued });
   });
 
+  /**
+   * Atomic bonus-credit decrement. Called by the CF Worker when a request
+   * exceeds the daily cap but the user has credits left in their one-time
+   * bonus pool.
+   *
+   * SQL-level atomicity: UPDATE ... WHERE bonusCreditRemaining > 0 RETURNING
+   * the new value. If no row matches (pool exhausted or user missing),
+   * the response carries ok:false so the Worker falls through to the
+   * limit-exhausted fallback.
+   */
+  app.post('/consume-bonus-credit', async (c) => {
+    const parsed = z
+      .object({ userId: z.string().uuid() })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return c.json({ ok: false, error: 'invalid_body' }, 400);
+    }
+    const { userId } = parsed.data;
+    // Prisma doesn't expose RETURNING for updateMany, so we do it in two steps
+    // inside a tx to preserve atomicity.
+    try {
+      const remaining = await prisma.$transaction(async (tx) => {
+        const res = await tx.user.updateMany({
+          where: { id: userId, bonusCreditRemaining: { gt: 0 } },
+          data: { bonusCreditRemaining: { decrement: 1 } },
+        });
+        if (res.count === 0) return null;
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          select: { bonusCreditRemaining: true },
+        });
+        return user?.bonusCreditRemaining ?? 0;
+      });
+      if (remaining === null) {
+        return c.json({ ok: false, error: 'exhausted', remaining: 0 });
+      }
+      return c.json({ ok: true, remaining });
+    } catch (e) {
+      logger.error({ err: e, userId }, 'consume-bonus-credit failed');
+      return c.json({ ok: false, error: 'internal' }, 500);
+    }
+  });
+
   return app;
 }

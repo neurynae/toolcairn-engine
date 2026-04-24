@@ -42,7 +42,7 @@ interface LoadState {
 let current: LoadState = {
   queue_depth: 0,
   api_latency_p95_ms: 0,
-  free_tier_limit: 200,
+  free_tier_limit: 15,
   computed_at: new Date().toISOString(),
 };
 
@@ -51,13 +51,15 @@ export function getCurrentLoad(): LoadState {
   return current;
 }
 
+// Dynamic free-tier daily limit. Range: 10 (high load) → 15 (idle).
+// Bonus credits (User.bonusCreditRemaining) kick in once this ceiling is hit.
 function computeFreeTierLimit(queueDepth: number, p95Ms: number): number {
   let reduction = 0;
-  if (queueDepth > 500) reduction += 60;
-  else if (queueDepth > 100) reduction += 30;
-  if (p95Ms > 5000) reduction += 40;
-  else if (p95Ms > 2000) reduction += 20;
-  return Math.max(100, Math.min(200, 200 - reduction));
+  if (queueDepth > 500) reduction += 3;
+  else if (queueDepth > 100) reduction += 2;
+  if (p95Ms > 5000) reduction += 2;
+  else if (p95Ms > 2000) reduction += 1;
+  return Math.max(10, Math.min(15, 15 - reduction));
 }
 
 async function measure(): Promise<void> {

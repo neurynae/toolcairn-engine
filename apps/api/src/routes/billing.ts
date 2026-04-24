@@ -215,7 +215,12 @@ export function billingRoutes(prisma: PrismaClient): Hono {
       const [user, dailyUsed] = await Promise.all([
         prisma.user.findUnique({
           where: { id: userId },
-          select: { plan: true, planExpiresAt: true, razorpaySubscriptionId: true },
+          select: {
+            plan: true,
+            planExpiresAt: true,
+            razorpaySubscriptionId: true,
+            bonusCreditRemaining: true,
+          },
         }),
         prisma.mcpEvent.count({
           where: { user_id: userId, created_at: { gte: todayStart } },
@@ -235,6 +240,7 @@ export function billingRoutes(prisma: PrismaClient): Hono {
           is_active: !!isActive,
           subscription_id: user.razorpaySubscriptionId ?? null,
           daily_used: dailyUsed,
+          bonus_credit_remaining: user.bonusCreditRemaining,
           payment_mode: getPaymentMode(),
         },
       });

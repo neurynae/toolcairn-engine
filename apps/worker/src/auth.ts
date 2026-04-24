@@ -109,8 +109,8 @@ export async function checkRateLimit(apiKey: string, limit: number, env: Env): P
 
 /**
  * Checks the daily call limit for an API key.
- * Free tier: dynamic limit (100–200) read from KV `system:free_tier_limit`.
- * Pro/team tier: fixed higher limits.
+ * Free tier: dynamic limit (10–15) read from KV `system:free_tier_limit`.
+ * Pro: 100 / team: 20,000.
  * Returns { allowed, used, limit }.
  */
 export async function checkDailyLimit(
@@ -125,16 +125,69 @@ export async function checkDailyLimit(
 
     let limit: number;
     if (tier === 'pro' || tier === 'team') {
-      limit = tier === 'team' ? 20_000 : 5_000;
+      limit = tier === 'team' ? 20_000 : 100;
     } else {
-      // Free tier: dynamic limit computed by the load monitor on the VPS
-      limit = Number.parseInt((await env.KV.get('system:free_tier_limit')) ?? '200');
+      // Free tier: dynamic limit computed by the load monitor on the VPS.
+      // Fallback 15 (the new idle-state default) if KV is cold / unavailable.
+      limit = Number.parseInt((await env.KV.get('system:free_tier_limit')) ?? '15');
     }
 
     return { allowed: used < limit, used, limit };
   } catch {
-    // KV unavailable — degrade gracefully, allow the request
-    return { allowed: true, used: 0, limit: 200 };
+    // KV unavailable — degrade gracefully, allow the request.
+    return { allowed: true, used: 0, limit: 15 };
+  }
+}
+
+/**
+ * Try to consume one bonus credit for this user. Returns the post-decrement
+ * balance on success, or null if the user has no credits left.
+ *
+ * Best-effort KV bookkeeping: the KV counter lives at `credit:${userId}` and
+ * mirrors the Postgres User.bonusCreditRemaining. Postgres is the source of
+ * truth — a fire-and-forget callback to /v1/internal/consume-bonus-credit
+ * performs the atomic decrement server-side so concurrent requests can't
+ * double-spend. The KV value is refreshed from that endpoint's response.
+ */
+export async function consumeBonusCredit(
+  userId: string,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<{ ok: true; remaining: number } | { ok: false }> {
+  const kvKey = `credit:${userId}`;
+  let kvValue: number | null = null;
+  try {
+    const raw = await env.KV.get(kvKey);
+    kvValue = raw == null ? null : Number.parseInt(raw);
+  } catch {
+    // KV unavailable — fall through to API
+  }
+
+  // If KV says zero, don't bother hitting the API unless it's been a while.
+  if (kvValue === 0) return { ok: false };
+
+  // Synchronous call to API: atomic UPDATE returns the new balance.
+  try {
+    const url = `${env.API_ORIGIN_URL.replace(/\/$/, '')}/v1/internal/consume-bonus-credit`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-origin-secret': env.ORIGIN_SECRET,
+      },
+      body: JSON.stringify({ userId }),
+    });
+    if (!res.ok) return { ok: false };
+    const body = (await res.json()) as { ok?: boolean; remaining?: number };
+    if (!body.ok || typeof body.remaining !== 'number') return { ok: false };
+
+    // Mirror back into KV (best-effort) so subsequent same-slot reads are fast.
+    ctx.waitUntil(
+      env.KV.put(kvKey, String(body.remaining), { expirationTtl: 7 * 86_400 }).catch(() => {}),
+    );
+    return { ok: true, remaining: body.remaining };
+  } catch {
+    return { ok: false };
   }
 }
 

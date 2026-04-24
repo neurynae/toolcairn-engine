@@ -15,7 +15,13 @@
  * Cron (every minute):
  *   - Fetches /v1/system/load from VPS and writes free_tier_limit to KV
  */
-import { checkDailyLimit, checkRateLimit, meterUsage, validateRequest } from './auth.js';
+import {
+  checkDailyLimit,
+  checkRateLimit,
+  consumeBonusCredit,
+  meterUsage,
+  validateRequest,
+} from './auth.js';
 import { getCached, isCacheable, putCached } from './cache.js';
 import { notifyUsageEvent } from './notify.js';
 import type { Env } from './types.js';
@@ -156,27 +162,65 @@ export default {
       }
     }
 
+    let bonusUsed = false;
+    let bonusRemaining: number | null = null;
+
     if (!daily.allowed) {
-      return Response.json(
-        {
-          ok: false,
-          error: 'daily_limit_exceeded',
-          message: `You've used ${daily.used}/${daily.limit} calls today. Upgrade to Pro for 5,000 calls/day.`,
-          used: daily.used,
-          limit: daily.limit,
-          tier: record.tier,
-          upgrade_url: 'https://toolcairn.neurynae.com/billing',
-        },
-        {
-          status: 429,
-          headers: {
-            'X-RateLimit-Daily-Limit': String(daily.limit),
-            'X-RateLimit-Daily-Used': String(daily.used),
-            'X-RateLimit-Daily-Remaining': '0',
-            'X-RateLimit-Tier': record.tier,
+      // ── Bonus-credit fallback ──────────────────────────────────────────
+      // After the daily cap, try to spend one credit from the one-time bonus
+      // pool (User.bonusCreditRemaining, default 100 at signup). The engine
+      // does the atomic decrement; KV mirror is refreshed opportunistically.
+      if (record.user_id && record.user_id !== 'web-app-service') {
+        const result = await consumeBonusCredit(record.user_id, env, ctx);
+        if (result.ok) {
+          bonusUsed = true;
+          bonusRemaining = result.remaining;
+        }
+      }
+
+      if (!bonusUsed) {
+        // Credit pool empty (or unavailable) → courteous limit-exhausted
+        // response. The toolcairn-mcp client library surfaces this body to
+        // the agent as plain text, so the user sees the waitlist CTA.
+        const waitlistUrl = 'https://toolcairn.neurynae.com/waitlist?source=limit_exhausted';
+        const billingUrl = 'https://toolcairn.neurynae.com/billing';
+        const userFacingMessage = [
+          "You've reached ToolCairn's daily limit, and your one-time bonus credits are used up.",
+          '',
+          'Pre-register for Pro and get **1 month complimentary** — 100 calls/day plus priority recommendations:',
+          `  → ${waitlistUrl}`,
+          '',
+          `Or subscribe directly: ${billingUrl}`,
+          '',
+          'Your daily quota resets at UTC midnight.',
+        ].join('\n');
+
+        return Response.json(
+          {
+            ok: false,
+            error: 'daily_limit_exceeded',
+            limit_exhausted: true,
+            message: userFacingMessage,
+            used: daily.used,
+            limit: daily.limit,
+            bonus_credit_remaining: 0,
+            tier: record.tier,
+            waitlist_url: waitlistUrl,
+            upgrade_url: billingUrl,
           },
-        },
-      );
+          {
+            status: 429,
+            headers: {
+              'X-RateLimit-Daily-Limit': String(daily.limit),
+              'X-RateLimit-Daily-Used': String(daily.used),
+              'X-RateLimit-Daily-Remaining': '0',
+              'X-RateLimit-Tier': record.tier,
+              'X-ToolCairn-Bonus-Credit': '0',
+              'X-ToolCairn-Limit-Exhausted': '1',
+            },
+          },
+        );
+      }
     }
 
     // ── Meter usage (async — never block the response) ─────────────────────
@@ -196,7 +240,10 @@ export default {
         const hit = new Response(cached.body, cached);
         hit.headers.set('X-Cache', 'HIT');
         hit.headers.set('X-Cache-Path', path);
-        appendRateLimitHeaders(hit.headers, record.tier, daily);
+        appendRateLimitHeaders(hit.headers, record.tier, daily, {
+          used: bonusUsed,
+          remaining: bonusRemaining,
+        });
         return hit;
       }
 
@@ -206,14 +253,17 @@ export default {
       }
       const miss = new Response(originResponse.body, originResponse);
       miss.headers.set('X-Cache', 'MISS');
-      appendRateLimitHeaders(miss.headers, record.tier, daily);
+      appendRateLimitHeaders(miss.headers, record.tier, daily, {
+        used: bonusUsed,
+        remaining: bonusRemaining,
+      });
       return miss;
     }
 
     // ── Non-cacheable: forward directly ────────────────────────────────────
     const response = await forwardToOrigin(request, env, path, record.user_id);
     const result = new Response(response.body, response);
-    appendRateLimitHeaders(result.headers, record.tier, daily);
+    appendRateLimitHeaders(result.headers, record.tier, daily, { used: bonusUsed, remaining: bonusRemaining });
     return result;
   },
 
@@ -240,11 +290,18 @@ function appendRateLimitHeaders(
   headers: Headers,
   tier: string,
   daily: { used: number; limit: number },
+  bonus?: { used: boolean; remaining: number | null },
 ): void {
   headers.set('X-RateLimit-Daily-Limit', String(daily.limit));
   headers.set('X-RateLimit-Daily-Used', String(daily.used));
   headers.set('X-RateLimit-Daily-Remaining', String(Math.max(0, daily.limit - daily.used)));
   headers.set('X-RateLimit-Tier', tier);
+  if (bonus?.used && bonus.remaining !== null) {
+    // Signal to the client that THIS request was served from the bonus pool.
+    // toolcairn-mcp surfaces this to the user ("Using bonus credit — 42 left").
+    headers.set('X-ToolCairn-Bonus-Used', '1');
+    headers.set('X-ToolCairn-Bonus-Remaining', String(bonus.remaining));
+  }
 }
 
 async function forwardToOrigin(
