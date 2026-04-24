@@ -13,6 +13,8 @@ import { createProdLogger } from '@toolcairn/errors/transports';
 import { createAllHandlers, createDeps } from '@toolcairn/tools';
 import { Hono } from 'hono';
 import { compress } from 'hono/compress';
+import { startDataRetentionPoller } from './jobs/data-retention-poller.js';
+import { startDeliverabilityMonitor } from './jobs/deliverability-monitor.js';
 import { startEmailOutboxPoller } from './jobs/email-outbox-poller.js';
 import { recordLatency, startLoadMonitor } from './jobs/load-monitor.js';
 import { startScheduledEmailPoller } from './jobs/scheduled-email-poller.js';
@@ -119,4 +121,6 @@ serve({ fetch: app.fetch, port }, () => {
   startUsageAggregator();
   startEmailOutboxPoller();
   startScheduledEmailPoller();
+  startDataRetentionPoller();
+  startDeliverabilityMonitor();
 });

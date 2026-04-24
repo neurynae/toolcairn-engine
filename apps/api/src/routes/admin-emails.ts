@@ -20,6 +20,11 @@ const logger = createLogger({ name: '@toolcairn/api:admin-emails' });
 const previewSchema = z.object({
   kind: z.enum([
     EmailKind.Welcome,
+    EmailKind.BonusCreditGrant,
+    EmailKind.BonusCreditHalfway,
+    EmailKind.ProWaitlistPromo,
+    EmailKind.WaitlistJoined,
+    EmailKind.ReferralAccepted,
     EmailKind.Threshold90,
     EmailKind.ThresholdExhausted,
     EmailKind.ProActivated,
@@ -28,6 +33,7 @@ const previewSchema = z.object({
     EmailKind.McpRelease,
     EmailKind.DeprecationNotice,
     EmailKind.WeeklyDigest,
+    EmailKind.DeliverabilityAlert,
   ]),
   toEmail: z.string().email().default('preview@example.com'),
   name: z.string().optional(),

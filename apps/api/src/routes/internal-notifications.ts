@@ -163,14 +163,18 @@ export function internalNotificationsRoutes(): Hono {
   });
 
   /**
-   * Atomic bonus-credit decrement. Called by the CF Worker when a request
-   * exceeds the daily cap but the user has credits left in their one-time
-   * bonus pool.
+   * Atomic bonus-credit decrement. Called by the CF Worker after the daily
+   * cap is exhausted.
    *
-   * SQL-level atomicity: UPDATE ... WHERE bonusCreditRemaining > 0 RETURNING
-   * the new value. If no row matches (pool exhausted or user missing),
-   * the response carries ok:false so the Worker falls through to the
-   * limit-exhausted fallback.
+   * Rules:
+   *   - Pool must be > 0 AND bonusCreditExpiresAt must be null OR in the
+   *     future. Expired credits = exhausted (a separate daily cron also
+   *     zeros them out, but we double-check atomically here).
+   *   - On the balance hitting exactly 50 post-decrement, we enqueue the
+   *     bonus_credit_halfway email once-ever (scopeKey='' + EmailEvent
+   *     UNIQUE + gated on notifyLimitAlerts + emailDoNotEmail).
+   *   - Atomicity via updateMany WHERE + findUnique inside one tx so
+   *     concurrent requests from the same user can't over-spend.
    */
   app.post('/consume-bonus-credit', async (c) => {
     const parsed = z
@@ -180,25 +184,51 @@ export function internalNotificationsRoutes(): Hono {
       return c.json({ ok: false, error: 'invalid_body' }, 400);
     }
     const { userId } = parsed.data;
-    // Prisma doesn't expose RETURNING for updateMany, so we do it in two steps
-    // inside a tx to preserve atomicity.
     try {
-      const remaining = await prisma.$transaction(async (tx) => {
+      const result = await prisma.$transaction(async (tx) => {
+        const now = new Date();
         const res = await tx.user.updateMany({
-          where: { id: userId, bonusCreditRemaining: { gt: 0 } },
+          where: {
+            id: userId,
+            bonusCreditRemaining: { gt: 0 },
+            OR: [{ bonusCreditExpiresAt: null }, { bonusCreditExpiresAt: { gt: now } }],
+          },
           data: { bonusCreditRemaining: { decrement: 1 } },
         });
         if (res.count === 0) return null;
         const user = await tx.user.findUnique({
           where: { id: userId },
-          select: { bonusCreditRemaining: true },
+          select: {
+            email: true,
+            name: true,
+            bonusCreditRemaining: true,
+            notifyLimitAlerts: true,
+            emailDoNotEmail: true,
+          },
         });
-        return user?.bonusCreditRemaining ?? 0;
+        if (!user) return 0;
+
+        // Halfway alert — fires exactly once when balance hits 50.
+        if (
+          user.bonusCreditRemaining === 50 &&
+          !user.emailDoNotEmail &&
+          user.notifyLimitAlerts !== false
+        ) {
+          await enqueueEmail(tx, {
+            kind: EmailKind.BonusCreditHalfway,
+            userId,
+            toEmail: user.email,
+            scopeKey: '',
+            payload: { name: user.name, remaining: 50, starting: 100 },
+          });
+        }
+
+        return user.bonusCreditRemaining;
       });
-      if (remaining === null) {
+      if (result === null) {
         return c.json({ ok: false, error: 'exhausted', remaining: 0 });
       }
-      return c.json({ ok: true, remaining });
+      return c.json({ ok: true, remaining: result });
     } catch (e) {
       logger.error({ err: e, userId }, 'consume-bonus-credit failed');
       return c.json({ ok: false, error: 'internal' }, 500);

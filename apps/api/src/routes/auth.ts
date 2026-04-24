@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@toolcairn/db';
+import { type PrismaClient, prisma } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
 import { EmailKind, enqueueEmail } from '@toolcairn/notifications';
 /**
@@ -55,6 +55,96 @@ async function getUserTier(prisma: PrismaClient, userId: string): Promise<string
   return 'free';
 }
 
+// Cheap UUID shape check — signup/resolveReferrer treats anything non-UUID
+// as "no referral" without bothering Postgres.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve a referral code to the inviter record. Returns null (no referral)
+ * if the code is missing, malformed, doesn't exist, or points at the same
+ * email as the new signup (self-referral attempt).
+ */
+async function resolveReferrer(
+  referralCode: string | undefined | null,
+  signupEmail: string | undefined | null,
+): Promise<{ id: string; email: string; name: string | null } | null> {
+  if (!referralCode || !UUID_RE.test(referralCode)) return null;
+  const inviter = await prisma.user.findUnique({
+    where: { id: referralCode },
+    select: { id: true, email: true, name: true },
+  });
+  if (!inviter) return null;
+  if (signupEmail && inviter.email.trim().toLowerCase() === signupEmail.trim().toLowerCase()) {
+    return null;
+  }
+  return inviter;
+}
+
+/**
+ * Apply a referral grant inside the provided transaction: creates a
+ * ReferralGrant row (UNIQUE on inviter+invitee — duplicates silently rejected),
+ * +50 bonus credits to both users, and enqueues the referral_accepted email
+ * to the inviter. Returns the invitee's new bonus balance.
+ */
+async function applyReferralGrant(
+  tx: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0],
+  inviter: { id: string; email: string; name: string | null },
+  invitee: { id: string; email: string; name: string | null },
+): Promise<number> {
+  const BONUS = 50;
+
+  // UNIQUE(inviter, invitee) — skip silently if it somehow fires twice.
+  try {
+    await tx.referralGrant.create({
+      data: {
+        inviterUserId: inviter.id,
+        inviteeUserId: invitee.id,
+        inviterBonus: BONUS,
+        inviteeBonus: BONUS,
+      },
+    });
+  } catch {
+    // Already granted — return the invitee's current balance without double-bumping.
+    const u = await tx.user.findUnique({
+      where: { id: invitee.id },
+      select: { bonusCreditRemaining: true },
+    });
+    return u?.bonusCreditRemaining ?? 0;
+  }
+
+  const [, bumpedInvitee, bumpedInviter] = await Promise.all([
+    tx.user.update({
+      where: { id: inviter.id },
+      data: { bonusCreditRemaining: { increment: BONUS } },
+      select: { bonusCreditRemaining: true },
+    }),
+    tx.user.update({
+      where: { id: invitee.id },
+      data: { bonusCreditRemaining: { increment: BONUS } },
+      select: { bonusCreditRemaining: true },
+    }),
+    tx.user.findUnique({
+      where: { id: inviter.id },
+      select: { bonusCreditRemaining: true },
+    }),
+  ]);
+
+  await enqueueEmail(tx, {
+    kind: EmailKind.ReferralAccepted,
+    userId: inviter.id,
+    toEmail: inviter.email,
+    scopeKey: `invite:${invitee.id}`,
+    payload: {
+      name: inviter.name,
+      inviteeName: invitee.name,
+      inviterBonus: BONUS,
+      inviterBalance: bumpedInviter?.bonusCreditRemaining ?? 0,
+    },
+  });
+
+  return bumpedInvitee.bonusCreditRemaining;
+}
+
 export function authRoutes(prisma: PrismaClient): Hono {
   const app = new Hono();
 
@@ -62,7 +152,13 @@ export function authRoutes(prisma: PrismaClient): Hono {
   // Called by Vercel public app /api/auth/signup route
   app.post('/signup', async (c) => {
     try {
-      const body = (await c.req.json()) as { name?: string; email?: string; password?: string };
+      const body = (await c.req.json()) as {
+        name?: string;
+        email?: string;
+        password?: string;
+        /** Referral code = inviter's userId. Validated below; invalid codes are silently ignored. */
+        referralCode?: string;
+      };
       if (!body.email || !body.password)
         return c.json({ error: 'email and password required' }, 400);
       if (body.password.length < 8)
@@ -71,13 +167,21 @@ export function authRoutes(prisma: PrismaClient): Hono {
       const existing = await prisma.user.findUnique({ where: { email: body.email } });
       if (existing) return c.json({ error: 'An account with this email already exists.' }, 409);
 
+      // Resolve referral — only accept if (a) the code is a valid UUID, (b) it
+      // maps to a real user, and (c) that user's email isn't the same as the
+      // signup email (blocks trivial self-referral).
+      const inviter = await resolveReferrer(body.referralCode, body.email);
+
       const passwordHash = await bcrypt.hash(body.password, SALT_ROUNDS);
       const user = await prisma.$transaction(async (tx) => {
+        const expiresAt = new Date(Date.now() + 90 * 86_400_000);
         const created = await tx.user.create({
           data: {
             name: body.name ?? null,
             email: body.email ?? '',
             passwordHash,
+            bonusCreditExpiresAt: expiresAt,
+            referredByUserId: inviter?.id ?? null,
             accounts: {
               create: {
                 type: 'credentials',
@@ -95,9 +199,13 @@ export function authRoutes(prisma: PrismaClient): Hono {
           },
         });
         const dailyLimit = getCurrentLoad().free_tier_limit;
-        const bonusCredits = created.bonusCreditRemaining;
+        let bonusCredits = created.bonusCreditRemaining;
 
-        // Welcome email — enqueued in the same tx for atomicity (outbox pattern).
+        // Apply referral grant inside the same tx (if any). +50 to both.
+        if (inviter) {
+          bonusCredits = await applyReferralGrant(tx, inviter, created);
+        }
+
         await enqueueEmail(tx, {
           kind: EmailKind.Welcome,
           userId: created.id,
@@ -105,9 +213,6 @@ export function authRoutes(prisma: PrismaClient): Hono {
           scopeKey: '',
           payload: { name: created.name, dailyLimit },
         });
-        // Bonus-credit explainer ~90s after welcome so it reads as a genuine
-        // follow-up, not a batch. scheduledFor precision is capped at the
-        // poller cadence (60s), so actual delivery lands 60–120s later.
         await enqueueEmail(tx, {
           kind: EmailKind.BonusCreditGrant,
           userId: created.id,
@@ -116,8 +221,6 @@ export function authRoutes(prisma: PrismaClient): Hono {
           payload: { name: created.name, dailyLimit, bonusCredits },
           scheduledFor: new Date(Date.now() + 90 * 1000),
         });
-        // Pro-waitlist promo ~1h after signup — by then the user has had a
-        // chance to feel the free-tier ceiling.
         await enqueueEmail(tx, {
           kind: EmailKind.ProWaitlistPromo,
           userId: created.id,
@@ -135,9 +238,44 @@ export function authRoutes(prisma: PrismaClient): Hono {
     }
   });
 
+  // ── Referral stats (for /refer page) ──────────────────────────────────────
+  app.get('/referral-stats/:userId', async (c) => {
+    const userId = c.req.param('userId');
+    if (!userId) return c.json({ error: 'userId required' }, 400);
+    try {
+      const [user, grants] = await Promise.all([
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: { id: true, bonusCreditRemaining: true, bonusCreditExpiresAt: true },
+        }),
+        prisma.referralGrant.findMany({
+          where: { inviterUserId: userId },
+          select: { createdAt: true, inviterBonus: true },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ]);
+      if (!user) return c.json({ error: 'user_not_found' }, 404);
+      const totalEarned = grants.reduce((sum, g) => sum + g.inviterBonus, 0);
+      return c.json({
+        ok: true,
+        data: {
+          referralCode: user.id, // userId IS the referral code (MVP — can shorten later)
+          inviteCount: grants.length,
+          totalBonusEarned: totalEarned,
+          bonusCreditRemaining: user.bonusCreditRemaining,
+          bonusCreditExpiresAt: user.bonusCreditExpiresAt?.toISOString() ?? null,
+        },
+      });
+    } catch {
+      return c.json({ error: 'internal' }, 500);
+    }
+  });
+
   // ── User CRUD (for Auth.js VpsAdapter) ────────────────────────────────────
 
   // POST /v1/auth/users — createUser (OAuth sign-in, no password)
+  // Accepts optional `referralCode` — Auth.js passes it through via the
+  // VpsAdapter when the OAuth flow started with a ?ref= URL parameter.
   app.post('/users', async (c) => {
     try {
       const body = (await c.req.json()) as {
@@ -145,19 +283,28 @@ export function authRoutes(prisma: PrismaClient): Hono {
         name?: string | null;
         emailVerified?: string | null;
         image?: string | null;
+        referralCode?: string;
       };
       const existing = await prisma.user.findUnique({ where: { email: body.email } });
       if (existing) return c.json(existing);
 
+      const inviter = await resolveReferrer(body.referralCode, body.email);
+
       const user = await prisma.$transaction(async (tx) => {
+        const expiresAt = new Date(Date.now() + 90 * 86_400_000);
         const created = await tx.user.create({
           data: {
             email: body.email,
             name: body.name ?? null,
             emailVerified: body.emailVerified ? new Date(body.emailVerified) : null,
             image: body.image ?? null,
+            bonusCreditExpiresAt: expiresAt,
+            referredByUserId: inviter?.id ?? null,
           },
         });
+        if (inviter) {
+          await applyReferralGrant(tx, inviter, created);
+        }
         const dailyLimit = getCurrentLoad().free_tier_limit;
         const bonusCredits = created.bonusCreditRemaining;
         await enqueueEmail(tx, {

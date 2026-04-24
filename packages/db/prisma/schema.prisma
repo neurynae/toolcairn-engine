@@ -181,9 +181,17 @@ model User {
 
   // One-time bonus credit pool. Activates ONLY after the user's daily limit is
   // exhausted — each over-daily request decrements this counter atomically.
-  // Never expires (expiry can be added later if needed). Default 100 = the
-  // onboarding grant every new user receives.
-  bonusCreditRemaining Int @default(100)
+  // Default 100 = the onboarding grant every new user receives. Credits expire
+  // after 90 days so abandoned accounts don't hold quota forever.
+  bonusCreditRemaining  Int       @default(100)
+  bonusCreditExpiresAt  DateTime?
+
+  // Referral attribution — set on signup when ?ref=<code> query is present.
+  referredByUserId      String?
+  referrer              User?     @relation("UserReferrals", fields: [referredByUserId], references: [id], onDelete: SetNull)
+  referrals             User[]    @relation("UserReferrals")
+  referralGrants        ReferralGrant[] @relation("GrantInviter")
+  invitedReferralGrants ReferralGrant[] @relation("GrantInvitee")
 
   accounts           Account[]
   sessions           Session[]
@@ -492,4 +500,21 @@ model Waitlist {
 
   @@unique([email])
   @@index([granted, joinedAt])
+}
+
+/// Atomic record of a referral bonus grant. One row per (inviter, invitee)
+/// pair so the +50 on each side is applied exactly once even under races.
+model ReferralGrant {
+  id             String   @id @default(uuid())
+  inviterUserId  String
+  inviteeUserId  String
+  inviterBonus   Int      @default(50)
+  inviteeBonus   Int      @default(50)
+  createdAt      DateTime @default(now())
+
+  inviter User @relation("GrantInviter", fields: [inviterUserId], references: [id], onDelete: Cascade)
+  invitee User @relation("GrantInvitee", fields: [inviteeUserId], references: [id], onDelete: Cascade)
+
+  @@unique([inviterUserId, inviteeUserId])
+  @@index([inviterUserId])
 }
