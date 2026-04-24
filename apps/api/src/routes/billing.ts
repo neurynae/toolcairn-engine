@@ -14,6 +14,7 @@ import crypto from 'node:crypto';
 import { config } from '@toolcairn/config';
 import type { PrismaClient } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
+import { EmailKind, enqueueEmail } from '@toolcairn/notifications';
 import { Hono } from 'hono';
 import { z } from 'zod';
 
@@ -291,13 +292,45 @@ export function billingRoutes(prisma: PrismaClient): Hono {
         const expiresAt = new Date();
         expiresAt.setMonth(expiresAt.getMonth() + months);
 
-        await prisma.user.update({
-          where: { id: userId },
-          data: {
-            plan: 'pro',
-            planExpiresAt: expiresAt,
-            razorpaySubscriptionId: subscriptionId ?? undefined,
-          },
+        await prisma.$transaction(async (tx) => {
+          const user = await tx.user.update({
+            where: { id: userId },
+            data: {
+              plan: 'pro',
+              planExpiresAt: expiresAt,
+              razorpaySubscriptionId: subscriptionId ?? undefined,
+            },
+            select: { id: true, email: true },
+          });
+          // Confirmation email — scopeKey = subscriptionId so renewals of the same
+          // sub don't re-mail (UNIQUE on EmailEvent(userId,kind,scopeKey)).
+          await enqueueEmail(tx, {
+            kind: EmailKind.ProActivated,
+            userId: user.id,
+            toEmail: user.email,
+            scopeKey: subscriptionId ?? `activated:${expiresAt.toISOString()}`,
+            payload: {
+              planKey: planKey ?? 'monthly',
+              expiresAt: expiresAt.toISOString(),
+              source: 'razorpay_webhook',
+            },
+          });
+          // T-7d renewal reminder
+          const remindAt = new Date(expiresAt.getTime() - 7 * 86_400_000);
+          if (remindAt > new Date()) {
+            await enqueueEmail(tx, {
+              kind: EmailKind.ProExpiringSoon,
+              userId: user.id,
+              toEmail: user.email,
+              scopeKey: `${subscriptionId ?? expiresAt.toISOString()}:t-7`,
+              payload: {
+                planKey: planKey ?? 'monthly',
+                expiresAt: expiresAt.toISOString(),
+                source: 'razorpay',
+              },
+              scheduledFor: remindAt,
+            });
+          }
         });
         logger.info({ userId, planKey, expiresAt }, 'plan activated/charged → pro');
       } else if (
@@ -305,9 +338,19 @@ export function billingRoutes(prisma: PrismaClient): Hono {
         eventType === 'subscription.expired' ||
         eventType === 'subscription.completed'
       ) {
-        await prisma.user.update({
-          where: { id: userId },
-          data: { plan: 'free', planExpiresAt: null },
+        await prisma.$transaction(async (tx) => {
+          const user = await tx.user.update({
+            where: { id: userId },
+            data: { plan: 'free', planExpiresAt: null },
+            select: { id: true, email: true },
+          });
+          await enqueueEmail(tx, {
+            kind: EmailKind.ProExpired,
+            userId: user.id,
+            toEmail: user.email,
+            scopeKey: subscriptionId ?? `expired:${Date.now()}`,
+            payload: { source: 'razorpay_lapse' },
+          });
         });
         logger.info({ userId, eventType }, 'plan reverted → free');
       } else if (eventType === 'payment.failed') {

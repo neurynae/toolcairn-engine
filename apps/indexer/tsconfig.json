@@ -28,6 +28,9 @@
     },
     {
       "path": "../../packages/vector"
+    },
+    {
+      "path": "../../packages/notifications"
     }
   ]
 }

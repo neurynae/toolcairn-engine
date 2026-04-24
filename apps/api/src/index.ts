@@ -13,10 +13,13 @@ import { createProdLogger } from '@toolcairn/errors/transports';
 import { createAllHandlers, createDeps } from '@toolcairn/tools';
 import { Hono } from 'hono';
 import { compress } from 'hono/compress';
+import { startEmailOutboxPoller } from './jobs/email-outbox-poller.js';
 import { recordLatency, startLoadMonitor } from './jobs/load-monitor.js';
+import { startScheduledEmailPoller } from './jobs/scheduled-email-poller.js';
 import { startUsageAggregator } from './jobs/usage-aggregator.js';
 import { createErrorHandler, requestIdMiddleware } from './middleware/error-handler.js';
 import { originAuth } from './middleware/origin-auth.js';
+import { adminEmailsRoutes } from './routes/admin-emails.js';
 import { adminRoutes } from './routes/admin.js';
 import { alertRoutes } from './routes/alerts.js';
 import { analyticsRoutes } from './routes/analytics.js';
@@ -24,14 +27,18 @@ import { authRoutes } from './routes/auth.js';
 import { badgeRoutes } from './routes/badge.js';
 import { billingRoutes } from './routes/billing.js';
 import { dataRoutes } from './routes/data.js';
+import { emailUnsubscribeRoutes } from './routes/email-unsubscribe.js';
 import { eventRoutes } from './routes/events.js';
 import { feedbackRoutes } from './routes/feedback.js';
 import { graphRoutes } from './routes/graph.js';
 import { intelligenceRoutes } from './routes/intelligence.js';
+import { internalNotificationsRoutes } from './routes/internal-notifications.js';
 import { scanRoutes } from './routes/scan.js';
 import { searchRoutes } from './routes/search.js';
 import { systemRoutes } from './routes/system.js';
 import { toolsRoutes } from './routes/tools.js';
+import { waitlistRoutes } from './routes/waitlist.js';
+import { webhookRoutes } from './routes/webhooks.js';
 
 const logger =
   process.env.NODE_ENV === 'production'
@@ -73,8 +80,11 @@ app.use('*', async (c, next) => {
 app.route('/v1', systemRoutes());
 app.route('/v1/auth', authRoutes(prisma));
 app.route('/v1/admin', adminRoutes());
+app.route('/v1/admin/emails', adminEmailsRoutes());
 // Badge — public SVG badges for README files, cached by CF Worker
 app.route('/v1/badge', badgeRoutes());
+// Webhook sinks — each handler verifies its own provider signature
+app.route('/v1/webhooks', webhookRoutes());
 
 // ── Protected endpoints — originAuth exempts /v1/billing/webhook automatically ──
 app.use('/v1/*', originAuth);
@@ -89,6 +99,9 @@ app.route('/v1/intelligence', intelligenceRoutes(handlers));
 app.route('/v1/feedback', feedbackRoutes(handlers));
 app.route('/v1/tools', toolsRoutes(handlers));
 app.route('/v1/scan', scanRoutes());
+app.route('/v1/internal', internalNotificationsRoutes());
+app.route('/v1/waitlist', waitlistRoutes());
+app.route('/v1/email', emailUnsubscribeRoutes());
 
 // 404 fallback
 app.notFound((c) => c.json({ error: 'not_found', path: c.req.path }, 404));
@@ -102,4 +115,6 @@ serve({ fetch: app.fetch, port }, () => {
   logger.info({ port }, 'ToolPilot API server started');
   startLoadMonitor();
   startUsageAggregator();
+  startEmailOutboxPoller();
+  startScheduledEmailPoller();
 });

@@ -9,7 +9,7 @@ import type { Context, MiddlewareHandler, Next } from 'hono';
  * which allows direct requests during local development.
  */
 // Paths that bypass origin-auth — called directly by external services
-const PUBLIC_PATHS = ['/v1/billing/webhook'];
+const PUBLIC_PATHS = ['/v1/billing/webhook', '/v1/webhooks/resend'];
 
 export const originAuth: MiddlewareHandler = async (c: Context, next: Next) => {
   // Exempt external webhook callbacks from origin-auth

@@ -24,6 +24,7 @@
     "@toolcairn/core": "workspace:*",
     "@toolcairn/db": "workspace:*",
     "@toolcairn/graph": "workspace:*",
+    "@toolcairn/notifications": "workspace:*",
     "@toolcairn/queue": "workspace:*",
     "@toolcairn/registry": "workspace:*",
     "@toolcairn/vector": "workspace:*",

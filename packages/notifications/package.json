@@ -1,0 +1,46 @@
+{
+  "name": "@toolcairn/notifications",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./worker": {
+      "types": "./dist/worker/index.d.ts",
+      "default": "./dist/worker/index.js"
+    },
+    "./webhook": {
+      "types": "./dist/webhook.d.ts",
+      "default": "./dist/webhook.js"
+    },
+    "./templates": {
+      "types": "./dist/templates/index.d.ts",
+      "default": "./dist/templates/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@toolcairn/config": "workspace:*",
+    "@toolcairn/db": "workspace:*",
+    "@toolcairn/errors": "workspace:*",
+    "ioredis": "^5.4.2",
+    "svix": "^1.45.0"
+  },
+  "devDependencies": {
+    "@toolcairn/tsconfig": "workspace:*",
+    "@types/node": "^22.10.7",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2"
+  }
+}

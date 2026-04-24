@@ -18,6 +18,13 @@ services:
       NOMIC_API_KEY: ${NOMIC_API_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       ORIGIN_SECRET: ${STAGING_ORIGIN_SECRET:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      EMAIL_FROM: ${EMAIL_FROM:-ToolCairn Staging <asoni15@neurynae.com>}
+      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:-asoni15@neurynae.com}
+      NOTIFICATIONS_ENABLED: ${STAGING_NOTIFICATIONS_ENABLED:-false}
+      COMPANY_ADDRESS: ${COMPANY_ADDRESS:-Neurynae Labs}
+      PUBLIC_APP_URL: ${STAGING_PUBLIC_APP_URL:-https://staging.toolcairn.neurynae.com}
       MCP_SERVER_PORT: "3002"
       LOG_LEVEL: debug
     expose:

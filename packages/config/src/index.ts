@@ -40,6 +40,27 @@ const configSchema = z.object({
 
   // ── Resend (Email) ────────────────────────────────────────────────────────
   RESEND_API_KEY: z.string().optional(),
+  /** Resend webhook HMAC secret (svix format). Verifies bounce/complaint/delivered events. */
+  RESEND_WEBHOOK_SECRET: z.string().optional(),
+  /** Sender identity for all transactional emails. */
+  EMAIL_FROM: z.string().default('ToolCairn <asoni15@neurynae.com>'),
+  /** Reply-To header — user replies land in the real mailbox via CF Email Routing. */
+  EMAIL_REPLY_TO: z.string().default('asoni15@neurynae.com'),
+  /** Global kill switch. When false, the worker drains the queue as no-ops (audit rows only). */
+  NOTIFICATIONS_ENABLED: z
+    .string()
+    .default('true')
+    .transform((v) => v === 'true' || v === '1'),
+  /** Consumer concurrency (parallel in-flight jobs per email-worker instance). */
+  EMAIL_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  /** Resend provider rate-limit ceiling (sends per second). Token bucket in Redis. */
+  RESEND_RATE_LIMIT: z.coerce.number().int().positive().default(10),
+  /** Physical mailing address shown in every email footer — CAN-SPAM required. */
+  COMPANY_ADDRESS: z
+    .string()
+    .default('Neurynae Labs — address not configured (set COMPANY_ADDRESS)'),
+  /** Public URL of the toolcairn-public site; used for link generation in emails. */
+  PUBLIC_APP_URL: z.string().default('https://toolcairn.neurynae.com'),
 
   // ── Razorpay (Billing) ────────────────────────────────────────────────────
   RAZORPAY_KEY_ID: z.string().optional(),

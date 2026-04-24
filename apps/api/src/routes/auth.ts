@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
+import { EmailKind, enqueueEmail } from '@toolcairn/notifications';
 /**
  * Auth routes — device code flow + user management for the web app.
  * These routes do NOT require origin-auth (called by Vercel public app + MCP CLI directly).
@@ -7,6 +8,7 @@ import { createLogger } from '@toolcairn/errors';
 import bcrypt from 'bcryptjs';
 import { Hono } from 'hono';
 import { SignJWT } from 'jose';
+import { getCurrentLoad } from '../jobs/load-monitor.js';
 
 const logger = createLogger({ name: '@toolcairn/api/auth' });
 
@@ -70,20 +72,32 @@ export function authRoutes(prisma: PrismaClient): Hono {
       if (existing) return c.json({ error: 'An account with this email already exists.' }, 409);
 
       const passwordHash = await bcrypt.hash(body.password, SALT_ROUNDS);
-      const user = await prisma.user.create({
-        data: {
-          name: body.name ?? null,
-          email: body.email,
-          passwordHash,
-          accounts: {
-            create: {
-              type: 'credentials',
-              provider: 'credentials',
-              providerAccountId: body.email,
+      const user = await prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            name: body.name ?? null,
+            email: body.email ?? '',
+            passwordHash,
+            accounts: {
+              create: {
+                type: 'credentials',
+                provider: 'credentials',
+                providerAccountId: body.email ?? '',
+              },
             },
           },
-        },
-        select: { id: true, name: true, email: true, createdAt: true },
+          select: { id: true, name: true, email: true, createdAt: true },
+        });
+        // Welcome email — enqueued in the same tx for atomicity (transactional outbox pattern).
+        // Dropped through the `email-jobs` stream → email-worker consumer.
+        await enqueueEmail(tx, {
+          kind: EmailKind.Welcome,
+          userId: created.id,
+          toEmail: created.email,
+          scopeKey: '',
+          payload: { name: created.name, dailyLimit: getCurrentLoad().free_tier_limit },
+        });
+        return created;
       });
 
       return c.json({ ok: true, user }, 201);
@@ -106,13 +120,23 @@ export function authRoutes(prisma: PrismaClient): Hono {
       const existing = await prisma.user.findUnique({ where: { email: body.email } });
       if (existing) return c.json(existing);
 
-      const user = await prisma.user.create({
-        data: {
-          email: body.email,
-          name: body.name ?? null,
-          emailVerified: body.emailVerified ? new Date(body.emailVerified) : null,
-          image: body.image ?? null,
-        },
+      const user = await prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            email: body.email,
+            name: body.name ?? null,
+            emailVerified: body.emailVerified ? new Date(body.emailVerified) : null,
+            image: body.image ?? null,
+          },
+        });
+        await enqueueEmail(tx, {
+          kind: EmailKind.Welcome,
+          userId: created.id,
+          toEmail: created.email,
+          scopeKey: '',
+          payload: { name: created.name, dailyLimit: getCurrentLoad().free_tier_limit },
+        });
+        return created;
       });
       return c.json(user, 201);
     } catch {

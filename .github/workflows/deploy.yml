@@ -92,6 +92,21 @@ jobs:
             docker builder prune -f
             echo "Disk after cleanup: \$(df -h / | tail -1 | awk '{print \$4}') free"
             IMAGE_TAG=${GIT_SHA} docker compose -f docker-compose.prod.yml --env-file .env.prod pull api indexer
+            # Run Prisma migrations against prod Postgres BEFORE container swap so
+            # the new api image doesn't crash on missing tables. Discovers the
+            # compose network by filter (project-name prefix varies by host).
+            echo "Running prisma migrate deploy…"
+            TP_NETWORK=\$(docker network ls --filter name=toolpilot --format '{{.Name}}' | head -1)
+            if [ -z "\$TP_NETWORK" ]; then
+              echo "ERROR: no toolpilot network found — aborting migrate" >&2
+              exit 1
+            fi
+            docker run --rm \
+              --env-file .env.prod \
+              --network "\$TP_NETWORK" \
+              --entrypoint sh \
+              ghcr.io/neurynae/toolcairn-engine/api:${GIT_SHA} \
+              -c "cd packages/db && npx prisma migrate deploy"
             IMAGE_TAG=${GIT_SHA} docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-deps api indexer
             docker image prune -f
             echo "Deployed ${GIT_SHA} at \$(date)"

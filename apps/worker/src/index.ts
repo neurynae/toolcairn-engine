@@ -17,6 +17,7 @@
  */
 import { checkDailyLimit, checkRateLimit, meterUsage, validateRequest } from './auth.js';
 import { getCached, isCacheable, putCached } from './cache.js';
+import { notifyUsageEvent } from './notify.js';
 import type { Env } from './types.js';
 
 // biome-ignore lint/style/noDefaultExport: Cloudflare Workers require default export
@@ -72,6 +73,16 @@ export default {
       return forwardToOrigin(request, env, path);
     }
 
+    // ── External provider webhooks — signature-verified by the handler itself
+    if (path.startsWith('/v1/webhooks/')) {
+      return forwardToOrigin(request, env, path);
+    }
+
+    // ── Public waitlist / unsubscribe — token-gated, no API key required ────
+    if (path === '/v1/waitlist/join' || path === '/v1/email/unsubscribe') {
+      return forwardToOrigin(request, env, path);
+    }
+
     // ── SVG badges — public, no auth (embedded in READMEs) ──────────────────
     if (path.startsWith('/v1/badge/')) {
       return forwardToOrigin(request, env, path);
@@ -116,6 +127,35 @@ export default {
 
     // ── Daily limit check ───────────────────────────────────────────────────
     const daily = await checkDailyLimit(record.client_id, record.tier, env);
+
+    // ── Threshold-crossing notification (async, best-effort) ───────────────
+    // Fire a fire-and-forget callback to the API when the user crosses 90% or 100%.
+    // The API-side handler dedupes via EmailEvent UNIQUE on (userId, kind, date).
+    // We skip anonymous/service keys (no userId → no email target).
+    if (record.user_id && record.user_id !== 'web-app-service' && daily.limit > 0) {
+      const pctBefore = (daily.used - 1) / daily.limit; // best-effort: we don't know the "pre" exactly
+      const pctNow = daily.used / daily.limit;
+      if (pctNow >= 1.0) {
+        ctx.waitUntil(
+          notifyUsageEvent(env, {
+            userId: record.user_id,
+            used: daily.used,
+            limit: daily.limit,
+            threshold: 100,
+          }),
+        );
+      } else if (pctNow >= 0.9 && pctBefore < 0.9) {
+        ctx.waitUntil(
+          notifyUsageEvent(env, {
+            userId: record.user_id,
+            used: daily.used,
+            limit: daily.limit,
+            threshold: 90,
+          }),
+        );
+      }
+    }
+
     if (!daily.allowed) {
       return Response.json(
         {

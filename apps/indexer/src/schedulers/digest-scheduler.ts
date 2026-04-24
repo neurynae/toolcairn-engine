@@ -1,15 +1,15 @@
 /**
  * Weekly Digest Scheduler — runs every Monday at 06:00 UTC.
  *
- * Finds all Pro users with emailDigestEnabled=true, builds a personalised
- * email with their tool usage, any deprecation alerts, and trending tools,
- * then sends via Resend.
+ * Finds all Pro users with emailDigestEnabled=true and enqueues a personalised
+ * digest via @toolcairn/notifications. The per-user payload (toolsUsed,
+ * deprecationAlerts, trendingTools) is computed here; rendering happens in the
+ * email-worker consumer using the weekly-digest template.
  */
 
 import { prisma } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
-import { sendEmail } from '../email/resend-client.js';
-import { buildWeeklyDigestHtml } from '../email/templates/weekly-digest.js';
+import { EmailKind, enqueueEmail } from '@toolcairn/notifications';
 
 const logger = createLogger({ name: '@toolcairn/indexer:digest-scheduler' });
 
@@ -28,11 +28,6 @@ function weekStartLabel(): string {
     year: 'numeric',
     timeZone: 'UTC',
   });
-}
-
-/** Generate a simple token for unsubscribe links (not cryptographically signed — just enough for UX) */
-function makeUnsubToken(userId: string): string {
-  return Buffer.from(`${userId}:digest`).toString('base64url');
 }
 
 export async function runDigestScheduler(): Promise<void> {
@@ -72,8 +67,11 @@ export async function runDigestScheduler(): Promise<void> {
       quality_score: null,
     }));
 
-    let sent = 0;
+    let enqueued = 0;
     let failed = 0;
+    // scopeKey = week-start date so re-running the scheduler the same week
+    // naturally dedups via EmailEvent UNIQUE.
+    const scopeKey = weekStart;
 
     for (const user of users) {
       try {
@@ -126,36 +124,27 @@ export async function runDigestScheduler(): Promise<void> {
               })
             : [];
 
-        const html = buildWeeklyDigestHtml({
-          userName: user.name ?? '',
-          userEmail: user.email ?? '',
-          weekStart,
-          toolsUsed,
-          deprecationAlerts,
-          trendingTools,
-          unsubscribeToken: makeUnsubToken(user.id),
+        const r = await enqueueEmail(prisma, {
+          kind: EmailKind.WeeklyDigest,
+          userId: user.id,
+          toEmail: user.email ?? '',
+          scopeKey,
+          payload: {
+            userName: user.name,
+            weekStart,
+            toolsUsed,
+            deprecationAlerts,
+            trendingTools,
+          },
         });
-
-        if (!html) {
-          logger.debug({ userId: user.id }, 'Empty digest — skipping');
-          continue;
-        }
-
-        const ok = await sendEmail({
-          to: user.email ?? '',
-          subject: `Your ToolCairn Weekly Digest — ${weekStart}`,
-          html,
-        });
-
-        if (ok) sent++;
-        else failed++;
+        if (r.status === 'queued') enqueued++;
       } catch (e) {
-        logger.error({ userId: user.id, err: e }, 'Digest failed for user');
+        logger.error({ userId: user.id, err: e }, 'Digest enqueue failed for user');
         failed++;
       }
     }
 
-    logger.info({ sent, failed, total: users.length }, 'Weekly digest complete');
+    logger.info({ enqueued, failed, total: users.length }, 'Weekly digest enqueued');
   } catch (e) {
     logger.error({ err: e }, 'Digest scheduler error');
   }

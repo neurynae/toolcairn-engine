@@ -10,6 +10,7 @@
 
 import { prisma } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
+import { EmailKind, enqueueEmail } from '@toolcairn/notifications';
 
 const logger = createLogger({ name: '@toolcairn/indexer:alert-worker' });
 
@@ -58,33 +59,63 @@ export async function deliverDeprecationAlerts(
       toolcairn_url: `https://toolcairn.neurynae.com/tool/${encodeURIComponent(toolName)}`,
     };
 
-    // Deliver to each subscriber's webhook URL
+    // Deliver to each subscriber via webhook + email (both in parallel, best-effort)
     await Promise.allSettled(
       subscriptions.map(async (sub) => {
         const webhookUrl = sub.user?.alertWebhookUrl;
-        if (!webhookUrl) return; // no webhook configured
 
+        // Webhook branch — unchanged pre-existing flow
+        if (webhookUrl) {
+          try {
+            const res = await fetch(webhookUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-ToolCairn-Event': 'tool.deprecation',
+              },
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(10_000),
+            });
+            if (res.ok) {
+              delivered++;
+              logger.info(
+                { toolName, userId: sub.user_id, status: res.status },
+                'Alert webhook delivered',
+              );
+            } else {
+              logger.warn(
+                { toolName, userId: sub.user_id, status: res.status },
+                'Alert webhook delivery failed',
+              );
+            }
+          } catch (e) {
+            logger.warn({ toolName, userId: sub.user_id, err: e }, 'Alert webhook error');
+          }
+        }
+
+        // Email branch — looks up the user's email and enqueues a deprecation_notice.
+        // Dedup by alert id (scopeKey) so the same alert doesn't email twice.
         try {
-          const res = await fetch(webhookUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-ToolCairn-Event': 'tool.deprecation',
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(10_000),
+          const user = await prisma.user.findUnique({
+            where: { id: sub.user_id },
+            select: { email: true },
           });
-          if (res.ok) {
-            delivered++;
-            logger.info({ toolName, userId: sub.user_id, status: res.status }, 'Alert delivered');
-          } else {
-            logger.warn(
-              { toolName, userId: sub.user_id, status: res.status },
-              'Alert delivery failed',
-            );
+          if (user?.email) {
+            await enqueueEmail(prisma, {
+              kind: EmailKind.DeprecationNotice,
+              userId: sub.user_id,
+              toEmail: user.email,
+              scopeKey: alertId,
+              payload: {
+                toolName,
+                reason,
+                severity,
+                details,
+              },
+            });
           }
         } catch (e) {
-          logger.warn({ toolName, userId: sub.user_id, err: e }, 'Alert webhook error');
+          logger.warn({ toolName, userId: sub.user_id, err: e }, 'Alert email enqueue failed');
         }
       }),
     );

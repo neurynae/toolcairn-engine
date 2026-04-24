@@ -25,11 +25,21 @@ const REDACT_PATHS = [
   'GITHUB_TOKEN_2',
   'authorization',
   'cookie',
+  // Email PII — redacted so bounce/complaint events don't leak recipient addresses
+  // into shipped logs (Resend webhooks echo the full email).
+  'to',
+  'toEmail',
+  'email',
   '*.password',
   '*.token',
   '*.secret',
   '*.apiKey',
   '*.api_key',
+  '*.email',
+  '*.toEmail',
+  'user.email',
+  'payload.email',
+  'payload.toEmail',
 ];
 
 export interface CreateLoggerOptions {

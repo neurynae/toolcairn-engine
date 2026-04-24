@@ -28,6 +28,16 @@ services:
       RAZORPAY_PLAN_MONTHLY: ${RAZORPAY_PLAN_MONTHLY:-}
       RAZORPAY_PLAN_QUARTERLY: ${RAZORPAY_PLAN_QUARTERLY:-}
       RAZORPAY_PLAN_SEMIANNUAL: ${RAZORPAY_PLAN_SEMIANNUAL:-}
+      # Resend + notification service — see packages/notifications
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      EMAIL_FROM: ${EMAIL_FROM:-ToolCairn <asoni15@neurynae.com>}
+      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:-asoni15@neurynae.com}
+      NOTIFICATIONS_ENABLED: ${NOTIFICATIONS_ENABLED:-true}
+      EMAIL_WORKER_CONCURRENCY: ${EMAIL_WORKER_CONCURRENCY:-4}
+      RESEND_RATE_LIMIT: ${RESEND_RATE_LIMIT:-10}
+      COMPANY_ADDRESS: ${COMPANY_ADDRESS:-Neurynae Labs}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://toolcairn.neurynae.com}
       MCP_SERVER_PORT: "3001"
       LOG_LEVEL: info
       LOG_DIR: /app/logs
@@ -78,6 +88,15 @@ services:
       GITHUB_TOKEN_2: ${GITHUB_TOKEN_2:-}
       GITHUB_TOKEN_3: ${GITHUB_TOKEN_3:-}
       INDEXER_CONCURRENCY: ${INDEXER_CONCURRENCY:-2}
+      # Resend + notification service (email-worker runs in this container)
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-ToolCairn <asoni15@neurynae.com>}
+      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:-asoni15@neurynae.com}
+      NOTIFICATIONS_ENABLED: ${NOTIFICATIONS_ENABLED:-true}
+      EMAIL_WORKER_CONCURRENCY: ${EMAIL_WORKER_CONCURRENCY:-4}
+      RESEND_RATE_LIMIT: ${RESEND_RATE_LIMIT:-10}
+      COMPANY_ADDRESS: ${COMPANY_ADDRESS:-Neurynae Labs}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://toolcairn.neurynae.com}
       LOG_LEVEL: info
       LOG_DIR: /app/logs
     volumes:

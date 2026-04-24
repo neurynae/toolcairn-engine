@@ -15,20 +15,20 @@ datasource db {
 
 /// AI-generated graph nodes awaiting review and graduation to Memgraph
 model StagedNode {
-  id                String    @id @default(uuid())
-  node_type         String    // "Tool" | "UseCase" | "Stack" | "Pattern" | "Requirement"
-  node_data         Json      // Full node properties as JSON
-  confidence        Float     // 0–1 confidence score from the AI generator
-  source            String    // "ai_generated" | "indexer" | "user_report" | "community"
+  id                 String    @id @default(uuid())
+  node_type          String // "Tool" | "UseCase" | "Stack" | "Pattern" | "Requirement"
+  node_data          Json // Full node properties as JSON
+  confidence         Float // 0–1 confidence score from the AI generator
+  source             String // "ai_generated" | "indexer" | "user_report" | "community"
   supporting_queries String[] // query_ids that triggered this node proposal
-  graduated         Boolean   @default(false)
-  graduated_at      DateTime?
-  reviewed_by       String?
-  reviewed_at       DateTime?
-  rejection_reason  String?
-  submitted_by      String?   // userId of community submitter
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
+  graduated          Boolean   @default(false)
+  graduated_at       DateTime?
+  reviewed_by        String?
+  reviewed_at        DateTime?
+  rejection_reason   String?
+  submitted_by       String? // userId of community submitter
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
 
   @@index([node_type, graduated])
   @@index([confidence])
@@ -37,21 +37,21 @@ model StagedNode {
 
 /// AI-generated graph edges awaiting review and graduation to Memgraph
 model StagedEdge {
-  id                String    @id @default(uuid())
-  edge_type         String    // "SOLVES" | "INTEGRATES_WITH" | "CONFLICTS_WITH" etc.
-  source_node_id    String    // Memgraph node ID
-  target_node_id    String    // Memgraph node ID
-  edge_data         Json      // EdgeProperties as JSON
-  confidence        Float     // 0–1
-  source            String    // "ai_generated" | "github_signal" | "co_occurrence"
+  id                 String    @id @default(uuid())
+  edge_type          String // "SOLVES" | "INTEGRATES_WITH" | "CONFLICTS_WITH" etc.
+  source_node_id     String // Memgraph node ID
+  target_node_id     String // Memgraph node ID
+  edge_data          Json // EdgeProperties as JSON
+  confidence         Float // 0–1
+  source             String // "ai_generated" | "github_signal" | "co_occurrence"
   supporting_queries String[]
-  graduated         Boolean   @default(false)
-  graduated_at      DateTime?
-  reviewed_by       String?
-  reviewed_at       DateTime?
-  rejection_reason  String?
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
+  graduated          Boolean   @default(false)
+  graduated_at       DateTime?
+  reviewed_by        String?
+  reviewed_at        DateTime?
+  rejection_reason   String?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
 
   @@index([edge_type, graduated])
   @@index([source_node_id, target_node_id])
@@ -61,18 +61,18 @@ model StagedEdge {
 
 /// Multi-turn guided discovery session state
 model SearchSession {
-  id                    String    @id @default(uuid())
-  query                 String    // Original user query
-  context               Json?     // Additional context (stack, constraints, etc.)
+  id                      String   @id @default(uuid())
+  query                   String // Original user query
+  context                 Json? // Additional context (stack, constraints, etc.)
   /// Accumulated clarification Q&A: [{ question, options, answer }]
-  clarification_history Json[]    @default([])
-  results               Json?     // Final results once search completes
-  stage                 Int       @default(1) // Current stage (1–4)
-  status                String    @default("active") // "active" | "completed" | "abandoned"
-  expires_at            DateTime  // 30 minutes from creation
-  created_at            DateTime  @default(now())
-  updated_at            DateTime  @updatedAt
-  co_occurrence_processed Boolean @default(false) // processed for CO_OCCURS_WITH edge computation
+  clarification_history   Json[]   @default([])
+  results                 Json? // Final results once search completes
+  stage                   Int      @default(1) // Current stage (1–4)
+  status                  String   @default("active") // "active" | "completed" | "abandoned"
+  expires_at              DateTime // 30 minutes from creation
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+  co_occurrence_processed Boolean  @default(false) // processed for CO_OCCURS_WITH edge computation
 
   outcomes OutcomeReport[]
 
@@ -85,15 +85,15 @@ model SearchSession {
 /// Outcome reports from report_outcome() MCP tool
 /// Used to update graph edge weights via async queue jobs
 model OutcomeReport {
-  id            String    @id @default(uuid())
-  query_id      String
-  chosen_tool   String    // Tool name that was selected
-  reason        String?   // Why the user chose this tool
-  outcome       String?   // "success" | "failure" | "replaced" | "pending"
-  feedback      String?   // Free-form feedback from the agent/user
-  processed     Boolean   @default(false)
-  processed_at  DateTime?
-  created_at    DateTime  @default(now())
+  id           String    @id @default(uuid())
+  query_id     String
+  chosen_tool  String // Tool name that was selected
+  reason       String? // Why the user chose this tool
+  outcome      String? // "success" | "failure" | "replaced" | "pending"
+  feedback     String? // Free-form feedback from the agent/user
+  processed    Boolean   @default(false)
+  processed_at DateTime?
+  created_at   DateTime  @default(now())
 
   session SearchSession? @relation(fields: [query_id], references: [id], onDelete: SetNull)
 
@@ -110,10 +110,10 @@ model McpEvent {
   id          String   @id @default(uuid())
   tool_name   String
   query_id    String?
-  user_id     String?  // authenticated user who triggered the call
+  user_id     String? // authenticated user who triggered the call
   duration_ms Int
-  status      String   // "ok" | "error"
-  metadata    Json?    // tool-specific extra data (result summary, flags, etc.)
+  status      String // "ok" | "error"
+  metadata    Json? // tool-specific extra data (result summary, flags, etc.)
   created_at  DateTime @default(now())
 
   @@index([tool_name, created_at])
@@ -125,21 +125,21 @@ model McpEvent {
 
 /// Tracks the indexing state of each tool to enable incremental updates
 model IndexedTool {
-  id              String    @id @default(uuid())
-  github_url      String    @unique
-  graph_node_id   String?   // Memgraph node ID once indexed
-  last_indexed_at DateTime?
-  index_status    String    @default("pending") // "pending" | "indexed" | "failed" | "skipped"
-  error_message   String?
-  retry_count     Int       @default(0)
+  id               String    @id @default(uuid())
+  github_url       String    @unique
+  graph_node_id    String? // Memgraph node ID once indexed
+  last_indexed_at  DateTime?
+  index_status     String    @default("pending") // "pending" | "indexed" | "failed" | "skipped"
+  error_message    String?
+  retry_count      Int       @default(0)
   /// Star count at the time the tool was last evaluated (populated on skip or index)
-  stars           Int?
+  stars            Int?
   /// Weekly download count at the time of last evaluation (0 if no package found)
   weekly_downloads Int?
   /// Why the tool was skipped, e.g. "low_stars_and_downloads" or "name_collision:url"
-  skip_reason     String?
-  created_at      DateTime  @default(now())
-  updated_at      DateTime  @updatedAt
+  skip_reason      String?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
 
   @@index([index_status])
   @@index([last_indexed_at])
@@ -156,25 +156,35 @@ model User {
   email         String    @unique
   emailVerified DateTime?
   image         String?
-  passwordHash  String?   // null for OAuth-only users
+  passwordHash  String? // null for OAuth-only users
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
   // Billing
-  plan                   String    @default("free")  // "free" | "pro"
+  plan                   String    @default("free") // "free" | "pro"
   planExpiresAt          DateTime?
   razorpayCustomerId     String?   @unique
   razorpaySubscriptionId String?   @unique
 
   // Alerts & notifications
   alertWebhookUrl    String?
-  emailDigestEnabled Boolean   @default(false)
+  emailDigestEnabled Boolean @default(false)
+
+  // Notification preferences (default-on for transactional categories; unsubscribe
+  // flows flip them to false). emailDoNotEmail is the global kill switch set on
+  // hard-bounce or complaint webhooks.
+  emailWelcomeSent  Boolean @default(false)
+  notifyLimitAlerts Boolean @default(true)
+  notifyReleases    Boolean @default(true)
+  notifyBilling     Boolean @default(true)
+  emailDoNotEmail   Boolean @default(false)
 
   accounts           Account[]
   sessions           Session[]
   apiKeys            ApiKey[]
   deviceCodes        DeviceCode[]
   alertSubscriptions AlertSubscription[]
+  emailEvents        EmailEvent[]
 
   @@index([email])
 }
@@ -183,8 +193,8 @@ model User {
 model Account {
   id                String  @id @default(uuid())
   userId            String
-  type              String  // "oauth" | "credentials"
-  provider          String  // "google" | "github" | "credentials"
+  type              String // "oauth" | "credentials"
+  provider          String // "google" | "github" | "credentials"
   providerAccountId String
   refresh_token     String?
   access_token      String?
@@ -223,9 +233,9 @@ model VerificationToken {
 /// API keys — both anonymous (legacy free-tier UUID) and user-linked (authenticated)
 model ApiKey {
   id        String    @id @default(uuid())
-  key       String    @unique   // UUID sent in X-ToolCairn-Key header
-  userId    String?             // null = anonymous (backward-compatible free tier)
-  label     String?             // user-assigned label e.g. "my laptop"
+  key       String    @unique // UUID sent in X-ToolCairn-Key header
+  userId    String? // null = anonymous (backward-compatible free tier)
+  label     String? // user-assigned label e.g. "my laptop"
   tier      String    @default("free")
   rateLimit Int       @default(60)
   lastUsed  DateTime?
@@ -242,7 +252,7 @@ model ApiKey {
 model DeviceCode {
   id         String   @id @default(uuid())
   deviceCode String   @unique
-  userCode   String   @unique   // Human-readable e.g. "ABCD-1234"
+  userCode   String   @unique // Human-readable e.g. "ABCD-1234"
   userId     String?
   status     String   @default("pending") // pending | approved | expired
   expiresAt  DateTime
@@ -260,7 +270,7 @@ model DeviceCode {
 /// Populated hourly by the usage-aggregator job in the API server.
 model UsageAggregate {
   id              String   @id @default(uuid())
-  period          String   // "hourly" | "daily"
+  period          String // "hourly" | "daily"
   period_start    DateTime
   tool_name       String
   call_count      Int      @default(0)
@@ -281,7 +291,7 @@ model SystemLoadSnapshot {
   queue_depth        Int
   api_latency_p95_ms Int
   active_connections Int      @default(0)
-  free_tier_limit    Int      // computed value in range [100, 200]
+  free_tier_limit    Int // computed value in range [100, 200]
   created_at         DateTime @default(now())
 
   @@index([created_at])
@@ -291,14 +301,14 @@ model SystemLoadSnapshot {
 
 /// Deprecation event detected by the indexer during a crawl cycle.
 model DeprecationAlert {
-  id          String    @id @default(uuid())
-  tool_name   String
-  reason      String    // "npm_deprecated" | "repo_archived" | "stale_commits" | "open_issues"
-  details     String
-  severity    String    // "warning" | "critical"
-  delivered   Boolean   @default(false)
+  id           String    @id @default(uuid())
+  tool_name    String
+  reason       String // "npm_deprecated" | "repo_archived" | "stale_commits" | "open_issues"
+  details      String
+  severity     String // "warning" | "critical"
+  delivered    Boolean   @default(false)
   delivered_at DateTime?
-  created_at  DateTime  @default(now())
+  created_at   DateTime  @default(now())
 
   @@index([tool_name, created_at])
   @@index([delivered])
@@ -321,19 +331,159 @@ model AlertSubscription {
 
 /// Global application settings and feature toggles
 model AppSettings {
-  id                          String   @id @default("global")
-  reindex_scheduler_enabled   Boolean  @default(true)
-  discovery_scheduler_enabled Boolean  @default(false)
-  discovery_topics            String[] @default([])
-  discovery_batch_size        Int      @default(20)
-  discovery_interval_hours    Int      @default(24)
-  discovery_min_stars         Int      @default(100)
-  discovery_last_pushed_days  Int      @default(90)
+  id                          String    @id @default("global")
+  reindex_scheduler_enabled   Boolean   @default(true)
+  discovery_scheduler_enabled Boolean   @default(false)
+  discovery_topics            String[]  @default([])
+  discovery_batch_size        Int       @default(20)
+  discovery_interval_hours    Int       @default(24)
+  discovery_min_stars         Int       @default(100)
+  discovery_last_pushed_days  Int       @default(90)
   last_discovery_run          DateTime?
   last_reindex_run            DateTime?
   /// JSON: per-registry minimum weekly downloads for indexing quality gate.
   /// Computed by compute-download-percentiles.ts (25th percentile per registry).
   /// Format: { "npm": 1234, "pypi": 567, "crates": 89, ... }
   download_quality_thresholds String?
-  updated_at                  DateTime @updatedAt
+  updated_at                  DateTime  @updatedAt
+}
+
+// ─── Email Notification Service ───────────────────────────────────────────────
+
+/// Transactional outbox — written inside the same DB tx as the triggering state
+/// change (user.create, plan='pro', threshold crossing, etc.). A poller (1s
+/// cadence) drains unprocessed rows into the `email-jobs` Redis stream.
+///
+/// This table exists to guarantee at-least-once delivery across process crashes:
+/// if the HTTP handler commits the outbox row but crashes before XADD, the next
+/// poll tick re-enqueues.
+model EmailOutbox {
+  id          String    @id @default(uuid())
+  kind        String // EmailKind: welcome | threshold_90 | threshold_100 | pro_activated | ...
+  userId      String? // nullable for waitlist-join-from-logged-out
+  toEmail     String // snapshot of target address at enqueue time
+  scopeKey    String    @default("") // dedup key ("" = once-ever, date for daily, version for releases)
+  payload     Json // template context, frozen at enqueue time
+  requestId   String? // tracing: propagates through to Resend tags + EmailEvent
+  scheduledAt DateTime? // null = immediate; set for delayed sends
+  processedAt DateTime? // set by outbox-poller after successful XADD
+  attempts    Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  @@index([processedAt, scheduledAt])
+  @@index([userId, kind])
+}
+
+/// Idempotency audit + delivery-state system of record. One row per
+/// (userId, kind, scopeKey). UNIQUE prevents duplicate sends even if the
+/// consumer retries or the outbox poller double-drains.
+model EmailEvent {
+  id                String    @id @default(uuid())
+  userId            String?
+  toEmail           String
+  kind              String
+  scopeKey          String    @default("")
+  requestId         String?
+  outboxId          String?   @unique
+  providerMessageId String? // Resend message id, used by webhook to correlate
+  /// queued | sent | delivered | bounced | complained | failed | suppressed | capped
+  status            String    @default("queued")
+  attempts          Int       @default(0)
+  errorCode         String? // @toolcairn/errors ErrorCode
+  errorMessage      String?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, scopeKey])
+  @@index([providerMessageId])
+  @@index([status, createdAt])
+}
+
+/// Emails that must not be sent, ever — across all kinds. Populated by
+/// Resend webhooks on hard bounce / complaint, and by the unsubscribe
+/// endpoint. `enqueueEmail` consults this list before writing outbox rows
+/// (short-circuits to an EmailEvent(status='suppressed') audit row).
+///
+/// Email is stored lowercased. No FK to User: suppression survives user
+/// deletion (a re-registered account with the same address shouldn't undo
+/// someone's unsubscribe). userId is a denormalized audit hint only.
+model EmailSuppression {
+  email   String   @id
+  reason  String // hard_bounce | complaint | user_unsubscribe | manual
+  addedAt DateTime @default(now())
+  notes   String?
+  userId  String? // audit only, nulled on user delete
+
+  @@index([reason, addedAt])
+}
+
+/// Delayed-send queue. A 1-min cron moves rows whose runAt <= now into
+/// EmailOutbox (with scheduledAt=null) so outbox-poller picks them up.
+/// Used for pro-expiring T-7d, waitlist-granted T+30d, welcome-series
+/// day-3, etc.
+model ScheduledEmail {
+  id         String    @id @default(uuid())
+  runAt      DateTime
+  kind       String
+  userId     String?
+  toEmail    String
+  scopeKey   String    @default("")
+  payload    Json
+  releasedAt DateTime? // set when moved into EmailOutbox
+  createdAt  DateTime  @default(now())
+
+  @@index([runAt, releasedAt])
+  @@index([userId, kind])
+}
+
+/// One-time-use link tokens for email-embedded actions (waitlist magic link,
+/// unsubscribe one-click, pro-grant acceptance). Consumed on first use.
+/// Pure JWT alone is replayable within its window — this table enforces
+/// single-use semantics.
+model MagicLinkToken {
+  token     String    @id // 32-byte base64url random
+  kind      String // waitlist_join | unsubscribe | pro_grant_accept
+  userId    String?
+  email     String
+  payload   Json?
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email, kind])
+  @@index([expiresAt])
+}
+
+/// MCP package release announcement record — one row per minor/major publish.
+/// Drives the per-user email fanout job.
+model McpRelease {
+  version           String    @id // e.g. "0.11.0"
+  prevVersion       String
+  kind              String // minor | major
+  releaseNotesUrl   String
+  /// JSON array: [{ feature, removesInVersion, migrateTo }, ...]
+  deprecations      Json?
+  announcedAt       DateTime  @default(now())
+  fanoutCompletedAt DateTime?
+}
+
+/// Free-month Pro waitlist, captured from the daily-limit-exhausted email CTA.
+/// Admin grants via dashboard; grant flow updates User.plan + sets expiry.
+model Waitlist {
+  id                 String    @id @default(uuid())
+  email              String
+  userId             String?
+  source             String    @default("daily_limit_email")
+  joinedAt           DateTime  @default(now())
+  granted            Boolean   @default(false)
+  grantedAt          DateTime?
+  freeMonthExpiresAt DateTime?
+  notes              String?
+
+  @@unique([email])
+  @@index([granted, joinedAt])
 }

@@ -26,6 +26,7 @@ export const ErrorCode = {
   ERR_EXTERNAL_QDRANT: 'ERR_EXTERNAL_QDRANT',
   ERR_EXTERNAL_MEMGRAPH: 'ERR_EXTERNAL_MEMGRAPH',
   ERR_EXTERNAL_RAZORPAY: 'ERR_EXTERNAL_RAZORPAY',
+  ERR_EXTERNAL_RESEND: 'ERR_EXTERNAL_RESEND',
 
   // ── Queue ───────────────────────────────────────────────────────────────────
   ERR_QUEUE_PUBLISH: 'ERR_QUEUE_PUBLISH',
@@ -49,6 +50,10 @@ export const ErrorCode = {
   // ── MCP ─────────────────────────────────────────────────────────────────────
   ERR_MCP_HANDLER: 'ERR_MCP_HANDLER',
   ERR_MCP_AUTH: 'ERR_MCP_AUTH',
+
+  // ── Configuration ───────────────────────────────────────────────────────────
+  ERR_CONFIG_MISSING: 'ERR_CONFIG_MISSING',
+  ERR_CONFIG_INVALID: 'ERR_CONFIG_INVALID',
 
   // ── Generic ─────────────────────────────────────────────────────────────────
   ERR_INTERNAL: 'ERR_INTERNAL',

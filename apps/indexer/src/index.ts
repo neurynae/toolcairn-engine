@@ -1,6 +1,7 @@
 import { config } from '@toolcairn/config';
 import { createLogger } from '@toolcairn/errors';
 import { createProdLogger } from '@toolcairn/errors/transports';
+import { runEmailWorker } from '@toolcairn/notifications/worker';
 import { ensureAllCollections } from '@toolcairn/vector';
 import { Redis } from 'ioredis';
 import { startIndexWorker } from './workers/index-worker.js';
@@ -67,6 +68,13 @@ async function main(): Promise<void> {
   try {
     await ensureAllCollections();
     logger.info('Qdrant collections ready');
+    // Fire-and-forget the email-worker — it consumes its own `email-jobs`
+    // stream + consumer group and doesn't contend with the index-worker.
+    // A crashed email-worker only logs; the indexer keeps running so a
+    // transient notification issue doesn't halt indexing.
+    void runEmailWorker().catch((err: unknown) => {
+      logger.error({ err }, 'email-worker crashed — indexer continues');
+    });
     await startIndexWorker();
   } finally {
     await cleanup();
