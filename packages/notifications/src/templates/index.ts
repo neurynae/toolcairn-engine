@@ -5,14 +5,16 @@ import { renderMcpRelease } from './mcp-release.js';
 import { renderProActivated } from './pro-activated.js';
 import { renderProExpired } from './pro-expired.js';
 import { renderProExpiringSoon } from './pro-expiring-soon.js';
+import { renderProWaitlistPromo } from './pro-waitlist-promo.js';
 import { renderThreshold90 } from './threshold-90.js';
 import { renderThresholdExhausted } from './threshold-exhausted.js';
 import { renderWeeklyDigest } from './weekly-digest.js';
 import { renderWelcome } from './welcome.js';
 
 export { escapeHtml, safeUrl, toPlainText } from './_sanitize.js';
-export { renderLayout } from './_layout.js';
+export { renderCtaButton, renderLayout } from './_layout.js';
 export { renderWelcome };
+export { renderProWaitlistPromo };
 export { renderThreshold90 };
 export { renderThresholdExhausted };
 export { renderProActivated };
@@ -35,6 +37,8 @@ export function renderTemplate(
   switch (kind) {
     case EmailKind.Welcome:
       return renderWelcome(ctx as EmailContext<never>);
+    case EmailKind.ProWaitlistPromo:
+      return renderProWaitlistPromo(ctx as EmailContext<never>);
     case EmailKind.Threshold90:
       return renderThreshold90(ctx as EmailContext<never>);
     case EmailKind.ThresholdExhausted:

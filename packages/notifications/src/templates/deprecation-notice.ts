@@ -1,5 +1,5 @@
 import type { EmailContext, RenderedEmail } from '../types.js';
-import { renderLayout } from './_layout.js';
+import { renderCtaButton, renderLayout } from './_layout.js';
 import { escapeHtml, toPlainText } from './_sanitize.js';
 
 export interface DeprecationNoticePayload {
@@ -15,33 +15,40 @@ export function renderDeprecationNotice(
 ): RenderedEmail {
   const { toolName, reason, severity, details, removesInDays } = ctx.payload;
   const appUrl = escapeHtml(ctx.publicAppUrl);
-  const color = severity === 'critical' ? '#ef4444' : '#f59e0b';
-
-  const removalBlock = removesInDays
-    ? `<p style="margin:16px 0 0"><strong>Scheduled removal from the graph:</strong> ${removesInDays} days.</p>`
-    : '';
+  const toolUrl = `${ctx.publicAppUrl}/tool/${encodeURIComponent(toolName)}`;
+  const alertsUrl = `${ctx.publicAppUrl}/settings`;
+  const isCritical = severity === 'critical';
+  const accentBg = isCritical ? '#fef2f2' : '#fffbeb';
+  const accentBorder = isCritical ? '#fecaca' : '#fde68a';
+  const accentText = isCritical ? '#b91c1c' : '#92400e';
+  const pillBg = isCritical ? '#ef4444' : '#f59e0b';
 
   const bodyHtml = `
-<div style="display:inline-block;padding:4px 10px;background:${color};color:#ffffff;border-radius:999px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:16px">${escapeHtml(severity)}</div>
-<h1 style="font-size:20px;font-weight:600;margin:0 0 12px">${escapeHtml(toolName)} — deprecation detected</h1>
-<p><strong>Signal:</strong> ${escapeHtml(reason.replace(/_/g, ' '))}</p>
-<p>${escapeHtml(details)}</p>
-${removalBlock}
-<p style="text-align:center;margin:28px 0">
-  <a href="${appUrl}/tool/${encodeURIComponent(toolName)}" style="display:inline-block;padding:10px 22px;background:#6366f1;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:500">See tool details</a>
-</p>
-<p style="color:#6b7280;font-size:13px">You subscribed to deprecation alerts for this tool. Unsubscribe per-tool in <a href="${appUrl}/settings/alerts" style="color:#6b7280">your alert preferences</a>.</p>`;
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 14px">
+  <tr>
+    <td style="background:${pillBg};padding:3px 10px;border-radius:999px;color:#ffffff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em">${escapeHtml(severity)}</td>
+  </tr>
+</table>
+<h1 style="font-size:20px;font-weight:600;line-height:1.3;margin:0 0 14px;color:#111827">${escapeHtml(toolName)} &mdash; deprecation detected</h1>
 
-  const html = renderLayout({
-    preheader: `${toolName} — ${severity} deprecation signal.`,
-    bodyHtml,
-    unsubscribeUrl: ctx.unsubscribeUrl,
-  });
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin:0 0 18px;background:${accentBg};border:1px solid ${accentBorder};border-radius:8px">
+  <tr>
+    <td style="padding:16px 20px;font-size:14px;color:${accentText}">
+      <p style="margin:0 0 8px"><strong>Signal:</strong> ${escapeHtml(reason.replace(/_/g, ' '))}</p>
+      <p style="margin:0">${escapeHtml(details)}</p>
+${removesInDays ? `<p style="margin:12px 0 0;font-size:13px"><strong>Scheduled removal from the graph:</strong> ${removesInDays} days.</p>` : ''}
+    </td>
+  </tr>
+</table>
 
+${renderCtaButton(toolUrl, 'See tool details')}
+<p style="margin:20px 0 0;font-size:13px;color:#6b7280;text-align:center">You subscribed to deprecation alerts for this tool. Manage subscriptions in <a href="${escapeHtml(alertsUrl)}" style="color:#6b7280;text-decoration:underline">settings</a>.</p>`;
+
+  const preheader = `${toolName} — ${severity} deprecation signal.`;
   return {
-    subject: `${severity === 'critical' ? '[CRITICAL]' : '[warning]'} ${toolName} deprecation`,
-    html,
+    subject: `${isCritical ? '[CRITICAL]' : '[warning]'} ${toolName} deprecation`,
+    html: renderLayout({ preheader, bodyHtml, unsubscribeUrl: ctx.unsubscribeUrl }),
     text: toPlainText(bodyHtml),
-    preheader: `${toolName} — ${severity} deprecation signal.`,
+    preheader,
   };
 }

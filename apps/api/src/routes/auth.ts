@@ -90,12 +90,23 @@ export function authRoutes(prisma: PrismaClient): Hono {
         });
         // Welcome email — enqueued in the same tx for atomicity (transactional outbox pattern).
         // Dropped through the `email-jobs` stream → email-worker consumer.
+        const dailyLimit = getCurrentLoad().free_tier_limit;
         await enqueueEmail(tx, {
           kind: EmailKind.Welcome,
           userId: created.id,
           toEmail: created.email,
           scopeKey: '',
-          payload: { name: created.name, dailyLimit: getCurrentLoad().free_tier_limit },
+          payload: { name: created.name, dailyLimit },
+        });
+        // Schedule a soft Pro-waitlist promo ~1h after signup so it doesn't
+        // arrive at the same time as the welcome. Once-ever dedup via scopeKey=''.
+        await enqueueEmail(tx, {
+          kind: EmailKind.ProWaitlistPromo,
+          userId: created.id,
+          toEmail: created.email,
+          scopeKey: '',
+          payload: { name: created.name, dailyLimit },
+          scheduledFor: new Date(Date.now() + 60 * 60 * 1000),
         });
         return created;
       });
@@ -129,12 +140,21 @@ export function authRoutes(prisma: PrismaClient): Hono {
             image: body.image ?? null,
           },
         });
+        const dailyLimit = getCurrentLoad().free_tier_limit;
         await enqueueEmail(tx, {
           kind: EmailKind.Welcome,
           userId: created.id,
           toEmail: created.email,
           scopeKey: '',
-          payload: { name: created.name, dailyLimit: getCurrentLoad().free_tier_limit },
+          payload: { name: created.name, dailyLimit },
+        });
+        await enqueueEmail(tx, {
+          kind: EmailKind.ProWaitlistPromo,
+          userId: created.id,
+          toEmail: created.email,
+          scopeKey: '',
+          payload: { name: created.name, dailyLimit },
+          scheduledFor: new Date(Date.now() + 60 * 60 * 1000),
         });
         return created;
       });

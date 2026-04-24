@@ -1,6 +1,7 @@
 // Email kind catalog — keep in sync with EmailEvent.kind / EmailOutbox.kind column values.
 export const EmailKind = {
   Welcome: 'welcome',
+  ProWaitlistPromo: 'pro_waitlist_promo',
   Threshold90: 'threshold_90',
   ThresholdExhausted: 'threshold_100',
   ProActivated: 'pro_activated',
@@ -18,6 +19,9 @@ export type EmailKindValue = (typeof EmailKind)[keyof typeof EmailKind];
 // (welcome: user just signed up; weekly_digest: has its own emailDigestEnabled flag).
 export const KIND_PREFERENCE_GATE: Record<EmailKindValue, keyof PreferenceFlags | null> = {
   welcome: null,
+  // Waitlist promo is a one-time post-signup nudge — gated on notifyBilling so
+  // users who opt out of billing-adjacent emails never receive it.
+  pro_waitlist_promo: 'notifyBilling',
   threshold_90: 'notifyLimitAlerts',
   threshold_100: 'notifyLimitAlerts',
   pro_activated: 'notifyBilling',
