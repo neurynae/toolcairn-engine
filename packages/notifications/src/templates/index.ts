@@ -1,5 +1,6 @@
 import type { EmailContext, EmailKindValue, RenderedEmail } from '../types.js';
 import { EmailKind } from '../types.js';
+import { renderBonusCreditGrant } from './bonus-credit-grant.js';
 import { renderDeprecationNotice } from './deprecation-notice.js';
 import { renderMcpRelease } from './mcp-release.js';
 import { renderProActivated } from './pro-activated.js';
@@ -14,6 +15,7 @@ import { renderWelcome } from './welcome.js';
 export { escapeHtml, safeUrl, toPlainText } from './_sanitize.js';
 export { renderCtaButton, renderLayout } from './_layout.js';
 export { renderWelcome };
+export { renderBonusCreditGrant };
 export { renderProWaitlistPromo };
 export { renderThreshold90 };
 export { renderThresholdExhausted };
@@ -37,6 +39,8 @@ export function renderTemplate(
   switch (kind) {
     case EmailKind.Welcome:
       return renderWelcome(ctx as EmailContext<never>);
+    case EmailKind.BonusCreditGrant:
+      return renderBonusCreditGrant(ctx as EmailContext<never>);
     case EmailKind.ProWaitlistPromo:
       return renderProWaitlistPromo(ctx as EmailContext<never>);
     case EmailKind.Threshold90:

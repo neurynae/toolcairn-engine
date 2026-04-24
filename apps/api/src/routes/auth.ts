@@ -86,11 +86,18 @@ export function authRoutes(prisma: PrismaClient): Hono {
               },
             },
           },
-          select: { id: true, name: true, email: true, createdAt: true },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            createdAt: true,
+            bonusCreditRemaining: true,
+          },
         });
-        // Welcome email — enqueued in the same tx for atomicity (transactional outbox pattern).
-        // Dropped through the `email-jobs` stream → email-worker consumer.
         const dailyLimit = getCurrentLoad().free_tier_limit;
+        const bonusCredits = created.bonusCreditRemaining;
+
+        // Welcome email — enqueued in the same tx for atomicity (outbox pattern).
         await enqueueEmail(tx, {
           kind: EmailKind.Welcome,
           userId: created.id,
@@ -98,8 +105,19 @@ export function authRoutes(prisma: PrismaClient): Hono {
           scopeKey: '',
           payload: { name: created.name, dailyLimit },
         });
-        // Schedule a soft Pro-waitlist promo ~1h after signup so it doesn't
-        // arrive at the same time as the welcome. Once-ever dedup via scopeKey=''.
+        // Bonus-credit explainer ~90s after welcome so it reads as a genuine
+        // follow-up, not a batch. scheduledFor precision is capped at the
+        // poller cadence (60s), so actual delivery lands 60–120s later.
+        await enqueueEmail(tx, {
+          kind: EmailKind.BonusCreditGrant,
+          userId: created.id,
+          toEmail: created.email,
+          scopeKey: '',
+          payload: { name: created.name, dailyLimit, bonusCredits },
+          scheduledFor: new Date(Date.now() + 90 * 1000),
+        });
+        // Pro-waitlist promo ~1h after signup — by then the user has had a
+        // chance to feel the free-tier ceiling.
         await enqueueEmail(tx, {
           kind: EmailKind.ProWaitlistPromo,
           userId: created.id,
@@ -141,12 +159,21 @@ export function authRoutes(prisma: PrismaClient): Hono {
           },
         });
         const dailyLimit = getCurrentLoad().free_tier_limit;
+        const bonusCredits = created.bonusCreditRemaining;
         await enqueueEmail(tx, {
           kind: EmailKind.Welcome,
           userId: created.id,
           toEmail: created.email,
           scopeKey: '',
           payload: { name: created.name, dailyLimit },
+        });
+        await enqueueEmail(tx, {
+          kind: EmailKind.BonusCreditGrant,
+          userId: created.id,
+          toEmail: created.email,
+          scopeKey: '',
+          payload: { name: created.name, dailyLimit, bonusCredits },
+          scheduledFor: new Date(Date.now() + 90 * 1000),
         });
         await enqueueEmail(tx, {
           kind: EmailKind.ProWaitlistPromo,

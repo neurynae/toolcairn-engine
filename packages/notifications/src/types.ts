@@ -1,6 +1,7 @@
 // Email kind catalog — keep in sync with EmailEvent.kind / EmailOutbox.kind column values.
 export const EmailKind = {
   Welcome: 'welcome',
+  BonusCreditGrant: 'bonus_credit_grant',
   ProWaitlistPromo: 'pro_waitlist_promo',
   Threshold90: 'threshold_90',
   ThresholdExhausted: 'threshold_100',
@@ -19,6 +20,9 @@ export type EmailKindValue = (typeof EmailKind)[keyof typeof EmailKind];
 // (welcome: user just signed up; weekly_digest: has its own emailDigestEnabled flag).
 export const KIND_PREFERENCE_GATE: Record<EmailKindValue, keyof PreferenceFlags | null> = {
   welcome: null,
+  // Bonus-credit grant is a one-time onboarding explainer — informational,
+  // not marketing, so it bypasses preference gates like `welcome` does.
+  bonus_credit_grant: null,
   // Waitlist promo is a one-time post-signup nudge — gated on notifyBilling so
   // users who opt out of billing-adjacent emails never receive it.
   pro_waitlist_promo: 'notifyBilling',
