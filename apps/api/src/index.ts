@@ -20,6 +20,7 @@ import { startUsageAggregator } from './jobs/usage-aggregator.js';
 import { createErrorHandler, requestIdMiddleware } from './middleware/error-handler.js';
 import { originAuth } from './middleware/origin-auth.js';
 import { adminEmailsRoutes } from './routes/admin-emails.js';
+import { adminWaitlistRoutes } from './routes/admin-waitlist.js';
 import { adminRoutes } from './routes/admin.js';
 import { alertRoutes } from './routes/alerts.js';
 import { analyticsRoutes } from './routes/analytics.js';
@@ -81,6 +82,7 @@ app.route('/v1', systemRoutes());
 app.route('/v1/auth', authRoutes(prisma));
 app.route('/v1/admin', adminRoutes());
 app.route('/v1/admin/emails', adminEmailsRoutes());
+app.route('/v1/admin/waitlist', adminWaitlistRoutes());
 // Badge — public SVG badges for README files, cached by CF Worker
 app.route('/v1/badge', badgeRoutes());
 // Webhook sinks — each handler verifies its own provider signature

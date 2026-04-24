@@ -10,6 +10,7 @@
 // per-IP rate limiting for abuse prevention. Both branches idempotent.
 import { prisma } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
+import { EmailKind, enqueueEmail } from '@toolcairn/notifications';
 import { Hono } from 'hono';
 import { z } from 'zod';
 
@@ -42,6 +43,15 @@ export function waitlistRoutes(): Hono {
       if (record.usedAt) return c.json({ error: 'token_already_used' }, 409);
       if (record.expiresAt < new Date()) return c.json({ error: 'token_expired' }, 410);
 
+      const source =
+        ((record.payload as Record<string, unknown> | null)?.source as string | undefined) ??
+        'daily_limit_email';
+
+      const alreadyJoined = await prisma.waitlist.findUnique({
+        where: { email: record.email },
+        select: { id: true },
+      });
+
       await prisma.$transaction(async (tx) => {
         await tx.magicLinkToken.update({
           where: { token },
@@ -49,15 +59,24 @@ export function waitlistRoutes(): Hono {
         });
         await tx.waitlist.upsert({
           where: { email: record.email },
-          create: {
-            email: record.email,
-            userId: record.userId,
-            source:
-              ((record.payload as Record<string, unknown> | null)?.source as string | undefined) ??
-              'daily_limit_email',
-          },
+          create: { email: record.email, userId: record.userId, source },
           update: {},
         });
+        // Thank-you confirmation email — only on fresh joins so re-clicking
+        // a bookmarked link doesn't spam.
+        if (!alreadyJoined && record.userId) {
+          const user = await tx.user.findUnique({
+            where: { id: record.userId },
+            select: { name: true },
+          });
+          await enqueueEmail(tx, {
+            kind: EmailKind.WaitlistJoined,
+            userId: record.userId,
+            toEmail: record.email,
+            scopeKey: '',
+            payload: { name: user?.name ?? null, source },
+          });
+        }
       });
 
       logger.info({ email: record.email, userId: record.userId }, 'waitlist join (magic link)');
@@ -86,8 +105,25 @@ export function waitlistRoutes(): Hono {
       }
     }
 
-    await prisma.waitlist.create({
-      data: { email, userId, source },
+    await prisma.$transaction(async (tx) => {
+      await tx.waitlist.create({ data: { email, userId, source } });
+      // Thank-you confirmation email. Only enqueue when we have a userId so
+      // the email/unsubscribe token path still works. Anonymous self-serve
+      // joins (no userId) get a silent accept — their signup flow will
+      // cover the onboarding emails later.
+      if (userId) {
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          select: { name: true },
+        });
+        await enqueueEmail(tx, {
+          kind: EmailKind.WaitlistJoined,
+          userId,
+          toEmail: email,
+          scopeKey: '',
+          payload: { name: user?.name ?? null, source },
+        });
+      }
     });
 
     logger.info({ email, userId, source }, 'waitlist join (self-serve)');

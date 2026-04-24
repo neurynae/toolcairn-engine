@@ -132,7 +132,15 @@ export default {
     }
 
     // ── Daily limit check ───────────────────────────────────────────────────
-    const daily = await checkDailyLimit(record.client_id, record.tier, env);
+    // Service-auth (web app → CF Worker, shared client_id=web-app-service)
+    // bypasses the daily cap entirely — it's internal polling / proxying, not
+    // user quota. Without this exemption, every user sitting on /billing
+    // hammers a single shared counter and exhausts the 100/day pro limit
+    // within minutes, breaking the UI for everyone.
+    const isServiceAuth = record.client_id === 'web-app-service';
+    const daily = isServiceAuth
+      ? { allowed: true, used: 0, limit: Number.MAX_SAFE_INTEGER }
+      : await checkDailyLimit(record.client_id, record.tier, env);
 
     // ── Threshold-crossing notification (async, best-effort) ───────────────
     // Fire a fire-and-forget callback to the API when the user crosses 90% or 100%.
@@ -224,7 +232,10 @@ export default {
     }
 
     // ── Meter usage (async — never block the response) ─────────────────────
-    ctx.waitUntil(meterUsage(record.client_id, path, env));
+    // Skip for service-auth — these are internal polls, not user quota.
+    if (!isServiceAuth) {
+      ctx.waitUntil(meterUsage(record.client_id, path, env));
+    }
 
     // ── Cache check (POST responses for cacheable endpoints) ────────────────
     if (request.method === 'POST' && isCacheable(path)) {
@@ -263,7 +274,10 @@ export default {
     // ── Non-cacheable: forward directly ────────────────────────────────────
     const response = await forwardToOrigin(request, env, path, record.user_id);
     const result = new Response(response.body, response);
-    appendRateLimitHeaders(result.headers, record.tier, daily, { used: bonusUsed, remaining: bonusRemaining });
+    appendRateLimitHeaders(result.headers, record.tier, daily, {
+      used: bonusUsed,
+      remaining: bonusRemaining,
+    });
     return result;
   },
 

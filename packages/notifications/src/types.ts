@@ -3,6 +3,7 @@ export const EmailKind = {
   Welcome: 'welcome',
   BonusCreditGrant: 'bonus_credit_grant',
   ProWaitlistPromo: 'pro_waitlist_promo',
+  WaitlistJoined: 'waitlist_joined',
   Threshold90: 'threshold_90',
   ThresholdExhausted: 'threshold_100',
   ProActivated: 'pro_activated',
@@ -26,6 +27,9 @@ export const KIND_PREFERENCE_GATE: Record<EmailKindValue, keyof PreferenceFlags 
   // Waitlist promo is a one-time post-signup nudge — gated on notifyBilling so
   // users who opt out of billing-adjacent emails never receive it.
   pro_waitlist_promo: 'notifyBilling',
+  // Waitlist thank-you is a direct confirmation of a user action — same
+  // treatment as welcome/bonus-grant (bypasses preference gates).
+  waitlist_joined: null,
   threshold_90: 'notifyLimitAlerts',
   threshold_100: 'notifyLimitAlerts',
   pro_activated: 'notifyBilling',

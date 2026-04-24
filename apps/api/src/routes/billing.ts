@@ -212,10 +212,11 @@ export function billingRoutes(prisma: PrismaClient): Hono {
       const todayStart = new Date();
       todayStart.setUTCHours(0, 0, 0, 0);
 
-      const [user, dailyUsed] = await Promise.all([
+      const [user, dailyUsed, waitlistRow] = await Promise.all([
         prisma.user.findUnique({
           where: { id: userId },
           select: {
+            email: true,
             plan: true,
             planExpiresAt: true,
             razorpaySubscriptionId: true,
@@ -225,6 +226,19 @@ export function billingRoutes(prisma: PrismaClient): Hono {
         prisma.mcpEvent.count({
           where: { user_id: userId, created_at: { gte: todayStart } },
         }),
+        // Resolve the user's email first then look up waitlist; doing it
+        // in one round-trip via includes requires a reverse relation we
+        // didn't model. Two parallel queries is cheaper than adding a FK.
+        prisma.user
+          .findUnique({ where: { id: userId }, select: { email: true } })
+          .then((u) =>
+            u
+              ? prisma.waitlist.findUnique({
+                  where: { email: u.email },
+                  select: { granted: true, joinedAt: true, freeMonthExpiresAt: true },
+                })
+              : null,
+          ),
       ]);
 
       if (!user) return c.json({ ok: false, error: 'user_not_found' }, 404);
@@ -241,6 +255,8 @@ export function billingRoutes(prisma: PrismaClient): Hono {
           subscription_id: user.razorpaySubscriptionId ?? null,
           daily_used: dailyUsed,
           bonus_credit_remaining: user.bonusCreditRemaining,
+          waitlist_joined: !!waitlistRow,
+          waitlist_granted: !!waitlistRow?.granted,
           payment_mode: getPaymentMode(),
         },
       });
