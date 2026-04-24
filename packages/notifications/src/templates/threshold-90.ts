@@ -20,7 +20,7 @@ export function renderThreshold90(ctx: EmailContext<Threshold90Payload>): Render
 <p style="text-align:center;margin:24px 0">
   <a href="${appUrl}/billing" style="display:inline-block;padding:10px 22px;background:#6366f1;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:500">See Pro plans</a>
 </p>
-<p style="color:#6b7280;font-size:13px">You can silence these warnings in your <a href="${appUrl}/settings/notifications" style="color:#6b7280">notification settings</a>.</p>`;
+<p style="color:#6b7280;font-size:13px">You can silence these warnings in your <a href="${appUrl}/settings" style="color:#6b7280">notification settings</a>.</p>`;
 
   const html = renderLayout({
     preheader: `${used}/${limit} daily calls used — ${remaining} remaining.`,

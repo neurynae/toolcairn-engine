@@ -17,9 +17,7 @@ export interface LayoutInput {
 }
 
 export function renderLayout(input: LayoutInput): string {
-  const unsubHref = safeUrl(
-    input.unsubscribeUrl ?? `${config.PUBLIC_APP_URL}/settings/notifications`,
-  );
+  const unsubHref = safeUrl(input.unsubscribeUrl ?? `${config.PUBLIC_APP_URL}/settings`);
   const address = escapeHtml(config.COMPANY_ADDRESS);
   const preheader = input.preheader
     ? `<span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden">${escapeHtml(input.preheader)}</span>`

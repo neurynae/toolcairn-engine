@@ -37,7 +37,7 @@ ${deprecationsBlock}
 <p style="text-align:center;margin:28px 0">
   <a href="${notesHref}" style="display:inline-block;padding:10px 22px;background:#6366f1;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:500">Read the release notes</a>
 </p>
-<p style="color:#6b7280;font-size:13px">You can unsubscribe from release announcements in your <a href="${escapeHtml(ctx.publicAppUrl)}/settings/notifications" style="color:#6b7280">notification settings</a>.</p>`;
+<p style="color:#6b7280;font-size:13px">You can unsubscribe from release announcements in your <a href="${escapeHtml(ctx.publicAppUrl)}/settings" style="color:#6b7280">notification settings</a>.</p>`;
 
   const html = renderLayout({
     preheader: `v${version} — ${kind} release${deprecations && deprecations.length ? ' with deprecations' : ''}.`,
