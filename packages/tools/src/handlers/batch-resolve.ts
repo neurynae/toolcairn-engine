@@ -49,6 +49,13 @@ type MatchMethod =
   | 'tool_name_lowercase'
   | 'none';
 
+type ResolvedPackageChannel = {
+  registry: string;
+  packageName: string;
+  installCommand?: string;
+  weeklyDownloads?: number;
+};
+
 type Resolved = {
   input: { name: string; ecosystem: string; github_url?: string };
   matched: boolean;
@@ -58,8 +65,39 @@ type Resolved = {
     github_url: string;
     categories: string[];
     match_confidence: number;
+    /** Enrichment bundle — populated from the Memgraph pass on the same query. */
+    description?: string | null;
+    license?: string | null;
+    homepage_url?: string | null;
+    docs?: {
+      readme_url?: string | null;
+      docs_url?: string | null;
+      api_url?: string | null;
+      changelog_url?: string | null;
+    };
+    package_managers?: ResolvedPackageChannel[];
   };
 };
+
+/** Parse the Memgraph `package_managers` JSON string into a typed channel list. */
+function parsePackageManagers(raw: string | null | undefined): ResolvedPackageChannel[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((c): c is Record<string, unknown> => c !== null && typeof c === 'object')
+      .map((c) => ({
+        registry: String(c.registry ?? ''),
+        packageName: String(c.packageName ?? ''),
+        installCommand: typeof c.installCommand === 'string' ? c.installCommand : undefined,
+        weeklyDownloads: typeof c.weeklyDownloads === 'number' ? c.weeklyDownloads : undefined,
+      }))
+      .filter((c) => c.registry && c.packageName);
+  } catch {
+    return [];
+  }
+}
 
 interface QdrantPointPayload {
   name?: string;
@@ -177,47 +215,6 @@ async function resolveViaGitHubUrl(urls: string[]): Promise<Map<string, QdrantPo
 }
 
 /**
- * Tier 4: Memgraph name cascade (tool_name_exact → tool_name_lowercase).
- * Last-resort disambiguation — only for inputs Tier 1 and Tier 2 couldn't
- * resolve (pre-backfill points, tools missing both a channel entry and a
- * github_url, or edge cases the client couldn't probe locally).
- */
-async function resolveViaMemgraphFallback(
-  deps: ToolDeps,
-  inputs: BatchResolveInput['tools'],
-): Promise<
-  Map<string, { payload: QdrantPointPayload; method: 'tool_name_exact' | 'tool_name_lowercase' }>
-> {
-  const out = new Map<
-    string,
-    { payload: QdrantPointPayload; method: 'tool_name_exact' | 'tool_name_lowercase' }
-  >();
-  if (inputs.length === 0) return out;
-  const rowsResult = await deps.graphRepo.batchResolve(inputs);
-  if (!rowsResult.ok) {
-    logger.warn(
-      { err: rowsResult.error },
-      'Memgraph fallback batchResolve failed — returning unresolved',
-    );
-    return out;
-  }
-  for (const row of rowsResult.data) {
-    if (row.method === 'none' || !row.name || !row.github_url) continue;
-    const key = `${row.input.ecosystem}:${row.input.name}`;
-    out.set(key, {
-      payload: {
-        name: row.name,
-        github_url: row.github_url,
-        category: row.category ?? undefined,
-        topics: row.topics ?? undefined,
-      },
-      method: row.method as 'tool_name_exact' | 'tool_name_lowercase',
-    });
-  }
-  return out;
-}
-
-/**
  * Batch-resolve handler factory — cascading resolver.
  *
  * Tier 1 (Qdrant registry_package_keys):
@@ -256,7 +253,7 @@ export function createBatchResolveHandler(deps: ToolDeps) {
         'batch_resolve called',
       );
 
-      // ── Tier 1: registry_package_keys ────────────────────────────────────
+      // ── Tier 1: registry_package_keys (Qdrant fast-path) ─────────────────
       const tier1 = await resolveViaRegistryKey(inputs).catch((err) => {
         logger.warn(
           { err: err instanceof Error ? err.message : String(err) },
@@ -265,14 +262,8 @@ export function createBatchResolveHandler(deps: ToolDeps) {
         return new Map<string, QdrantPointPayload>();
       });
 
-      // Collect leftovers for Tier 2 (those with a github_url to probe).
-      const tier2Candidates = inputs.filter((i) => {
-        const key = `${i.ecosystem}:${i.canonical_package_name ?? i.name}`;
-        return !tier1.has(key) && i.github_url;
-      });
-      const tier2UrlList = tier2Candidates.map((i) => i.github_url as string);
-
-      // ── Tier 2: github_url ───────────────────────────────────────────────
+      // ── Tier 2: github_url (Qdrant fallback, client-supplied URLs) ───────
+      const tier2UrlList = inputs.filter((i) => i.github_url).map((i) => i.github_url as string);
       const tier2 = await resolveViaGitHubUrl(tier2UrlList).catch((err) => {
         logger.warn(
           { err: err instanceof Error ? err.message : String(err) },
@@ -281,69 +272,96 @@ export function createBatchResolveHandler(deps: ToolDeps) {
         return new Map<string, QdrantPointPayload>();
       });
 
-      // Collect leftovers for Tier 4 Memgraph fallback.
-      const tier4Candidates = inputs.filter((i) => {
-        const key = `${i.ecosystem}:${i.canonical_package_name ?? i.name}`;
-        if (tier1.has(key)) return false;
-        const normUrl = normaliseGitHubUrl(i.github_url);
-        if (normUrl && tier2.has(normUrl)) return false;
-        return true;
+      // ── Single Memgraph pass for enrichment (hydrates EVERY match) ───────
+      //
+      // For each input we feed Memgraph the most authoritative github_url we
+      // have: the one surfaced by Qdrant if a tier matched, otherwise the
+      // client-supplied URL. The Cypher prefers `github_url` exact match over
+      // name matching, so name collisions across ecosystems (npm:foo vs pypi:foo)
+      // resolve correctly. One query returns canonical name + category + topics
+      // + the FULL enrichment bundle (description / license / homepage / docs
+      // links / package_managers JSON) for everything matched.
+      const memgraphInputs = inputs.map((i) => {
+        const regKey = `${i.ecosystem}:${i.canonical_package_name ?? i.name}`;
+        const t1Url = tier1.get(regKey)?.github_url;
+        const normClientUrl = normaliseGitHubUrl(i.github_url);
+        const t2Url = normClientUrl ? tier2.get(normClientUrl)?.github_url : undefined;
+        return {
+          name: i.name,
+          ecosystem: i.ecosystem,
+          github_url: t1Url ?? t2Url ?? i.github_url,
+        };
       });
-
-      // ── Tier 4: Memgraph cascade ─────────────────────────────────────────
-      const tier4 = await resolveViaMemgraphFallback(deps, tier4Candidates);
+      const memResult = await deps.graphRepo.batchResolve(memgraphInputs);
+      if (!memResult.ok) {
+        logger.warn(
+          { err: memResult.error },
+          'Memgraph batchResolve failed — enrichment will be missing',
+        );
+      }
+      // Key by input-index to avoid ambiguity when duplicate (name, ecosystem)
+      // tuples appear in the batch; the Cypher preserves input order via UNWIND.
+      const memRows = memResult.ok ? memResult.data : [];
 
       // Compose final resolved[] preserving input order.
-      const resolved: Resolved[] = inputs.map((input) => {
+      const resolved: Resolved[] = inputs.map((input, idx) => {
         const regKey = `${input.ecosystem}:${input.canonical_package_name ?? input.name}`;
         const t1 = tier1.get(regKey);
-        if (t1 && t1.name && t1.github_url) {
+        const normClientUrl = normaliseGitHubUrl(input.github_url);
+        const t2 = normClientUrl ? tier2.get(normClientUrl) : undefined;
+        const mem = memRows[idx];
+
+        // Pick tier-preferred match_method: exact_channel > exact_github >
+        // Memgraph's reported method > none. Enrichment always comes from
+        // Memgraph when it matched, regardless of which Qdrant tier fired.
+        let method: MatchMethod = 'none';
+        let canonical_name: string | null = null;
+        let github_url: string | null = null;
+        if (t1?.name && t1.github_url) {
+          method = 'exact_channel';
+          canonical_name = t1.name;
+          github_url = t1.github_url;
+        } else if (t2?.name && t2.github_url) {
+          method = 'exact_github';
+          canonical_name = t2.name;
+          github_url = t2.github_url;
+        } else if (mem && mem.method !== 'none' && mem.name && mem.github_url) {
+          method = mem.method;
+          canonical_name = mem.name;
+          github_url = mem.github_url;
+        }
+
+        if (!canonical_name || !github_url) {
           return {
             input: { name: input.name, ecosystem: input.ecosystem, github_url: input.github_url },
-            matched: true,
-            match_method: 'exact_channel',
-            tool: {
-              canonical_name: t1.name,
-              github_url: t1.github_url,
-              categories: buildCategories(t1.category, t1.topics),
-              match_confidence: confidenceOf('exact_channel'),
-            },
+            matched: false,
+            match_method: 'none',
           };
         }
-        const normUrl = normaliseGitHubUrl(input.github_url);
-        const t2 = normUrl ? tier2.get(normUrl) : undefined;
-        if (t2 && t2.name && t2.github_url) {
-          return {
-            input: { name: input.name, ecosystem: input.ecosystem, github_url: input.github_url },
-            matched: true,
-            match_method: 'exact_github',
-            tool: {
-              canonical_name: t2.name,
-              github_url: t2.github_url,
-              categories: buildCategories(t2.category, t2.topics),
-              match_confidence: confidenceOf('exact_github'),
-            },
-          };
-        }
-        const memKey = `${input.ecosystem}:${input.name}`;
-        const t4 = tier4.get(memKey);
-        if (t4 && t4.payload.name && t4.payload.github_url) {
-          return {
-            input: { name: input.name, ecosystem: input.ecosystem, github_url: input.github_url },
-            matched: true,
-            match_method: t4.method,
-            tool: {
-              canonical_name: t4.payload.name,
-              github_url: t4.payload.github_url,
-              categories: buildCategories(t4.payload.category, t4.payload.topics),
-              match_confidence: confidenceOf(t4.method),
-            },
-          };
-        }
+
+        const category = mem?.category ?? t1?.category ?? t2?.category ?? null;
+        const topics = mem?.topics ?? t1?.topics ?? t2?.topics ?? null;
+
         return {
           input: { name: input.name, ecosystem: input.ecosystem, github_url: input.github_url },
-          matched: false,
-          match_method: 'none',
+          matched: true,
+          match_method: method,
+          tool: {
+            canonical_name,
+            github_url,
+            categories: buildCategories(category, topics),
+            match_confidence: confidenceOf(method),
+            description: mem?.description ?? null,
+            license: mem?.license ?? null,
+            homepage_url: mem?.homepage_url ?? null,
+            docs: {
+              readme_url: mem?.docs_readme_url ?? null,
+              docs_url: mem?.docs_docs_url ?? null,
+              api_url: mem?.docs_api_url ?? null,
+              changelog_url: mem?.docs_changelog_url ?? null,
+            },
+            package_managers: parsePackageManagers(mem?.package_managers ?? null),
+          },
         };
       });
 

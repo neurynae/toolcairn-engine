@@ -338,12 +338,20 @@ export const FIND_TOOL_BY_NAME = {
 };
 
 /**
- * Batch-resolve a set of (ecosystem, name) tuples against the graph.
+ * Batch-resolve a set of inputs against the graph.
  *
- * Cascading match per input:
- *   1. Exact name match — `MATCH (t:Tool { name: input.name })` → 'tool_name_exact'.
- *   2. Case-insensitive name match — fallback when Stage 1 misses → 'tool_name_lowercase'.
- *   3. No match → returns NULL tool, match_method handled as 'none' in TS.
+ * Cascading match per input (in priority order):
+ *   1. Exact github_url match — `t.github_url = input.github_url` when the
+ *      caller supplied one. github_url is unique per repo, so this is the
+ *      only safe key when multiple tools share a name (e.g. npm:foo and
+ *      pypi:foo both exist as distinct graph nodes).
+ *   2. Exact name match — `t.name = input.name` → 'tool_name_exact'.
+ *   3. Case-insensitive name match → 'tool_name_lowercase'.
+ *   4. No match → NULL tool, 'none' (handled in TS).
+ *
+ * Returns the ENTIRE enrichment bundle (description/license/homepage/docs
+ * links/package_managers JSON) in the same pass — no follow-up Memgraph hit
+ * needed to hydrate config.json.
  *
  * Note: the extra "exact channel match" (registry + packageName inside
  * tool.package_managers JSON) is handled in the TS handler by post-filtering
@@ -351,13 +359,20 @@ export const FIND_TOOL_BY_NAME = {
  */
 export const BATCH_RESOLVE_TOOLS = {
   text: `UNWIND $inputs AS input
+   OPTIONAL MATCH (byUrl:Tool)
+     WHERE input.github_url IS NOT NULL AND byUrl.github_url = input.github_url
+   WITH input, byUrl
    OPTIONAL MATCH (exact:Tool { name: input.name })
-   WITH input, exact
+     WHERE byUrl IS NULL
+   WITH input, byUrl, exact
    OPTIONAL MATCH (fuzzy:Tool)
-     WHERE exact IS NULL AND toLower(fuzzy.name) = toLower(input.name)
+     WHERE byUrl IS NULL AND exact IS NULL AND toLower(fuzzy.name) = toLower(input.name)
    WITH input,
-        CASE WHEN exact IS NOT NULL THEN exact ELSE fuzzy END AS t,
-        CASE WHEN exact IS NOT NULL THEN 'tool_name_exact'
+        CASE WHEN byUrl IS NOT NULL THEN byUrl
+             WHEN exact IS NOT NULL THEN exact
+             ELSE fuzzy END AS t,
+        CASE WHEN byUrl IS NOT NULL THEN 'exact_github'
+             WHEN exact IS NOT NULL THEN 'tool_name_exact'
              WHEN fuzzy IS NOT NULL THEN 'tool_name_lowercase'
              ELSE 'none' END AS method
    RETURN input AS input,
@@ -366,6 +381,13 @@ export const BATCH_RESOLVE_TOOLS = {
           CASE WHEN t IS NULL THEN NULL ELSE t.github_url END AS github_url,
           CASE WHEN t IS NULL THEN NULL ELSE t.category END AS category,
           CASE WHEN t IS NULL THEN NULL ELSE t.topics END AS topics,
+          CASE WHEN t IS NULL THEN NULL ELSE t.description END AS description,
+          CASE WHEN t IS NULL THEN NULL ELSE t.license END AS license,
+          CASE WHEN t IS NULL THEN NULL ELSE t.homepage_url END AS homepage_url,
+          CASE WHEN t IS NULL THEN NULL ELSE t.docs_readme_url END AS docs_readme_url,
+          CASE WHEN t IS NULL THEN NULL ELSE t.docs_docs_url END AS docs_docs_url,
+          CASE WHEN t IS NULL THEN NULL ELSE t.docs_api_url END AS docs_api_url,
+          CASE WHEN t IS NULL THEN NULL ELSE t.docs_changelog_url END AS docs_changelog_url,
           CASE WHEN t IS NULL THEN NULL ELSE t.package_managers END AS package_managers`,
 };
 

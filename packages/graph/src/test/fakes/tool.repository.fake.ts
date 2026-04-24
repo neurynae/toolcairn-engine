@@ -43,35 +43,45 @@ export class FakeToolRepository implements ToolRepository {
   }
 
   async batchResolve(
-    inputs: Array<{ name: string; ecosystem: string }>,
+    inputs: Array<{ name: string; ecosystem: string; github_url?: string }>,
   ): Promise<ToolResult<BatchResolveRow[]>> {
     try {
+      const rowFor = (
+        input: { name: string; ecosystem: string; github_url?: string },
+        tool: ToolNode,
+        method: BatchResolveRow['method'],
+      ): BatchResolveRow => ({
+        input,
+        method,
+        name: tool.name,
+        github_url: tool.github_url,
+        category: tool.category,
+        topics: tool.topics ?? null,
+        description: tool.description ?? null,
+        license: tool.license ?? null,
+        homepage_url: tool.homepage_url ?? null,
+        docs_readme_url: tool.docs?.readme_url ?? null,
+        docs_docs_url: tool.docs?.docs_url ?? null,
+        docs_api_url: tool.docs?.api_url ?? null,
+        docs_changelog_url: tool.docs?.changelog_url ?? null,
+        package_managers: JSON.stringify(tool.package_managers ?? []),
+      });
+
       const rows: BatchResolveRow[] = inputs.map((input) => {
-        const exact = this.tools.get(input.name);
-        if (exact) {
-          return {
-            input,
-            method: 'tool_name_exact',
-            name: exact.name,
-            github_url: exact.github_url,
-            category: exact.category,
-            topics: exact.topics ?? null,
-            package_managers: JSON.stringify(exact.package_managers ?? []),
-          };
+        // Tier 1 (fake): github_url exact match — same priority as the real Cypher.
+        if (input.github_url) {
+          for (const tool of this.tools.values()) {
+            if (tool.github_url === input.github_url) {
+              return rowFor(input, tool, 'exact_github');
+            }
+          }
         }
-        // Case-insensitive fallback
+        const exact = this.tools.get(input.name);
+        if (exact) return rowFor(input, exact, 'tool_name_exact');
         const lower = input.name.toLowerCase();
         for (const tool of this.tools.values()) {
           if (tool.name.toLowerCase() === lower) {
-            return {
-              input,
-              method: 'tool_name_lowercase',
-              name: tool.name,
-              github_url: tool.github_url,
-              category: tool.category,
-              topics: tool.topics ?? null,
-              package_managers: JSON.stringify(tool.package_managers ?? []),
-            };
+            return rowFor(input, tool, 'tool_name_lowercase');
           }
         }
         return {
@@ -81,6 +91,13 @@ export class FakeToolRepository implements ToolRepository {
           github_url: null,
           category: null,
           topics: null,
+          description: null,
+          license: null,
+          homepage_url: null,
+          docs_readme_url: null,
+          docs_docs_url: null,
+          docs_api_url: null,
+          docs_changelog_url: null,
           package_managers: null,
         };
       });

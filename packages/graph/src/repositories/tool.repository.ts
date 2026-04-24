@@ -132,26 +132,47 @@ export class MemgraphToolRepository implements ToolRepository {
   }
 
   /**
-   * Batch-resolve a list of (ecosystem, name) tuples against the Tool graph.
-   * Cascading match: exact name → lowercase fallback. Returns raw rows for the
-   * caller to combine with ecosystem-level (package_managers) post-filtering.
+   * Batch-resolve inputs against the Tool graph.
+   *
+   * Cascading match: `github_url` exact → name exact → name lowercase. The
+   * github_url tier is critical — tool names are not unique across ecosystems
+   * (e.g. npm:foo and pypi:foo both exist as distinct graph nodes), so
+   * github_url is the only safe primary key when the caller has one.
+   *
+   * Returns the FULL enrichment bundle (description/license/homepage/docs
+   * links/package_managers JSON) in the same pass, so callers can hydrate
+   * config.json without a second query.
    */
   async batchResolve(
-    inputs: Array<{ name: string; ecosystem: string }>,
+    inputs: Array<{ name: string; ecosystem: string; github_url?: string }>,
   ): Promise<ToolResult<BatchResolveRow[]>> {
     if (inputs.length === 0) return { ok: true, data: [] };
     const session = this.session();
     try {
-      const result = await session.run(BATCH_RESOLVE_TOOLS.text, { inputs });
+      // Memgraph/neo4j doesn't accept `undefined` inside parameter objects —
+      // coerce missing github_url to null so the Cypher `IS NOT NULL` guard fires.
+      const normalised = inputs.map((i) => ({
+        name: i.name,
+        ecosystem: i.ecosystem,
+        github_url: i.github_url ?? null,
+      }));
+      const result = await session.run(BATCH_RESOLVE_TOOLS.text, { inputs: normalised });
       const rows: BatchResolveRow[] = result.records.map((record) => {
         const obj = record.toObject();
         return {
-          input: obj.input as { name: string; ecosystem: string },
+          input: obj.input as { name: string; ecosystem: string; github_url?: string },
           method: obj.method as BatchResolveRow['method'],
           name: obj.name as string | null,
           github_url: obj.github_url as string | null,
           category: obj.category as string | null,
           topics: (obj.topics as string[] | null) ?? null,
+          description: (obj.description as string | null) ?? null,
+          license: (obj.license as string | null) ?? null,
+          homepage_url: (obj.homepage_url as string | null) ?? null,
+          docs_readme_url: (obj.docs_readme_url as string | null) ?? null,
+          docs_docs_url: (obj.docs_docs_url as string | null) ?? null,
+          docs_api_url: (obj.docs_api_url as string | null) ?? null,
+          docs_changelog_url: (obj.docs_changelog_url as string | null) ?? null,
           package_managers: obj.package_managers as string | null,
         };
       });

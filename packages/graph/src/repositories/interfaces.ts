@@ -29,15 +29,28 @@ export interface VersionCompatibilityRow {
   b_runtime_a: { range: string; range_system: string; source: string } | null;
 }
 
-/** Raw row from `batchResolve` — caller combines with ecosystem post-filtering. */
+/**
+ * Raw row from `batchResolve` — caller combines with ecosystem post-filtering.
+ *
+ * Matching cascade in the Cypher: `github_url` exact → name exact → name
+ * lowercase. Returns the full enrichment bundle (description/license/links/
+ * channels) in the same pass so callers don't need a follow-up query.
+ */
 export interface BatchResolveRow {
-  input: { name: string; ecosystem: string };
-  method: 'tool_name_exact' | 'tool_name_lowercase' | 'none';
+  input: { name: string; ecosystem: string; github_url?: string };
+  method: 'exact_github' | 'tool_name_exact' | 'tool_name_lowercase' | 'none';
   /** Canonical name from the graph; null when no match. */
   name: string | null;
   github_url: string | null;
   category: string | null;
   topics: string[] | null;
+  description: string | null;
+  license: string | null;
+  homepage_url: string | null;
+  docs_readme_url: string | null;
+  docs_docs_url: string | null;
+  docs_api_url: string | null;
+  docs_changelog_url: string | null;
   /** JSON-serialised PackageChannel[]; null when no match. */
   package_managers: string | null;
 }
@@ -107,7 +120,7 @@ export interface ToolRepository {
   createTool(tool: ToolNode): Promise<Result<ToolNode, RepositoryError>>;
   findByName(name: string): Promise<Result<ToolNode | null, RepositoryError>>;
   batchResolve(
-    inputs: Array<{ name: string; ecosystem: string }>,
+    inputs: Array<{ name: string; ecosystem: string; github_url?: string }>,
   ): Promise<Result<BatchResolveRow[], RepositoryError>>;
   findByCategory(category: ToolCategory): Promise<Result<ToolNode[], RepositoryError>>;
   findByCategories(categories: ToolCategory[]): Promise<Result<ToolNode[], RepositoryError>>;
