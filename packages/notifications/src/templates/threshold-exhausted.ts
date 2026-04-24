@@ -26,7 +26,7 @@ export function renderThresholdExhausted(
   <tr>
     <td style="padding:18px 22px">
       <p style="margin:0 0 6px;font-size:12px;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:0.05em">Want uninterrupted access?</p>
-      <p style="margin:0;font-size:14px;color:#111827">We&rsquo;re opening a Pro waitlist with the first month on us &mdash; 5,000 calls/day, priority Stage-0 ranking, and early access to new ecosystem coverage.</p>
+      <p style="margin:0;font-size:14px;color:#111827">We&rsquo;re opening a Pro waitlist with the first month on us &mdash; 100 calls/day, priority Stage-0 ranking, and early access to new ecosystem coverage.</p>
     </td>
   </tr>
 </table>

@@ -26,7 +26,7 @@ export function renderProActivated(ctx: EmailContext<ProActivatedPayload>): Rend
 <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin:0 0 22px;background:#f8f9fc;border:1px solid #e5e7eb;border-radius:8px">
   <tr>
     <td style="padding:18px 22px">
-      <p style="margin:0 0 8px;font-size:14px">&bull; <strong>5,000</strong> MCP tool calls per day</p>
+      <p style="margin:0 0 8px;font-size:14px">&bull; <strong>100</strong> MCP tool calls per day</p>
       <p style="margin:0 0 8px;font-size:14px">&bull; Priority Stage-0 recommendations</p>
       <p style="margin:0 0 8px;font-size:14px">&bull; Weekly intelligence digest (opt-in)</p>
       <p style="margin:0;font-size:14px">&bull; Deprecation alerts on subscribed tools</p>

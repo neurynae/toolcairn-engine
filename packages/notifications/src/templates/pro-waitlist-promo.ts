@@ -19,7 +19,7 @@ export function renderProWaitlistPromo(ctx: EmailContext<ProWaitlistPromoPayload
   const billingUrl = `${ctx.publicAppUrl}/billing`;
 
   const bodyHtml = `
-<h1 style="font-size:22px;font-weight:600;line-height:1.3;margin:0 0 16px;color:#111827">Want 5,000 calls/day?</h1>
+<h1 style="font-size:22px;font-weight:600;line-height:1.3;margin:0 0 16px;color:#111827">Want 10&times; the daily quota?</h1>
 <p style="margin:0 0 14px">${greeting}</p>
 <p style="margin:0 0 20px">Now that you&rsquo;ve seen ToolCairn, you might&rsquo;ve noticed the free tier (~${dailyLimit} calls/day) is plenty for solo projects but can get tight once an agent gets loose on a real codebase.</p>
 <p style="margin:0 0 20px"><strong>We&rsquo;re opening a Pro waitlist with the first month on us.</strong></p>
@@ -28,7 +28,7 @@ export function renderProWaitlistPromo(ctx: EmailContext<ProWaitlistPromoPayload
   <tr>
     <td style="padding:18px 22px">
       <p style="margin:0 0 10px;font-size:12px;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:0.05em">What Pro unlocks</p>
-      <p style="margin:0 0 8px;font-size:14px">&bull; <strong>5,000</strong> MCP calls per day (25&times; the free tier)</p>
+      <p style="margin:0 0 8px;font-size:14px">&bull; <strong>100</strong> MCP calls per day (plus 100 one-time bonus credits still apply)</p>
       <p style="margin:0 0 8px;font-size:14px">&bull; Priority Stage-0 recommendations &mdash; better tools show up first</p>
       <p style="margin:0 0 8px;font-size:14px">&bull; Weekly intelligence digest &mdash; trending tools, deprecations, stack health</p>
       <p style="margin:0 0 8px;font-size:14px">&bull; Per-tool deprecation alerts via email or webhook</p>
@@ -44,7 +44,7 @@ ${renderCtaButton(waitlistUrl, 'Join the waitlist — 1 month free')}
 
   const preheader = 'Get 1 month of ToolCairn Pro free — join the waitlist.';
   return {
-    subject: 'Unlock 5,000 daily MCP calls — try ToolCairn Pro free for a month',
+    subject: 'Try ToolCairn Pro free for a month — 100 calls/day + priority ranking',
     html: renderLayout({ preheader, bodyHtml, unsubscribeUrl: ctx.unsubscribeUrl }),
     text: toPlainText(bodyHtml),
     preheader,

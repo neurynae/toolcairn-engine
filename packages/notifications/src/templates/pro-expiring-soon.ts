@@ -19,7 +19,7 @@ export function renderProExpiringSoon(ctx: EmailContext<ProExpiringSoonPayload>)
   const bodyHtml = isGrant
     ? `
 <h1 style="font-size:20px;font-weight:600;line-height:1.3;margin:0 0 16px;color:#111827">Your free Pro month ends in 7 days</h1>
-<p style="margin:0 0 16px">Your complimentary month of ToolCairn Pro wraps up on <strong>${escapeHtml(expiry)}</strong>. After that, your account reverts to the free tier (100&ndash;200 calls/day).</p>
+<p style="margin:0 0 16px">Your complimentary month of ToolCairn Pro wraps up on <strong>${escapeHtml(expiry)}</strong>. After that, your account reverts to the free tier (10&ndash;15 calls/day plus any bonus credits).</p>
 <p style="margin:0 0 16px">Like how Pro fits your workflow? Keep the quota and priority ranking:</p>
 ${renderCtaButton(billingUrl, 'Subscribe to Pro')}
 <p style="margin:20px 0 0;font-size:13px;color:#6b7280;text-align:center">No pressure &mdash; the free tier keeps working without interruption either way.</p>`

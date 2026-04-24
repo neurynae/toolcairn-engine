@@ -12,7 +12,7 @@ export function renderProExpired(ctx: EmailContext<ProExpiredPayload>): Rendered
 
   const bodyHtml = `
 <h1 style="font-size:20px;font-weight:600;line-height:1.3;margin:0 0 16px;color:#111827">${wasGrant ? 'Your free Pro month has ended' : 'Your Pro subscription has lapsed'}</h1>
-<p style="margin:0 0 16px">You&rsquo;re back on the free tier &mdash; 100&ndash;200 calls/day. The core tool intelligence graph still works exactly the same.</p>
+<p style="margin:0 0 16px">You&rsquo;re back on the free tier &mdash; 10&ndash;15 calls/day plus any bonus credits remaining. The core tool intelligence graph still works exactly the same.</p>
 <p style="margin:0 0 16px">If Pro was a good fit, you can resubscribe any time &mdash; same account, same history:</p>
 ${renderCtaButton(billingUrl, 'View Pro plans')}
 <p style="margin:24px 0 0;font-size:13px;color:#6b7280">Thanks for trying Pro &mdash; any feedback, just hit reply.</p>`;

@@ -17,7 +17,7 @@ export function renderThreshold90(ctx: EmailContext<Threshold90Payload>): Render
   const bodyHtml = `
 <h1 style="font-size:20px;font-weight:600;line-height:1.3;margin:0 0 16px;color:#111827">You&rsquo;re at 90% of today&rsquo;s quota</h1>
 <p style="margin:0 0 16px">You&rsquo;ve made <strong>${used}</strong> of <strong>${limit}</strong> daily tool calls. <strong>${remaining} left</strong> before the limit resets at UTC midnight.</p>
-<p style="margin:0 0 20px">If this keeps happening, Pro gives you 5,000 calls/day plus priority Stage-0 recommendations.</p>
+<p style="margin:0 0 20px">If this keeps happening, Pro gives you 100 calls/day plus priority Stage-0 recommendations.</p>
 ${renderCtaButton(billingUrl, 'View Pro plans')}
 <p style="margin:20px 0 0;font-size:13px;color:#6b7280;text-align:center">You can silence quota warnings in your <a href="${appUrl}/settings" style="color:#6b7280;text-decoration:underline">notification settings</a>.</p>`;
 
