@@ -129,25 +129,46 @@ export function adminKeywordsRoutes(qdrant: ReturnType<typeof qdrantClient> = qd
   });
 
   // ── GET /v1/admin/keywords/export ─────────────────────────────────────────
-  // Streams ALL tools missing keyword_sentence as NDJSON. Iterates
-  // server-side through every page until next_offset is null. Each line is
-  // {"id","name","description"} — the description preview helps admins
-  // write good keyword sentences offline.
+  // Returns a JSON ARRAY of full-shape tool objects, ready to drop into
+  // `D:/ToolPilot/tools-export-v2.json` and run through
+  // `scripts/generate-keywords.py`.
+  //
+  // Each element matches the EXACT shape the python script reads:
+  //   { id, name, github_url, description, topics, docs, package_managers }
+  //
+  // The script uses these to fetch READMEs (docs.readme_url → blob→raw,
+  // github_url → raw.githubusercontent.com guess, package_managers →
+  // registry fallback) and to synthesise descriptions when no README is
+  // reachable (description + topics). Exporting fewer fields breaks the
+  // script's fallback chain and degrades keyword quality.
   app.get('/export', async (c) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `keywords-missing-${timestamp}.jsonl`;
+    const filename = `tools-export-v2-${timestamp}.json`;
 
-    c.header('Content-Type', 'application/x-ndjson');
+    c.header('Content-Type', 'application/json');
     c.header('Content-Disposition', `attachment; filename=${filename}`);
 
     return stream(c, async (s) => {
       const PAGE_SIZE = 500;
       let offset: string | number | null | undefined = undefined;
+      let first = true;
+
+      await s.write('[\n');
 
       while (true) {
         const resp = await qdrant.scroll(COLLECTION_NAME, {
           limit: PAGE_SIZE,
-          with_payload: { include: ['name', 'description', 'keyword_sentence'] },
+          with_payload: {
+            include: [
+              'name',
+              'github_url',
+              'description',
+              'topics',
+              'docs',
+              'package_managers',
+              'keyword_sentence',
+            ],
+          },
           with_vector: false,
           ...(offset != null ? { offset } : {}),
         });
@@ -160,15 +181,25 @@ export function adminKeywordsRoutes(qdrant: ReturnType<typeof qdrantClient> = qd
           const row = {
             id: String(point.id),
             name: typeof pl.name === 'string' ? pl.name : '',
+            github_url: typeof pl.github_url === 'string' ? pl.github_url : '',
             description: typeof pl.description === 'string' ? pl.description : '',
+            topics: Array.isArray(pl.topics) ? pl.topics : [],
+            docs: pl.docs && typeof pl.docs === 'object' ? pl.docs : {},
+            package_managers:
+              pl.package_managers && typeof pl.package_managers === 'object'
+                ? pl.package_managers
+                : {},
           };
-          await s.write(`${JSON.stringify(row)}\n`);
+          await s.write(`${first ? '' : ',\n'}  ${JSON.stringify(row)}`);
+          first = false;
         }
 
         const next = resp.next_page_offset as string | number | null | undefined;
         if (next == null) break;
         offset = next;
       }
+
+      await s.write('\n]\n');
     });
   });
 
