@@ -26,14 +26,15 @@ describe('rrfFusion', () => {
       expect(result).toEqual(list);
     });
 
-    it('should cap at 50 items when a single list exceeds 50 entries', () => {
-      const list = Array.from({ length: 80 }, (_, i) => `tool-${i}`);
+    it('should cap at RRF_TOP_N items when a single list exceeds the cap', () => {
+      // Cap is 150 (raised from 50 to give Stage 2 a wider candidate pool).
+      const list = Array.from({ length: 200 }, (_, i) => `tool-${i}`);
       const result = rrfFusion([list]);
-      expect(result.length).toBe(50);
+      expect(result.length).toBe(150);
     });
 
-    it('should preserve the top-50 entries, not an arbitrary subset', () => {
-      const list = Array.from({ length: 80 }, (_, i) => `tool-${i}`);
+    it('should preserve the top-N entries in rank order, not an arbitrary subset', () => {
+      const list = Array.from({ length: 200 }, (_, i) => `tool-${i}`);
       const result = rrfFusion([list]);
       // The top-ranked item in the single list must be first in the output
       expect(result[0]).toBe('tool-0');
@@ -128,11 +129,11 @@ describe('rrfFusion', () => {
       }
     });
 
-    it('should never exceed 50 items regardless of combined input size', () => {
-      const listA = Array.from({ length: 40 }, (_, i) => `a-${i}`);
-      const listB = Array.from({ length: 40 }, (_, i) => `b-${i}`);
+    it('should never exceed RRF_TOP_N (150) items regardless of combined input size', () => {
+      const listA = Array.from({ length: 200 }, (_, i) => `a-${i}`);
+      const listB = Array.from({ length: 200 }, (_, i) => `b-${i}`);
       const result = rrfFusion([listA, listB]);
-      expect(result.length).toBeLessThanOrEqual(50);
+      expect(result.length).toBeLessThanOrEqual(150);
     });
   });
 });
