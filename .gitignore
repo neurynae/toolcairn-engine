@@ -43,3 +43,16 @@ redis_data/
 # Prisma
 prisma/dev.db
 prisma/dev.db-journal
+
+# ToolCairn
+.toolcairn/events.jsonl
+.toolcairn/audit-log.jsonl
+.toolcairn/audit-log.archive.jsonl
+.toolcairn/config.json
+# toolcairn:start
+# ToolCairn
+.toolcairn/events.jsonl
+.toolcairn/audit-log.jsonl
+.toolcairn/audit-log.archive.jsonl
+.toolcairn/config.json
+# toolcairn:end

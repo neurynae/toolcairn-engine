@@ -367,20 +367,23 @@ export function createSuggestGraphUpdateHandler(
               continue;
             }
 
-            // Dedup: if a pending staging row already exists for this github_url
-            // OR tool_name, skip re-creating it. Also skip if the tool is
-            // already in the indexer pipeline (pending/indexed) — no need to
-            // re-submit something that's already on its way to the live graph.
+            // Dedup against any prior StagedNode for this github_url OR
+            // tool_name — pending OR graduated. Pending = duplicate
+            // submission still awaiting review. Graduated = already approved
+            // (admin enqueued the indexer); a re-stage would just create
+            // dead pending rows behind the live record. Treat both as
+            // "already known", just with different `reason` messages so the
+            // agent / admin tracker can differentiate.
             const existingStaged = await deps.prisma.stagedNode.findFirst({
               where: {
                 node_type: 'Tool',
-                graduated: false,
                 OR: [
                   { node_data: { path: ['github_url'], equals: verdict.meta.normalised_url } },
                   { node_data: { path: ['name'], equals: item.tool_name } },
                 ],
               },
-              select: { id: true, node_data: true },
+              orderBy: { created_at: 'desc' },
+              select: { id: true, node_data: true, graduated: true, graduated_at: true },
             });
             if (existingStaged) {
               const matchedBy =
@@ -388,32 +391,51 @@ export function createSuggestGraphUpdateHandler(
                 verdict.meta.normalised_url
                   ? 'github_url'
                   : 'tool_name';
-              results.push({
-                tool_name: item.tool_name,
-                verified: true,
-                staged: false,
-                already_staged: true,
-                staged_id: existingStaged.id,
-                index_queued: false,
-                reason: `Already pending admin review (matched on ${matchedBy}); skipped duplicate submission`,
-              });
+              if (existingStaged.graduated) {
+                const gradAt = existingStaged.graduated_at?.toISOString() ?? 'unknown date';
+                results.push({
+                  tool_name: item.tool_name,
+                  verified: true,
+                  staged: false,
+                  already_indexed: true,
+                  staged_id: existingStaged.id,
+                  index_queued: false,
+                  reason: `Already graduated to live graph on ${gradAt} (matched on ${matchedBy}); skipped duplicate submission`,
+                });
+              } else {
+                results.push({
+                  tool_name: item.tool_name,
+                  verified: true,
+                  staged: false,
+                  already_staged: true,
+                  staged_id: existingStaged.id,
+                  index_queued: false,
+                  reason: `Already pending admin review (matched on ${matchedBy}); skipped duplicate submission`,
+                });
+              }
               continue;
             }
+            // Dedup against IndexedTool for ANY status — `indexed` and
+            // `pending` mean it's on its way to the live graph; `skipped`
+            // and `failed` mean we already considered this github_url and
+            // explicitly chose not to ingest it. Re-staging in either case
+            // is wasteful and pollutes the staging queue.
             const existingIndexed = await deps.prisma.indexedTool.findFirst({
-              where: {
-                github_url: verdict.meta.normalised_url,
-                index_status: { in: ['indexed', 'pending'] },
-              },
-              select: { index_status: true },
+              where: { github_url: verdict.meta.normalised_url },
+              select: { index_status: true, skip_reason: true },
             });
             if (existingIndexed) {
+              const status = existingIndexed.index_status;
+              const reasonSuffix = existingIndexed.skip_reason
+                ? ` (skip_reason: ${existingIndexed.skip_reason})`
+                : '';
               results.push({
                 tool_name: item.tool_name,
                 verified: true,
                 staged: false,
                 already_indexed: true,
                 index_queued: false,
-                reason: `Tool already in indexer pipeline (index_status=${existingIndexed.index_status}); skipped duplicate submission`,
+                reason: `Tool already in indexer pipeline (index_status=${status})${reasonSuffix}; skipped duplicate submission`,
               });
               continue;
             }
