@@ -88,8 +88,11 @@ export async function handleToolpilotInit(args: {
         step: step++,
         action: 'create',
         file: '.toolpilot/tracker.html',
-        content: generateTrackerHtml(),
-        note: 'Open .toolpilot/tracker.html in your browser to monitor MCP tool calls in real time. The tracker reads .toolcairn/audit-log.jsonl files directly via the File System Access API — no env vars or server-side wiring required.',
+        content: generateTrackerHtml({
+          rootName: args.project_root.split(/[\\/]/).filter(Boolean).pop() ?? 'project',
+          entries: [],
+        }),
+        note: 'Open .toolpilot/tracker.html in your browser. The MCP server keeps it up to date with embedded audit data — no env vars, no folder picker, no fetch.',
       });
     }
 
