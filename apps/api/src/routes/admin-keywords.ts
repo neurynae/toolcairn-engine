@@ -52,25 +52,6 @@ function isMissing(value: unknown): boolean {
   return value.trim().length === 0;
 }
 
-/**
- * Convert a `?offset=` query string into a Qdrant scroll-offset value.
- *
- * Qdrant's scroll offset is a POINT ID — either a UUID string or a u64
- * number — NOT a paging index. The web frontend sends `offset=0` for the
- * first page, which Qdrant rejects (no point with id `"0"` in the UUID-keyed
- * collection). Treat the common "first-page" sentinels as "no offset"; pass
- * everything else through unchanged so subsequent calls using the
- * `next_page_offset` returned by Qdrant continue to work.
- */
-function parseScrollOffset(raw: string | undefined): string | number | undefined {
-  if (raw == null) return undefined;
-  const trimmed = raw.trim();
-  if (trimmed === '' || trimmed === '0' || trimmed === 'null' || trimmed === 'undefined') {
-    return undefined;
-  }
-  return trimmed;
-}
-
 function summarize(point: QdrantToolPoint): MissingToolSummary {
   const pl = point.payload ?? {};
   const summary: MissingToolSummary = {
@@ -96,37 +77,50 @@ export function adminKeywordsRoutes(qdrant: ReturnType<typeof qdrantClient> = qd
   const app = new Hono();
 
   // ── GET /v1/admin/keywords/missing ────────────────────────────────────────
-  // Single Qdrant scroll page, returns tools whose keyword_sentence is
-  // missing or empty. The CLIENT controls pagination via offset (string or
-  // number) — pass back the next_offset from the previous call.
+  // Returns EVERY tool missing keyword_sentence, in one response.
+  //
+  // Why server-side full scroll instead of paginated?
+  //   - The missing-keyword set is small (hundreds, not thousands).
+  //   - Filtering happens AFTER the Qdrant scroll boundary, so a
+  //     "next_page_offset" exposed to the client is meaningless — page 1 of
+  //     the scroll might yield 5 missing tools, page 2 might yield 50, the
+  //     client has no way to know in advance.
+  //   - Total count is essential for the admin UI; the only honest way to
+  //     get it is to walk every page. Once we walk every page, returning
+  //     them all is one extra response field, not extra work.
+  //
+  // Server-side scroll honors the same pattern as `/export` — iterate while
+  // `next_page_offset` is non-null, accumulate filtered hits.
   app.get('/missing', async (c) => {
-    const limit = Math.min(1000, Math.max(1, Number(c.req.query('limit') ?? 200)));
-    // Qdrant `scroll.offset` is a POINT ID (UUID / u64), not a numeric index.
-    // The web frontend sends `?offset=0` for the first page; treat any
-    // empty / "0" / "null" / "undefined" sentinel as "no offset" (= first
-    // page). Otherwise pass the raw string through — Qdrant accepts UUID
-    // strings and numeric strings indistinguishably for u64 ids.
-    const offset = parseScrollOffset(c.req.query('offset'));
-
+    const PAGE_SIZE = 500;
     try {
-      const resp = await qdrant.scroll(COLLECTION_NAME, {
-        limit,
-        with_payload: { include: ['name', 'description', 'category', 'keyword_sentence'] },
-        with_vector: false,
-        ...(offset !== undefined ? { offset } : {}),
-      });
+      const tools: MissingToolSummary[] = [];
+      let totalSeen = 0;
+      let offset: string | number | null | undefined = undefined;
 
-      const points = resp.points as QdrantToolPoint[];
-      const missing = points.filter((p) => isMissing(p.payload?.keyword_sentence)).map(summarize);
-
-      const nextOffset = (resp.next_page_offset ?? null) as string | number | null;
+      while (true) {
+        const resp = await qdrant.scroll(COLLECTION_NAME, {
+          limit: PAGE_SIZE,
+          with_payload: { include: ['name', 'description', 'category', 'keyword_sentence'] },
+          with_vector: false,
+          ...(offset != null ? { offset } : {}),
+        });
+        const points = resp.points as QdrantToolPoint[];
+        totalSeen += points.length;
+        for (const point of points) {
+          if (isMissing(point.payload?.keyword_sentence)) tools.push(summarize(point));
+        }
+        const next = resp.next_page_offset as string | number | null | undefined;
+        if (next == null) break;
+        offset = next;
+      }
 
       return c.json({
         ok: true,
         data: {
-          tools: missing,
-          next_offset: nextOffset,
-          total_seen: points.length,
+          tools,
+          total: tools.length,
+          total_seen: totalSeen,
         },
       });
     } catch (e) {
@@ -180,10 +174,17 @@ export function adminKeywordsRoutes(qdrant: ReturnType<typeof qdrantClient> = qd
 
   // ── POST /v1/admin/keywords/ingest ────────────────────────────────────────
   // multipart/form-data with a `file` field: a JSONL file of
-  // {id, name, keyword_sentence} rows. Each valid row is applied to Qdrant
-  // via setPayload (NOT upsert — we are patching one field, not replacing
-  // the whole point). Empty/whitespace keyword_sentence rows are skipped
-  // without an API call.
+  // {id, name, keyword_sentence} rows. Streams NDJSON progress lines as it
+  // processes — the admin UI uses this to drive a real progress bar.
+  //
+  // Wire format (one JSON object per line):
+  //   {"type":"start","total":N,"invalid":[{line,error}]}   — once at the top
+  //   {"type":"progress","processed":n,"skipped":n,"failed":n}  — after each row
+  //   {"type":"done","processed":n,"skipped":n,"failed":[{line,error}]}  — final
+  //
+  // Each valid row is applied to Qdrant via setPayload(wait:true) — we are
+  // patching one field, not replacing the whole point, AND we want the
+  // change durable before the next read-back from the admin UI.
   app.post('/ingest', async (c) => {
     let body: Record<string, unknown>;
     try {
@@ -203,10 +204,11 @@ export function adminKeywordsRoutes(qdrant: ReturnType<typeof qdrantClient> = qd
     const text = await file.text();
     const lines = text.split(/\r?\n/);
 
-    let processed = 0;
-    let skipped = 0;
-    const failed: Array<{ line: number; error: string }> = [];
-
+    // Pre-validate every line BEFORE streaming so the `start` event can carry
+    // an accurate total count + the list of pre-flight invalid lines.
+    type ValidEntry = { lineNo: number; entry: { id: string; keyword_sentence: string } };
+    const validEntries: ValidEntry[] = [];
+    const invalid: Array<{ line: number; error: string }> = [];
     for (let i = 0; i < lines.length; i++) {
       const lineNo = i + 1;
       const trimmed = lines[i]?.trim() ?? '';
@@ -216,45 +218,65 @@ export function adminKeywordsRoutes(qdrant: ReturnType<typeof qdrantClient> = qd
       try {
         raw = JSON.parse(trimmed);
       } catch (e) {
-        failed.push({
+        invalid.push({
           line: lineNo,
           error: e instanceof Error ? `invalid_json: ${e.message}` : 'invalid_json',
         });
         continue;
       }
-
       const parsed = keywordRowSchema.safeParse(raw);
       if (!parsed.success) {
-        failed.push({
+        invalid.push({
           line: lineNo,
           error: `schema_invalid: ${parsed.error.issues.map((iss) => iss.message).join(', ')}`,
         });
         continue;
       }
-
-      const entry = parsed.data;
-
-      // Defensive: schema requires non-empty, but guard for whitespace-only.
-      if (entry.keyword_sentence.trim().length === 0) {
-        skipped++;
-        continue;
-      }
-
-      try {
-        await qdrant.setPayload(COLLECTION_NAME, {
-          payload: { keyword_sentence: entry.keyword_sentence },
-          points: [entry.id],
-        });
-        processed++;
-      } catch (e) {
-        failed.push({
-          line: lineNo,
-          error: e instanceof Error ? `setPayload_failed: ${e.message}` : 'setPayload_failed',
-        });
-      }
+      validEntries.push({ lineNo, entry: parsed.data });
     }
 
-    return c.json({ ok: true, data: { processed, skipped, failed } });
+    c.header('Content-Type', 'application/x-ndjson');
+    c.header('Cache-Control', 'no-cache');
+    c.header('X-Accel-Buffering', 'no'); // tells nginx (if any) not to buffer the chunked body
+
+    return stream(c, async (s) => {
+      let processed = 0;
+      let skipped = 0;
+      const failed: Array<{ line: number; error: string }> = [...invalid];
+
+      await s.write(`${JSON.stringify({ type: 'start', total: validEntries.length, invalid })}\n`);
+
+      for (const { lineNo, entry } of validEntries) {
+        if (entry.keyword_sentence.trim().length === 0) {
+          skipped++;
+        } else {
+          try {
+            await qdrant.setPayload(COLLECTION_NAME, {
+              payload: { keyword_sentence: entry.keyword_sentence },
+              points: [entry.id],
+              wait: true,
+            });
+            processed++;
+          } catch (e) {
+            failed.push({
+              line: lineNo,
+              error: e instanceof Error ? `setPayload_failed: ${e.message}` : 'setPayload_failed',
+            });
+          }
+        }
+
+        await s.write(
+          `${JSON.stringify({
+            type: 'progress',
+            processed,
+            skipped,
+            failed: failed.length,
+          })}\n`,
+        );
+      }
+
+      await s.write(`${JSON.stringify({ type: 'done', processed, skipped, failed })}\n`);
+    });
   });
 
   return app;
