@@ -15,9 +15,9 @@
 
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
+import { keywordRowSchema } from '@toolcairn/core';
 import { createLogger } from '@toolcairn/errors';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import { keywordRowSchema } from './schemas/keyword-row.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:upload-keywords' });
 

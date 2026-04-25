@@ -4,12 +4,6 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "exports": {
-    "./schemas/keyword-row": {
-      "types": "./dist/schemas/keyword-row.d.ts",
-      "default": "./dist/schemas/keyword-row.js"
-    }
-  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",

@@ -19,7 +19,6 @@
     "@toolcairn/core": "workspace:*",
     "@toolcairn/db": "workspace:*",
     "@toolcairn/graph": "workspace:*",
-    "@toolcairn/indexer": "workspace:*",
     "@toolcairn/notifications": "workspace:*",
     "@toolcairn/queue": "workspace:*",
     "@toolcairn/tools": "workspace:*",

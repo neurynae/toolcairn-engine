@@ -25,7 +25,7 @@
  * has been bitten by before).
  */
 
-import { keywordRowSchema } from '@toolcairn/indexer/schemas/keyword-row';
+import { keywordRowSchema } from '@toolcairn/core';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
