@@ -47,6 +47,9 @@ importers:
       '@toolcairn/graph':
         specifier: workspace:*
         version: link:../../packages/graph
+      '@toolcairn/indexer':
+        specifier: workspace:*
+        version: link:../indexer
       '@toolcairn/notifications':
         specifier: workspace:*
         version: link:../../packages/notifications

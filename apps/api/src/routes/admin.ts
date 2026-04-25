@@ -30,6 +30,7 @@ import neo4j from 'neo4j-driver';
 import { z } from 'zod';
 import { adminAuth } from '../middleware/admin-auth.js';
 import { adminCronRoutes } from './admin-cron.js';
+import { adminKeywordsRoutes } from './admin-keywords.js';
 
 // ─── Shared Prisma singleton ──────────────────────────────────────────────────
 
@@ -989,6 +990,9 @@ RETURN edge.toolId AS toolId, topicId, topicNodeType, edge.edgeType AS edgeType
 
   // ── Cron job status + manual triggers ─────────────────────────────────────
   app.route('/cron', adminCronRoutes());
+
+  // ── Keyword-sentence list / export / ingest ──────────────────────────────
+  app.route('/keywords', adminKeywordsRoutes());
 
   return app;
 }

@@ -17,15 +17,9 @@ import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { createLogger } from '@toolcairn/errors';
 import { COLLECTION_NAME, qdrantClient } from '@toolcairn/vector';
-import { z } from 'zod';
+import { keywordRowSchema } from './schemas/keyword-row.js';
 
 const logger = createLogger({ name: '@toolcairn/indexer:upload-keywords' });
-
-const keywordEntrySchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().min(1),
-  keyword_sentence: z.string().min(1),
-});
 
 async function main() {
   const args = process.argv.slice(2);
@@ -61,7 +55,7 @@ async function main() {
       continue;
     }
 
-    const parsed = keywordEntrySchema.safeParse(raw);
+    const parsed = keywordRowSchema.safeParse(raw);
     if (!parsed.success) {
       logger.warn({ errors: parsed.error.issues.map((i) => i.message) }, 'Skipping invalid entry');
       skipped++;
