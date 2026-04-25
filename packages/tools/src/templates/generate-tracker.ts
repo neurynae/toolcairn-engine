@@ -1,4 +1,4 @@
-import type { ConfigAuditEntry } from '@toolcairn/types';
+import type { ConfigAuditEntry } from '@toolcairn/core';
 
 /**
  * Generate the standalone tracker.html with the audit data baked inline.
