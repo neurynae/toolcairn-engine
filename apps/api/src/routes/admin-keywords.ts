@@ -52,6 +52,25 @@ function isMissing(value: unknown): boolean {
   return value.trim().length === 0;
 }
 
+/**
+ * Convert a `?offset=` query string into a Qdrant scroll-offset value.
+ *
+ * Qdrant's scroll offset is a POINT ID — either a UUID string or a u64
+ * number — NOT a paging index. The web frontend sends `offset=0` for the
+ * first page, which Qdrant rejects (no point with id `"0"` in the UUID-keyed
+ * collection). Treat the common "first-page" sentinels as "no offset"; pass
+ * everything else through unchanged so subsequent calls using the
+ * `next_page_offset` returned by Qdrant continue to work.
+ */
+function parseScrollOffset(raw: string | undefined): string | number | undefined {
+  if (raw == null) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed === '' || trimmed === '0' || trimmed === 'null' || trimmed === 'undefined') {
+    return undefined;
+  }
+  return trimmed;
+}
+
 function summarize(point: QdrantToolPoint): MissingToolSummary {
   const pl = point.payload ?? {};
   const summary: MissingToolSummary = {
@@ -82,9 +101,12 @@ export function adminKeywordsRoutes(qdrant: ReturnType<typeof qdrantClient> = qd
   // number) — pass back the next_offset from the previous call.
   app.get('/missing', async (c) => {
     const limit = Math.min(1000, Math.max(1, Number(c.req.query('limit') ?? 200)));
-    const offsetRaw = c.req.query('offset');
-    const offset: string | number | undefined =
-      offsetRaw != null && offsetRaw !== '' ? offsetRaw : undefined;
+    // Qdrant `scroll.offset` is a POINT ID (UUID / u64), not a numeric index.
+    // The web frontend sends `?offset=0` for the first page; treat any
+    // empty / "0" / "null" / "undefined" sentinel as "no offset" (= first
+    // page). Otherwise pass the raw string through — Qdrant accepts UUID
+    // strings and numeric strings indistinguishably for u64 ids.
+    const offset = parseScrollOffset(c.req.query('offset'));
 
     try {
       const resp = await qdrant.scroll(COLLECTION_NAME, {
