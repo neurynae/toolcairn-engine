@@ -88,8 +88,8 @@ export async function handleToolpilotInit(args: {
         step: step++,
         action: 'create',
         file: '.toolpilot/tracker.html',
-        content: generateTrackerHtml(eventsPath),
-        note: `Open .toolpilot/tracker.html in your browser to monitor MCP tool calls in real time. Set TOOLPILOT_EVENTS_PATH=${eventsPath} in your MCP server environment to enable event logging.`,
+        content: generateTrackerHtml(),
+        note: 'Open .toolpilot/tracker.html in your browser to monitor MCP tool calls in real time. The tracker reads .toolcairn/audit-log.jsonl files directly via the File System Access API — no env vars or server-side wiring required.',
       });
     }
 
