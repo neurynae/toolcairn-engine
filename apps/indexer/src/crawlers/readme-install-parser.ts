@@ -36,9 +36,10 @@ function extractCodeBlocks(markdown: string): string[] {
 
   // Fenced code blocks: ```...``` or ~~~...~~~
   const fencedRegex = /(?:^|\n)(?:`{3,}|~{3,})(?:\w*\n)([\s\S]*?)(?:`{3,}|~{3,})/g;
-  let match: RegExpExecArray | null;
-  while ((match = fencedRegex.exec(markdown)) !== null) {
+  let match: RegExpExecArray | null = fencedRegex.exec(markdown);
+  while (match !== null) {
     if (match[1]) blocks.push(match[1]);
+    match = fencedRegex.exec(markdown);
   }
 
   // Indented code blocks (4 spaces or 1 tab)
@@ -56,8 +57,10 @@ function extractCodeBlocks(markdown: string): string[] {
 
   // Also check inline code: `npm install X` (single backtick)
   const inlineRegex = /`([^`]+)`/g;
-  while ((match = inlineRegex.exec(markdown)) !== null) {
+  match = inlineRegex.exec(markdown);
+  while (match !== null) {
     if (match[1]) blocks.push(match[1]);
+    match = inlineRegex.exec(markdown);
   }
 
   return blocks;

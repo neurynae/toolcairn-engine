@@ -42,7 +42,7 @@ ${deprecationsBlock}
 ${renderCtaButton(notesHref, 'Read the release notes')}
 <p style="margin:20px 0 0;font-size:13px;color:#6b7280;text-align:center">You can unsubscribe from release announcements in your <a href="${escapeHtml(settingsUrl)}" style="color:#6b7280;text-decoration:underline">notification settings</a>.</p>`;
 
-  const preheader = `v${version} — ${kind} release${deprecations && deprecations.length ? ' with deprecations' : ''}.`;
+  const preheader = `v${version} — ${kind} release${deprecations?.length ? ' with deprecations' : ''}.`;
   return {
     subject: `@neurynae/toolcairn-mcp v${version} released`,
     html: renderLayout({ preheader, bodyHtml, unsubscribeUrl: ctx.unsubscribeUrl }),

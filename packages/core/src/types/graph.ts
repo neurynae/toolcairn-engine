@@ -45,14 +45,7 @@ export type EdgeType =
  * - cargo: Cargo semver (special 0.x caret behavior)
  * - opaque: unparseable — handler treats as unknown unless exact string match
  */
-export type RangeSystem =
-  | 'semver'
-  | 'pep440'
-  | 'maven'
-  | 'composer'
-  | 'ruby'
-  | 'cargo'
-  | 'opaque';
+export type RangeSystem = 'semver' | 'pep440' | 'maven' | 'composer' | 'ruby' | 'cargo' | 'opaque';
 
 export type NodeType = 'Tool' | 'UseCase' | 'Stack' | 'Pattern' | 'Requirement' | 'Version';
 

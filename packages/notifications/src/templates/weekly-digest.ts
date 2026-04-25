@@ -51,8 +51,7 @@ ${
           : ''
       }${
         deprecationAlerts.length > 0
-          ? sectionLabel('Deprecation alerts') +
-            `<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">${deprecationAlerts
+          ? `${sectionLabel('Deprecation alerts')}<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">${deprecationAlerts
               .map(
                 (a) =>
                   `<tr><td style="padding:12px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;margin-bottom:8px">

@@ -44,7 +44,8 @@ ${renderCtaButton(dashboardUrl, 'Open your ToolCairn account')}
 <p style="margin:24px 0 0;font-size:13px;color:#6b7280">Have a question, a wishlist item, or a use case you&rsquo;d like us to support? Just reply &mdash; it lands in my inbox.</p>
 <p style="margin:8px 0 0;font-size:13px;color:#6b7280">&mdash; The ToolCairn team</p>`;
 
-  const preheader = 'Thanks for joining the ToolCairn Pro waitlist — here&rsquo;s what happens next.';
+  const preheader =
+    'Thanks for joining the ToolCairn Pro waitlist — here&rsquo;s what happens next.';
   return {
     subject: "You're on the ToolCairn Pro waitlist",
     html: renderLayout({ preheader, bodyHtml, unsubscribeUrl: ctx.unsubscribeUrl }),

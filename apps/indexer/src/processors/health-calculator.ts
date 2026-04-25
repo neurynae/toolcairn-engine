@@ -140,7 +140,6 @@ export function calculateHealth(
   let starsVelocity90d: number;
   let starsVelocity30d: number;
   let starsVelocity7d: number;
-  let starsSnapshotAt: string;
 
   const MIN_DAYS_FOR_VELOCITY = 1;
   const useSnapshotDelta =
@@ -161,7 +160,7 @@ export function calculateHealth(
     starsVelocity30d = Math.round(stars * 0.015);
     starsVelocity7d = Math.round(stars * 0.003);
   }
-  starsSnapshotAt = new Date().toISOString();
+  const starsSnapshotAt = new Date().toISOString();
 
   const commitVelocity30d =
     recencyScore(lastCommitDate) > 0.8 ? 10 : recencyScore(lastCommitDate) > 0.5 ? 3 : 1;
