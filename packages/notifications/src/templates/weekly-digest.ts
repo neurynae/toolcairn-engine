@@ -23,7 +23,7 @@ function toolRow(appUrl: string, name: string, meta?: string): string {
   </tr>`;
 }
 
-function toolsTable(appUrl: string, rows: string[]): string {
+function toolsTable(_appUrl: string, rows: string[]): string {
   return `<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">${rows.join('')}</table>`;
 }
 

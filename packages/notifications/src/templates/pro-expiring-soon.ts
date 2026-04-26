@@ -10,7 +10,7 @@ export interface ProExpiringSoonPayload {
 
 export function renderProExpiringSoon(ctx: EmailContext<ProExpiringSoonPayload>): RenderedEmail {
   const { expiresAt, source } = ctx.payload;
-  const appUrl = escapeHtml(ctx.publicAppUrl);
+  const _appUrl = escapeHtml(ctx.publicAppUrl);
   const billingUrl = `${ctx.publicAppUrl}/billing`;
   const settingsUrl = `${ctx.publicAppUrl}/settings`;
   const expiry = new Date(expiresAt).toUTCString();

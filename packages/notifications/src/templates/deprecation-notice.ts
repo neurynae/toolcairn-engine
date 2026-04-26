@@ -14,7 +14,7 @@ export function renderDeprecationNotice(
   ctx: EmailContext<DeprecationNoticePayload>,
 ): RenderedEmail {
   const { toolName, reason, severity, details, removesInDays } = ctx.payload;
-  const appUrl = escapeHtml(ctx.publicAppUrl);
+  const _appUrl = escapeHtml(ctx.publicAppUrl);
   const toolUrl = `${ctx.publicAppUrl}/tool/${encodeURIComponent(toolName)}`;
   const alertsUrl = `${ctx.publicAppUrl}/settings`;
   const isCritical = severity === 'critical';

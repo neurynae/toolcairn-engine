@@ -507,9 +507,9 @@ export function createSuggestGraphUpdateHandler(
             },
             message:
               results.length === 1
-                ? results[0]!.staged
-                  ? `Tool "${batch[0]!.tool_name}" verified + staged for admin review.`
-                  : `Tool "${batch[0]!.tool_name}" rejected: ${results[0]!.reason ?? results[0]!.error}`
+                ? results[0]?.staged
+                  ? `Tool "${batch[0]?.tool_name}" verified + staged for admin review.`
+                  : `Tool "${batch[0]?.tool_name}" rejected: ${results[0]?.reason ?? results[0]?.error}`
                 : `${stagedCount}/${results.length} tools staged for admin review${rejectedCount > 0 ? ` (${rejectedCount} rejected pre-verification)` : ''}${failedCount > 0 ? ` (${failedCount} DB errors)` : ''}. All staged entries await admin approval before entering the live graph.`,
           });
         }

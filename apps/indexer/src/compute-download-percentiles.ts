@@ -156,7 +156,7 @@ async function main() {
       group.sort((a, b) => a.weeklyDownloads - b.weeklyDownloads);
       for (let i = 0; i < group.length; i++) {
         const percentile = (i + 1) / group.length;
-        dlScoreByToolRegistry.set(`${group[i]!.pointId}:${registry}`, percentile);
+        dlScoreByToolRegistry.set(`${group[i]?.pointId}:${registry}`, percentile);
       }
       logger.info(
         { registry, count: group.length, method: 'percentile' },

@@ -10,7 +10,7 @@ export interface WelcomePayload {
 export function renderWelcome(ctx: EmailContext<WelcomePayload>): RenderedEmail {
   const greeting = ctx.payload.name ? `Hey ${escapeHtml(ctx.payload.name)},` : 'Hey,';
   const limit = ctx.payload.dailyLimit;
-  const appUrl = escapeHtml(ctx.publicAppUrl);
+  const _appUrl = escapeHtml(ctx.publicAppUrl);
   const docsUrl = `${ctx.publicAppUrl}/docs`;
 
   const bodyHtml = `

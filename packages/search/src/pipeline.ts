@@ -71,7 +71,7 @@ const TOPIC_FILTER_MIN_POOL = 10;
 /** Minimum results from topic-filtered search before falling back. */
 const TOPIC_FILTER_MIN_RESULTS = 3;
 /** Score multiplier for topic-overlapping tools in Level 3 (unfiltered + bonus). */
-const TOPIC_BONUS_MULTIPLIER = 1.5;
+const _TOPIC_BONUS_MULTIPLIER = 1.5;
 
 export interface RunStages2to4Result {
   results: ToolScoredResult[];

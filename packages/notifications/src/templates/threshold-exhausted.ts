@@ -14,7 +14,7 @@ export function renderThresholdExhausted(
   ctx: EmailContext<ThresholdExhaustedPayload>,
 ): RenderedEmail {
   const { used, limit, waitlistJoinUrl } = ctx.payload;
-  const appUrl = escapeHtml(ctx.publicAppUrl);
+  const _appUrl = escapeHtml(ctx.publicAppUrl);
   const billingUrl = `${ctx.publicAppUrl}/billing`;
   const waitlistHref = safeUrl(waitlistJoinUrl);
 

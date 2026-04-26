@@ -10,7 +10,7 @@ export interface ProActivatedPayload {
 
 export function renderProActivated(ctx: EmailContext<ProActivatedPayload>): RenderedEmail {
   const { planKey, expiresAt, source } = ctx.payload;
-  const appUrl = escapeHtml(ctx.publicAppUrl);
+  const _appUrl = escapeHtml(ctx.publicAppUrl);
   const billingUrl = `${ctx.publicAppUrl}/settings`;
   const expiry = expiresAt ? new Date(expiresAt).toUTCString() : 'end of billing cycle';
   const isGrant = source === 'waitlist_grant';
