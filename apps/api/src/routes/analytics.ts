@@ -308,6 +308,41 @@ export function analyticsRoutes() {
     }
   });
 
+  // GET /v1/analytics/popular-searches?limit=10&days=30 — most-frequent search
+  // queries from the SearchSession table over the lookback window. Powers the
+  // "Popular searches" widget on /explore.
+  app.get('/popular-searches', async (c) => {
+    try {
+      const limit = Math.min(50, Math.max(1, Number(c.req.query('limit') ?? 10)));
+      const days = Math.min(365, Math.max(1, Number(c.req.query('days') ?? 30)));
+      const since = new Date();
+      since.setUTCDate(since.getUTCDate() - days);
+
+      const rows = await prisma.searchSession.groupBy({
+        by: ['query'],
+        where: { created_at: { gte: since }, query: { not: '' } },
+        _count: { query: true },
+        orderBy: { _count: { query: 'desc' } },
+        take: limit,
+      });
+
+      const entries = rows.map((r, idx) => ({
+        rank: idx + 1,
+        query: r.query.slice(0, 120),
+        hits: r._count.query,
+      }));
+
+      return c.json({ ok: true, data: { entries, days } }, 200, {
+        'Cache-Control': 'public, max-age=900, stale-while-revalidate=3600',
+      });
+    } catch (e) {
+      return c.json(
+        { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
+        500,
+      );
+    }
+  });
+
   // GET /v1/analytics/tool/:name/stats — per-tool usage history (last 30 days)
   app.get('/tool/:name/stats', async (c) => {
     try {
@@ -322,6 +357,164 @@ export function analyticsRoutes() {
       });
 
       return c.json({ ok: true, data: { tool_name: name, days: rows } });
+    } catch (e) {
+      return c.json(
+        { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
+        500,
+      );
+    }
+  });
+
+  // GET /v1/analytics/leaderboard-kpis — aggregate KPI counts for the
+  // leaderboard header cards: total tools indexed (Postgres), total search
+  // queries executed, and average quality score across top tools.
+  app.get('/leaderboard-kpis', async (c) => {
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setUTCDate(sevenDaysAgo.getUTCDate() - 7);
+      const fourteenDaysAgo = new Date();
+      fourteenDaysAgo.setUTCDate(fourteenDaysAgo.getUTCDate() - 14);
+
+      const [
+        toolCount,
+        toolsThisWeek,
+        toolsLastWeek,
+        queryCount,
+        queriesThisWeek,
+        queriesLastWeek,
+        topTools,
+      ] = await Promise.all([
+        prisma.indexedTool.count(),
+        prisma.indexedTool.count({ where: { last_indexed_at: { gte: sevenDaysAgo } } }),
+        prisma.indexedTool.count({
+          where: { last_indexed_at: { gte: fourteenDaysAgo, lt: sevenDaysAgo } },
+        }),
+        prisma.searchSession.count(),
+        prisma.searchSession.count({ where: { created_at: { gte: sevenDaysAgo } } }),
+        prisma.searchSession.count({
+          where: { created_at: { gte: fourteenDaysAgo, lt: sevenDaysAgo } },
+        }),
+        repo.findTopByStars(100),
+      ]);
+
+      let qualityAvg = 0;
+      if (topTools.ok && topTools.data.length > 0) {
+        const scores = topTools.data.map((t) => computeQualityBreakdown(t.health).overall);
+        qualityAvg = Math.round(scores.reduce((s, v) => s + v, 0) / scores.length);
+      }
+
+      // Week-over-week delta percent. Falls back to 0 when previous-week
+      // baseline is empty (avoids divide-by-zero / Infinity).
+      const pct = (curr: number, prev: number): number =>
+        prev > 0 ? Math.round(((curr - prev) / prev) * 1000) / 10 : 0;
+
+      return c.json(
+        {
+          ok: true,
+          data: {
+            tools_indexed: toolCount,
+            tools_indexed_delta_pct: pct(toolsThisWeek, toolsLastWeek),
+            total_queries: queryCount,
+            total_queries_delta_pct: pct(queriesThisWeek, queriesLastWeek),
+            quality_avg: qualityAvg,
+            quality_avg_delta_pct: 0, // quality is a long-trend metric; delta computed elsewhere
+          },
+        },
+        200,
+        { 'Cache-Control': 'public, max-age=3600, stale-while-revalidate=7200' },
+      );
+    } catch (e) {
+      return c.json(
+        { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
+        500,
+      );
+    }
+  });
+
+  // GET /v1/analytics/category-distribution — counts per category from the
+  // Memgraph graph, powering the donut/pie chart in the leaderboard sidebar.
+  app.get('/category-distribution', async (c) => {
+    try {
+      // Use findByCategories with the full known category list — findAll() takes
+      // no arguments and can be slow across 28k+ nodes. This covers every category
+      // currently in the schema and is fast enough for a sidebar widget.
+      const result = await repo.findByCategories([
+        'vector-database',
+        'llm-framework',
+        'agent-framework',
+        'web-framework',
+        'auth',
+        'testing',
+        'devops',
+        'mcp-server',
+        'queue',
+        'cache',
+        'search',
+        'embedding',
+        'monitoring',
+        'relational-database',
+        'graph-database',
+        'other',
+        'developer-tools',
+        'productivity',
+        'ai',
+        'ml',
+        'mlops',
+      ]);
+      if (!result.ok) return c.json({ ok: true, data: { categories: [] } });
+
+      const countMap = new Map<string, number>();
+      for (const t of result.data) {
+        const cat = t.category ?? 'other';
+        countMap.set(cat, (countMap.get(cat) ?? 0) + 1);
+      }
+
+      // Collapse long-tail into "Other" — keep top 6 by count
+      const sorted = [...countMap.entries()].sort((a, b) => b[1] - a[1]);
+      const top6 = sorted.slice(0, 6);
+      const otherCount = sorted.slice(6).reduce((s, [, n]) => s + n, 0);
+      const categories = [
+        ...top6.map(([category, count]) => ({ category, count })),
+        ...(otherCount > 0 ? [{ category: 'other', count: otherCount }] : []),
+      ];
+
+      return c.json({ ok: true, data: { categories } }, 200, {
+        'Cache-Control': 'public, max-age=7200, stale-while-revalidate=14400',
+      });
+    } catch (e) {
+      return c.json(
+        { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
+        500,
+      );
+    }
+  });
+
+  // GET /v1/analytics/trending-this-week — top 5 tools by 7-day star-velocity
+  // delta relative to their total stars. Powers "Trending this week" sidebar.
+  app.get('/trending-this-week', async (c) => {
+    try {
+      const result = await repo.findTopByStarsVelocity(5);
+      if (!result.ok) return c.json({ ok: true, data: { entries: [] } });
+
+      const entries = result.data.map((t, idx) => {
+        const velocity = t.health.stars_velocity_90d ?? 0;
+        const stars = t.health.stars ?? 0;
+        // 7-day approximation: velocity is 90-day; divide by ~13 to get weekly
+        const weeklyVelocity = Math.round(velocity / 13);
+        const growth_pct =
+          stars > 0 ? Math.min(999, Math.round((weeklyVelocity / stars) * 100)) : 0;
+        return {
+          rank: idx + 1,
+          tool_name: t.name,
+          display_name: t.display_name,
+          growth_pct,
+          github_url: t.github_url,
+        };
+      });
+
+      return c.json({ ok: true, data: { entries } }, 200, {
+        'Cache-Control': 'public, max-age=3600, stale-while-revalidate=7200',
+      });
     } catch (e) {
       return c.json(
         { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },

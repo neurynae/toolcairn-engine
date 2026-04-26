@@ -130,5 +130,30 @@ export function waitlistRoutes(): Hono {
     return c.json({ ok: true, via: 'self_serve' });
   });
 
+  // GET /v1/waitlist/stats — public count for "X+ developers joined" social
+  // proof on the billing pre-register block. Returns total joined count + a
+  // capped "free passes left" calculation (hard cap of 2000 — adjust the
+  // constant below when the early-access window expands).
+  app.get('/stats', async (c) => {
+    try {
+      const FREE_PASS_CAP = 2000;
+      const total = await prisma.waitlist.count();
+      const free_passes_left = Math.max(0, FREE_PASS_CAP - total);
+      return c.json(
+        {
+          ok: true,
+          data: { total_joined: total, free_passes_left, cap: FREE_PASS_CAP },
+        },
+        200,
+        { 'Cache-Control': 'public, max-age=300, stale-while-revalidate=900' },
+      );
+    } catch (e) {
+      return c.json(
+        { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
+        500,
+      );
+    }
+  });
+
   return app;
 }

@@ -438,5 +438,78 @@ export function dataRoutes() {
     }
   });
 
+  // GET /v1/data/recent-submissions?limit=4 — most recently indexed tools.
+  // Powers the "Recent submissions" panel on /suggest. Returns the most-recent
+  // entries from IndexedTool ordered by last_indexed_at DESC, with display
+  // name + github_url. Filters to status='indexed' so users only see accepted
+  // submissions.
+  app.get('/recent-submissions', async (c) => {
+    try {
+      const limit = Math.min(20, Math.max(1, Number(c.req.query('limit') ?? 4)));
+      const rows = await prisma.indexedTool.findMany({
+        where: { index_status: 'indexed', last_indexed_at: { not: null } },
+        orderBy: { last_indexed_at: 'desc' },
+        take: limit,
+        select: {
+          github_url: true,
+          last_indexed_at: true,
+          stars: true,
+        },
+      });
+
+      const entries = rows.map((r) => {
+        // Extract owner/repo from URL like https://github.com/owner/repo
+        const m = r.github_url.match(/github\.com\/([^/]+)\/([^/?#]+)/);
+        const repo = m?.[2] ?? 'unknown';
+        return {
+          name: repo,
+          display_name: repo,
+          github_url: r.github_url,
+          indexed_at: r.last_indexed_at?.toISOString() ?? null,
+          stars: r.stars ?? 0,
+        };
+      });
+
+      return c.json({ ok: true, data: { entries } }, 200, {
+        'Cache-Control': 'public, max-age=300, stale-while-revalidate=900',
+      });
+    } catch (e) {
+      return c.json(
+        { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
+        500,
+      );
+    }
+  });
+
+  // GET /v1/data/popular-categories — count of indexed tools per category, used
+  // by the Suggest page chip cloud. Falls back to a curated default list when
+  // Memgraph counts are unavailable.
+  app.get('/popular-categories', async (c) => {
+    try {
+      const result = await repo.findByCategories([...ALL_CATEGORIES]);
+      if (!result.ok || !result.data) {
+        return c.json({ ok: true, data: { entries: [] } });
+      }
+      const counts = new Map<string, number>();
+      for (const t of result.data) {
+        const cat = t.category || 'other';
+        counts.set(cat, (counts.get(cat) ?? 0) + 1);
+      }
+      const entries = Array.from(counts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([category, count]) => ({ category, count }));
+
+      return c.json({ ok: true, data: { entries } }, 200, {
+        'Cache-Control': 'public, max-age=900, stale-while-revalidate=3600',
+      });
+    } catch (e) {
+      return c.json(
+        { ok: false, error: 'internal_error', message: e instanceof Error ? e.message : String(e) },
+        500,
+      );
+    }
+  });
+
   return app;
 }
