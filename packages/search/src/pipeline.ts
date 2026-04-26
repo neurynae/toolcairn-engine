@@ -75,6 +75,12 @@ const _TOPIC_BONUS_MULTIPLIER = 1.5;
 
 export interface RunStages2to4Result {
   results: ToolScoredResult[];
+  /**
+   * Top candidates from stage 3 (graph rerank), excluding any tool already
+   * present in `results`. Powers the public web "Explore more options" panel.
+   * MCP agents typically ignore this field — they only consume `results`.
+   */
+  alternatives: ToolScoredResult[];
   is_two_option: boolean;
   stage2_ms: number;
   stage3_ms: number;
@@ -176,8 +182,16 @@ export class SearchPipeline {
     const stage3 = await stage3GraphRerank(stage2);
     const stage4 = stage4Select(stage3);
     await this.sessionManager.saveResults(sessionId, stage4.results);
+
+    // Build "alternatives" — next-best stage 3 picks not already in stage4.
+    // Cap at 4 so the web "Explore more options" panel always has a stable
+    // 4-card grid; agents ignore this field.
+    const winnerNames = new Set(stage4.results.map((r) => r.tool.name));
+    const alternatives = stage3.results.filter((r) => !winnerNames.has(r.tool.name)).slice(0, 4);
+
     return {
       results: stage4.results,
+      alternatives,
       is_two_option: stage4.is_two_option,
       stage2_ms: stage2.elapsed_ms,
       stage3_ms: stage3.elapsed_ms,

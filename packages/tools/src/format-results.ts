@@ -39,6 +39,9 @@ export interface FormattedResult {
   tool: string;
   display_name: string;
   description: string;
+  category: string;
+  language: string | null;
+  license: string | null;
   fit_score: number;
   reason: string;
   github_url: string;
@@ -54,6 +57,10 @@ export interface FormattedResult {
     stars: number;
     maintenance_score: number;
     last_commit_date: string;
+    stars_velocity_90d: number;
+    commit_velocity_30d: number;
+    contributor_count: number;
+    open_issues: number;
   };
   deprecation_warning: string | null;
 }
@@ -79,6 +86,9 @@ export function formatResults(
       tool: r.tool.name,
       display_name: r.tool.display_name,
       description: r.tool.description,
+      category: r.tool.category,
+      language: r.tool.language ?? null,
+      license: r.tool.license ?? null,
       fit_score: Math.round(r.score * 100) / 100,
       reason,
       github_url: r.tool.github_url,
@@ -94,6 +104,10 @@ export function formatResults(
         stars: r.tool.health.stars,
         maintenance_score: Math.round(r.tool.health.maintenance_score * 100) / 100,
         last_commit_date: r.tool.health.last_commit_date,
+        stars_velocity_90d: r.tool.health.stars_velocity_90d ?? 0,
+        commit_velocity_30d: r.tool.health.commit_velocity_30d ?? 0,
+        contributor_count: r.tool.health.contributor_count ?? 0,
+        open_issues: r.tool.health.open_issues ?? 0,
       },
       deprecation_warning: deprecationWarning,
     };

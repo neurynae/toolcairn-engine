@@ -84,7 +84,7 @@ export function createSearchToolsRespondHandler(
         }
       }
 
-      const { results, is_two_option } = await deps.pipeline.runStages2to4(
+      const { results, alternatives, is_two_option } = await deps.pipeline.runStages2to4(
         candidateIds,
         updatedContext,
         args.query_id,
@@ -98,6 +98,7 @@ export function createSearchToolsRespondHandler(
       const sessionForQuery = await deps.sessionManager.getSession(args.query_id);
       const originalQuery = (sessionForQuery?.query as string) ?? '';
       const formattedResults = formatResults(results, is_two_option);
+      const formattedAlternatives = formatResults(alternatives, false);
       const nonIndexedGuidance = buildNonIndexedGuidance(formattedResults, originalQuery);
       const credibilityWarning = buildLowCredibilityWarning(formattedResults);
 
@@ -107,6 +108,7 @@ export function createSearchToolsRespondHandler(
         status: 'complete',
         stage: 4,
         results: formattedResults,
+        alternatives: formattedAlternatives,
         is_two_option,
         ...(nonIndexedGuidance ? { non_indexed_guidance: nonIndexedGuidance } : {}),
         ...(credibilityWarning ? { credibility_warning: credibilityWarning } : {}),

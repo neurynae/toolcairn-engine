@@ -90,7 +90,7 @@ export function createSearchToolsHandler(
         });
       }
 
-      const { results, is_two_option, stage2_ms, stage3_ms, stage4_ms } =
+      const { results, alternatives, is_two_option, stage2_ms, stage3_ms, stage4_ms } =
         await deps.pipeline.runStages2to4(stage1.ids, args.context, sessionId);
 
       deps.enqueueSearchEvent(args.query, sessionId).catch((e: unknown) => {
@@ -101,6 +101,7 @@ export function createSearchToolsHandler(
       logger.info({ sessionId, total_ms, resultCount: results.length }, 'search_tools complete');
 
       const formattedResults = formatResults(results, is_two_option);
+      const formattedAlternatives = formatResults(alternatives, false);
       const nonIndexedGuidance = buildNonIndexedGuidance(formattedResults, args.query);
       const credibilityWarning = buildLowCredibilityWarning(formattedResults);
 
@@ -109,6 +110,7 @@ export function createSearchToolsHandler(
         status: 'complete',
         stage: 4,
         results: formattedResults,
+        alternatives: formattedAlternatives,
         is_two_option,
         timing: { stage1_ms: stage1.elapsed_ms, stage2_ms, stage3_ms, stage4_ms, total_ms },
         ...(nonIndexedGuidance ? { non_indexed_guidance: nonIndexedGuidance } : {}),
