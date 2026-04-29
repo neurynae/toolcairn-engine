@@ -7,6 +7,7 @@ export type { QueueError, QueueMessage };
 
 const INDEX_STREAM = 'toolpilot:index';
 const SEARCH_STREAM = 'toolpilot:search';
+const REGISTRY_PROBE_STREAM = 'toolpilot:registry-probe';
 
 let redisClient: Redis | undefined;
 
@@ -63,6 +64,42 @@ export async function enqueueBatchReindex(toolIds: string[]): Promise<Result<num
     if (result.ok) enqueued++;
   }
   return ok(enqueued);
+}
+
+/**
+ * Enqueue a registry-probe job — the indexer's main consumer fires these as a
+ * fast handoff after a tool is crawled and written. The probe worker then runs
+ * the slow registry verification + download-count fetch at the adaptive
+ * per-host rate limiter's pace, in a separate stream so registry slowness
+ * (especially pypistats.org) never throttles the main GitHub-bound throughput.
+ *
+ * Idempotent: re-running for the same toolId just refreshes the channels.
+ */
+export async function enqueueRegistryProbe(toolId: string): Promise<Result<string, QueueError>> {
+  try {
+    const redis = getRedisClient();
+    const message: QueueMessage = {
+      id: crypto.randomUUID(),
+      type: 'registry-probe',
+      payload: { toolId },
+      timestamp: Date.now(),
+    };
+    const streamId = await redis.xadd(
+      REGISTRY_PROBE_STREAM,
+      '*',
+      'id',
+      message.id,
+      'type',
+      message.type,
+      'payload',
+      JSON.stringify(message.payload),
+      'timestamp',
+      String(message.timestamp),
+    );
+    return ok(streamId as string);
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
 }
 
 /**

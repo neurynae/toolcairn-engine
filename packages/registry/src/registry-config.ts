@@ -382,6 +382,29 @@ export const REGISTRY_CONFIGS: Record<string, RegistryConfig> = {
  */
 const FLAGS = String.raw`(?:(?:-\w+|--[\w-]+)(?:=\S+)?\s+)*`;
 
+/**
+ * Optional opening quote before a package name. Many READMEs document
+ * `pip install 'foo[all]'` or `gem install "rails"` to make the extras/version
+ * specifier shell-safe — the leading quote breaks plain word-character regex
+ * matches. This consumer accepts and discards a single leading `'` or `"` so
+ * the pkg capture starts on the actual name.
+ */
+const Q = String.raw`['"]?`;
+
+/**
+ * Optional prefix for pip-family commands. Real-world install lines often
+ * arrive as one of:
+ *   `pip install foo`
+ *   `python -m pip install foo`        (gpt-engineer, langchain docs)
+ *   `python3 -m pip install foo`
+ *   `sudo pip install foo`
+ *   `! pip install foo`                (Jupyter notebook style)
+ * Each variation that goes undetected is a class of repos systematically
+ * dropped from the graph. The prefix is optional — bare `pip install` still
+ * matches.
+ */
+const PIP_PREFIX = String.raw`(?:python3?\s+-m\s+|sudo\s+|!\s*)?`;
+
 /** Build a regex from parts, hiding the `new RegExp(..., 'i')` boilerplate. */
 function mk(...parts: string[]): RegExp {
   return new RegExp(parts.join(''), 'i');
@@ -427,33 +450,44 @@ export const INSTALL_PATTERNS: InstallPattern[] = [
   },
 
   // ── Python (all use PyPI) ──
+  // PIP_PREFIX allows `python -m pip`, `sudo pip`, `! pip` (Jupyter) variations.
+  // Q allows `pip install 'foo[all]'` style — leading quote skipped before
+  // the pkg capture (real-world: microsoft/markitdown documents the install
+  // as `pip install 'markitdown[all]'`).
   {
     registry: 'pypi',
-    pattern: mk(String.raw`pip3?\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
+    pattern: mk(
+      PIP_PREFIX,
+      String.raw`pip3?\s+install\s+`,
+      FLAGS,
+      Q,
+      String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`,
+    ),
   },
   {
     registry: 'pypi',
-    pattern: mk(String.raw`poetry\s+add\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
+    pattern: mk(String.raw`poetry\s+add\s+`, FLAGS, Q, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
   },
   {
     registry: 'pypi',
     pattern: mk(
       String.raw`uv\s+(?:add|pip\s+install)\s+`,
       FLAGS,
+      Q,
       String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`,
     ),
   },
   {
     registry: 'pypi',
-    pattern: mk(String.raw`pipenv\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
+    pattern: mk(String.raw`pipenv\s+install\s+`, FLAGS, Q, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
   },
   {
     registry: 'pypi',
-    pattern: mk(String.raw`pdm\s+add\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
+    pattern: mk(String.raw`pdm\s+add\s+`, FLAGS, Q, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
   },
   {
     registry: 'pypi',
-    pattern: mk(String.raw`conda\s+install\s+`, FLAGS, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
+    pattern: mk(String.raw`conda\s+install\s+`, FLAGS, Q, String.raw`(?<pkg>[A-Za-z0-9_][\w.-]*)`),
   },
 
   // ── Rust ──

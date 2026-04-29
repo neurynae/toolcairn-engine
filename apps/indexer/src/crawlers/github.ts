@@ -176,7 +176,89 @@ async function githubRequest<T>(
 
 export { githubRequest, getOctokit };
 
+// ─── GitHub repo redirect cache (handles org-rename for ownership verification) ──
+//
+// Registry metadata bakes the `repository` URL at publish time. When a GitHub
+// org or repo gets renamed afterward (geekan/MetaGPT → foundationagents/metagpt,
+// gpt-engineer-org/gpt-engineer ← antonosika/gpt-engineer), the URL on PyPI/
+// npm becomes stale even though GitHub still resolves it via 301 redirects.
+//
+// The verifier in download-fetcher.ts asks this resolver only when its initial
+// substring check fails for a github.com URL — so for the common case (no
+// rename), we pay zero extra GitHub API calls. Cached results (positive AND
+// negative) survive for the lifetime of the indexer run.
+
+const repoRedirectCache = new Map<string, string>();
+// Empty string in the cache = negative result (lookup attempted, failed).
+
+/**
+ * Resolve `<old-owner>/<old-repo>` to its current canonical form via the
+ * GitHub repos.get endpoint. Octokit follows 301 redirects automatically and
+ * the response's `full_name` reflects the post-rename identity. Returns `null`
+ * on lookup failure (404, network, etc.) so the caller doesn't get stuck.
+ */
+async function resolveOwnerRepoRedirect(ownerRepoKey: string): Promise<string | null> {
+  const key = ownerRepoKey.toLowerCase();
+  const cached = repoRedirectCache.get(key);
+  if (cached !== undefined) return cached === '' ? null : cached;
+  const [owner, repo] = key.split('/');
+  if (!owner || !repo) {
+    repoRedirectCache.set(key, '');
+    return null;
+  }
+  try {
+    const { data } = await getOctokit().rest.repos.get({ owner, repo });
+    const resolved = data.full_name.toLowerCase();
+    repoRedirectCache.set(key, resolved);
+    return resolved;
+  } catch {
+    repoRedirectCache.set(key, '');
+    return null;
+  }
+}
+
 // ─── Domain helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Generate package-name variants for the speculative registry probe.
+ *
+ * Canonical package names on registries often differ from the GitHub repo name
+ * by a predictable transformation. Without variants the probe misses major
+ * tools systematically:
+ *
+ *   Suffix-strip:       `next.js`     → ["next.js", "next"]      (vercel/next.js)
+ *                       `three.js`    → ["three.js", "three"]    (mrdoob/three.js)
+ *                       `socket.io`   → ["socket.io", "socket"]
+ *                       `discord.py`  → ["discord.py", "discord"]
+ *
+ *   Punctuation-strip:  `axios-mock`  → ["axios-mock", "axiosmock"]
+ *                       `numpy_helper`→ ["numpy_helper", "numpyhelper"]
+ *
+ *   Language-suffix:    `firecrawl`   → ["firecrawl", "firecrawl-py", "firecrawl-js"]
+ *                       (catches firecrawl/firecrawl → firecrawl-py on PyPI)
+ *
+ * Order matters — the literal name is tried first to preserve prior behaviour.
+ * Variants are deduped via Set so names that don't transform produce one entry.
+ */
+function getNameVariants(name: string): string[] {
+  const variants = new Set<string>([name]);
+  // Suffix strip (.js / .io / .py / etc.)
+  const stripped = name.replace(/\.(js|io|ts|py|rs|go|rb|sh)$/i, '');
+  if (stripped !== name) variants.add(stripped);
+  // Punctuation strip
+  const noHyphens = name.replace(/-/g, '');
+  if (noHyphens !== name && noHyphens.length >= 2) variants.add(noHyphens);
+  const noUnderscores = name.replace(/_/g, '');
+  if (noUnderscores !== name && noUnderscores.length >= 2) variants.add(noUnderscores);
+  // Language-suffix variants (only when the repo name doesn't already have one)
+  // Catches the pattern where the publish name appends -py/-js to disambiguate
+  // (firecrawl/firecrawl → firecrawl-py on PyPI, mendableai → @mendable/firecrawl-js).
+  if (!/[-.](py|js|go|rs|ts|rb|sh)$/i.test(name)) {
+    variants.add(`${name}-py`);
+    variants.add(`${name}-js`);
+  }
+  return [...variants];
+}
 
 function detectDeploymentModels(topics: string[]): string[] {
   const models: string[] = [];
@@ -385,25 +467,45 @@ export async function crawlGitHubRepo(owner: string, repo: string): Promise<Craw
         ownerLogin,
         topics,
       );
-      // Signal 3 (fallback): when README + topics yielded nothing, fan out one
-      // candidate per entry in REGISTRY_CONFIGS using the repo name as the
-      // package name. verifyAndFetchAllChannels already walks each registry's
-      // metadataUrl + repoUrlField and drops any candidate the registry disowns,
-      // so no per-registry heuristics are needed here — unverified guesses are
-      // filtered out by the same machinery used everywhere else. Catches
-      // packages like `smol-toml` (271★, 11M+ npm weekly downloads) whose
-      // READMEs don't have fenced install blocks.
+      // Signal 3 (fallback): when README + topics yielded nothing, fan out
+      // candidates across registries that ToolCairn can VERIFY ownership for
+      // (i.e. have both metadataUrl + repoUrlField). Unverifiable registries
+      // are excluded — they would otherwise pass through with weeklyDownloads:0
+      // and pad the channel count without contributing real signal.
+      //
+      // Each registry probe tries multiple name variants because canonical
+      // package names often differ from the GitHub repo name:
+      //   `next.js`    → tries `next.js` AND `next`        (vercel/next.js)
+      //   `three.js`   → tries `three.js` AND `three`      (mrdoob/three.js)
+      //   `socket.io`  → tries `socket.io` AND `socket`
+      //   `axios-mock` → tries `axios-mock` AND `axiosmock`
+      // First verified match wins per registry (verifyAndFetchAllChannels
+      // dedups by registry implicitly via the survivor set).
       const speculative: DiscoveredPackage[] =
         channels.length === 0
-          ? Object.keys(REGISTRY_CONFIGS).map((registry) => ({
-              registry,
-              packageName: repoData.name,
-              rawCommand: 'speculative:name-match',
-            }))
+          ? Object.entries(REGISTRY_CONFIGS)
+              .filter(([_, cfg]) => cfg.metadataUrl && cfg.repoUrlField)
+              .flatMap(([registry]) =>
+                getNameVariants(repoData.name).map((packageName) => ({
+                  registry,
+                  packageName,
+                  rawCommand: 'speculative:name-match',
+                  source: 'speculative' as const,
+                })),
+              )
           : [];
       const allCandidates = channels.length > 0 ? channels : speculative;
       if (allCandidates.length > 0) {
-        const verified = await verifyAndFetchAllChannels(allCandidates, ownerLogin, repoData.name);
+        // Throughput optimisation: for high-star repos (stars >= 1000) the gate
+        // passes on stars alone, so we don't need download counts inline. Defer
+        // the slow per-host download fetch to the registry-probe side queue.
+        // Sub-1k repos still need download data inline because the gate uses
+        // it to decide whether the tool is registry-popular enough to keep.
+        const skipDownloads = (repoData.stargazers_count ?? 0) >= 1000;
+        const verified = await verifyAndFetchAllChannels(allCandidates, ownerLogin, repoData.name, {
+          resolveRedirect: resolveOwnerRepoRedirect,
+          skipDownloads,
+        });
         packageChannels = verified.map((ch) => ({
           registry: ch.registry,
           packageName: ch.packageName,

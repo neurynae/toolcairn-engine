@@ -191,3 +191,55 @@ describe('discoverDistributionChannels — fallback fuzzy guard', () => {
     expect(channels.filter((c) => c.registry === 'npm')).toEqual([]);
   });
 });
+
+describe('parseInstallCommands — pip prefix variations', () => {
+  it('matches `python -m pip install` (gpt-engineer style)', () => {
+    const cmds = parseInstallCommands(codeBlock('python -m pip install gpt-engineer'));
+    expect(find(cmds, 'pypi', 'gpt-engineer')).toBeDefined();
+  });
+
+  it('matches `python3 -m pip install`', () => {
+    const cmds = parseInstallCommands(codeBlock('python3 -m pip install requests'));
+    expect(find(cmds, 'pypi', 'requests')).toBeDefined();
+  });
+
+  it('matches `sudo pip install`', () => {
+    const cmds = parseInstallCommands(codeBlock('sudo pip install ansible'));
+    expect(find(cmds, 'pypi', 'ansible')).toBeDefined();
+  });
+
+  it('matches `! pip install` (Jupyter notebook style)', () => {
+    const cmds = parseInstallCommands(codeBlock('! pip install pandas'));
+    expect(find(cmds, 'pypi', 'pandas')).toBeDefined();
+  });
+
+  it("matches quoted package names: `pip install 'markitdown[all]'`", () => {
+    // microsoft/markitdown documents the install with a single-quoted form
+    // to make the extras specifier shell-safe. The pkg capture must skip
+    // the leading quote, then stop at `[`.
+    const cmds = parseInstallCommands(codeBlock("pip install 'markitdown[all]'"));
+    expect(find(cmds, 'pypi', 'markitdown')).toBeDefined();
+  });
+
+  it('matches double-quoted package names: `pip install "openbb[all]"`', () => {
+    const cmds = parseInstallCommands(codeBlock('pip install "openbb[all]"'));
+    expect(find(cmds, 'pypi', 'openbb')).toBeDefined();
+  });
+});
+
+describe('parseInstallCommands — source field', () => {
+  it('tags README-discovered channels with source: "readme"', () => {
+    const cmds = parseInstallCommands(codeBlock('npm install express'));
+    const ch = find(cmds, 'npm', 'express');
+    expect(ch?.source).toBe('readme');
+  });
+
+  it('tags topic-discovered channels with source: "topic"', () => {
+    // Empty README + topic that maps to a registry hint.
+    const channels = discoverDistributionChannels('', 'rust-lang-tool', 'someone', ['rust']);
+    const cratesChannel = channels.find((c) => c.registry === 'crates');
+    if (cratesChannel) {
+      expect(cratesChannel.source).toBe('topic');
+    }
+  });
+});

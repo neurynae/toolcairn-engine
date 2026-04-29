@@ -8,9 +8,13 @@ const logger = createLogger({ name: '@toolcairn/queue:consumer' });
 const INDEX_STREAM = 'toolpilot:index';
 const SEARCH_STREAM = 'toolpilot:search';
 const SCHEDULER_STREAM = 'toolpilot:scheduler';
+const REGISTRY_PROBE_STREAM = 'toolpilot:registry-probe';
 
 // 2-minute ceiling per job — used in both PEL drain and main loop.
 const JOB_TIMEOUT_MS = 120_000;
+// Registry probes pace-bound by adaptive limiter, can take longer than
+// index jobs (verification + download fetch across N channels). Higher cap.
+const PROBE_TIMEOUT_MS = 300_000;
 
 export interface QueueHandlers {
   onIndexJob: (toolId: string, priority: number) => Promise<void>;
@@ -18,6 +22,12 @@ export interface QueueHandlers {
   onRunDiscovery?: () => Promise<void>;
   /** force=true when triggeredBy==='manual' — bypasses 7-day staleness threshold */
   onRunReindex?: (force?: boolean) => Promise<void>;
+  /**
+   * Slow registry-probe handler — runs in its own queue at the adaptive rate
+   * limiter's pace so registry throttling never bottlenecks the main GitHub
+   * crawl flow.
+   */
+  onRegistryProbe?: (toolId: string) => Promise<void>;
 }
 
 let redisClient: Redis | undefined;
@@ -60,8 +70,9 @@ export async function readFromStream(
   await ensureConsumerGroup(INDEX_STREAM, group);
   await ensureConsumerGroup(SEARCH_STREAM, group);
   await ensureConsumerGroup(SCHEDULER_STREAM, group);
+  await ensureConsumerGroup(REGISTRY_PROBE_STREAM, group);
 
-  const [indexResult, searchResult, schedulerResult] = await Promise.all([
+  const [indexResult, searchResult, schedulerResult, probeResult] = await Promise.all([
     redis.xreadgroup(
       'GROUP',
       group,
@@ -92,6 +103,16 @@ export async function readFromStream(
       SCHEDULER_STREAM,
       '>',
     ),
+    redis.xreadgroup(
+      'GROUP',
+      group,
+      consumer,
+      'COUNT',
+      String(count),
+      'STREAMS',
+      REGISTRY_PROBE_STREAM,
+      '>',
+    ),
   ]);
 
   const messages: StreamMessage[] = [];
@@ -100,6 +121,7 @@ export async function readFromStream(
     [indexResult, INDEX_STREAM],
     [searchResult, SEARCH_STREAM],
     [schedulerResult, SCHEDULER_STREAM],
+    [probeResult, REGISTRY_PROBE_STREAM],
   ];
 
   for (const [streamResult, streamKey] of streams) {
@@ -401,7 +423,10 @@ export async function startConsumer(
       // are rare scheduler events that must not overlap — discovery, reindex).
       const concurrency = options.concurrency ?? 2;
       const indexMessages = messages.filter((m) => m.type === 'index-job');
-      const otherMessages = messages.filter((m) => m.type !== 'index-job');
+      const probeMessages = messages.filter((m) => m.type === 'registry-probe');
+      const otherMessages = messages.filter(
+        (m) => m.type !== 'index-job' && m.type !== 'registry-probe',
+      );
 
       // Process index jobs in concurrent sliding windows.
       // Each message is XACK'd immediately after its own job completes (success,
@@ -435,6 +460,48 @@ export async function startConsumer(
             }
           }),
         );
+      }
+
+      // Process registry-probe messages concurrently (same pattern as
+      // index-job). The adaptive per-host rate limiter inside the handler
+      // serialises requests to slow registries (pypistats), so concurrency
+      // here just lets us interleave fast hosts with slow ones.
+      if (handlers.onRegistryProbe) {
+        for (let i = 0; i < probeMessages.length; i += concurrency) {
+          const batch = probeMessages.slice(i, i + concurrency);
+          await Promise.allSettled(
+            batch.map(async (msg) => {
+              const { toolId } = msg.payload as { toolId: string };
+              try {
+                await Promise.race([
+                  handlers.onRegistryProbe!(toolId),
+                  new Promise<never>((_, reject) =>
+                    setTimeout(
+                      () => reject(new Error(`Probe timeout after ${PROBE_TIMEOUT_MS}ms`)),
+                      PROBE_TIMEOUT_MS,
+                    ),
+                  ),
+                ]);
+              } catch (e) {
+                logger.error(
+                  { err: e, messageId: msg.id, toolId },
+                  'Registry probe failed (non-fatal)',
+                );
+              }
+              try {
+                const r = getRedisClient();
+                await r.xack(msg._streamKey, group, msg._entryId);
+              } catch (e) {
+                logger.warn({ err: e, entryId: msg._entryId }, 'Probe XACK failed');
+              }
+            }),
+          );
+        }
+      } else if (probeMessages.length > 0) {
+        // No handler registered — XACK so the stream doesn't fill up.
+        const r = getRedisClient();
+        const ids = probeMessages.map((m) => m._entryId);
+        await r.xack(REGISTRY_PROBE_STREAM, group, ...ids);
       }
 
       // Process non-index messages.

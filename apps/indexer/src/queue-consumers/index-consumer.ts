@@ -2,6 +2,7 @@ import type { VersionMetadata } from '@toolcairn/core';
 import { PrismaClient } from '@toolcairn/db';
 import { createLogger } from '@toolcairn/errors';
 import { MemgraphToolRepository } from '@toolcairn/graph';
+import { enqueueRegistryProbe } from '@toolcairn/queue';
 import { runCrawler } from '../crawlers/index.js';
 import { REGISTRY_CONFIGS } from '../crawlers/registry-config.js';
 import { processTool } from '../processors/index.js';
@@ -92,11 +93,16 @@ function parseToolId(toolId: string): {
  * GitHub tools: skip when description + pushed_at + stars + forks + is_fork all match.
  * npm/PyPI/crates: skip when description matches (stars/commits not available cheaply).
  *
+ * Lookup keys on github_url (not name) — names collide across ecosystems
+ * (npm:foo and pypi:foo coexist as distinct nodes), and a name-keyed lookup
+ * could match the wrong tool and falsely declare "unchanged".
+ *
  * False-negative risk: stale credibility/maintenance data for up to 7 days.
  * Self-corrects on next reindex cycle — not catastrophic.
  */
 async function checkIfUnchanged(
   source: string,
+  canonicalUrl: string,
   crawlerResult: Awaited<ReturnType<typeof runCrawler>>,
 ): Promise<
   | { skip: true; existingId: string; prevHealth: { stars: number; updatedAt: string } }
@@ -104,7 +110,14 @@ async function checkIfUnchanged(
 > {
   try {
     const repo = new MemgraphToolRepository();
-    const result = await repo.findByName(crawlerResult.extracted.name);
+    // For GitHub-sourced tools the canonical URL is github_url itself; for
+    // npm/PyPI/crates sources canonicalUrl is the registry-prefixed id, which
+    // wouldn't match a Tool's github_url. Fall back to findByName for those
+    // (registry tools are 1:1 between source and name on those registries).
+    const result =
+      source === 'github'
+        ? await repo.findByGitHubUrl(canonicalUrl)
+        : await repo.findByName(crawlerResult.extracted.name);
     if (!result.ok || !result.data) return { skip: false };
 
     const prev = result.data;
@@ -182,7 +195,7 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
     //    Version metadata is still persisted on skip so the version sub-graph
     //    fills in during the natural 7-day reindex cycle without forcing a
     //    full re-embed. Writes are cheap: MERGE on deterministic Version.id.
-    const changeCheck = await checkIfUnchanged(source, crawlerResult);
+    const changeCheck = await checkIfUnchanged(source, canonicalUrl, crawlerResult);
     if (changeCheck.skip) {
       await upsertIndexedTool(canonicalUrl, changeCheck.existingId, 'indexed');
       if (crawlerResult.versionMetadata?.length) {
@@ -222,37 +235,38 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
       weeklyDownloads: maxWeeklyDownloads,
     };
 
-    // 3a. Quality gate — registry-first, no GitHub-star fallback.
+    // 3a. Quality gate — high-star OR registry-popular OR grace.
     //
-    // The ONLY pass conditions are:
-    //   (a) at least one package channel whose weekly downloads clear its
+    // Pass conditions (any one):
+    //   (a) GitHub popularity: stars >= 1000. High-star repos earn graph space
+    //       on community signal alone, including tools distributed as binaries
+    //       (powertoys, godot, rustdesk), content/curation (awesome-lists,
+    //       education repos), or via unverifiable registries.
+    //   (b) at least one package channel whose weekly downloads clear its
     //       registry's 25th-percentile threshold
     //       (AppSettings.download_quality_thresholds, updated by the weekly
     //        percentile cron; falls back to REGISTRY_FALLBACK_THRESHOLDS
-    //        derived from REGISTRY_CONFIGS.logScale), OR
-    //   (b) an explicit grace_until window set by an admin or submission flow.
+    //        derived from REGISTRY_CONFIGS.logScale). Catches sub-1000★ but
+    //        registry-popular tools like smol-toml (271★, 11M+ npm weekly).
+    //   (c) an explicit grace_until window set by an admin or submission flow.
     //
-    // Stars used to be an alternative pass on their own (>= 1000★). That gate
-    // is gone — ToolCairn is a TOOL intelligence platform, so a repo has to
-    // actually be a distributable tool (i.e. present in some package registry)
-    // to earn graph space. Channel discovery runs three signals (README install
-    // commands → topic hints → speculative registry probe against every entry
-    // in REGISTRY_CONFIGS), all verified against the registry's own
-    // repoUrlField, so low-star but registry-popular tools like smol-toml
-    // (271★, 11M+ npm weekly downloads) pass on (a).
+    // Channel discovery still runs for every repo regardless of stars — the
+    // discovered registry data is persisted on the IndexedTool row whether
+    // the repo passes the gate or not.
     const thresholds = await getDownloadThresholds();
+    const hasGitHubPopularity = stars >= 1000;
     const hasPackageUsage = channels.some((ch) => {
       const threshold = thresholds[ch.registry];
       return threshold !== undefined && ch.weeklyDownloads >= threshold;
     });
-    if (!hasPackageUsage && !processedTool.node.grace_until) {
+    if (!hasGitHubPopularity && !hasPackageUsage && !processedTool.node.grace_until) {
       logger.info(
         { toolId, stars, maxWeeklyDownloads, channels: channels.length },
-        'Skipping — no verified package channel with qualifying downloads and no grace window',
+        'Skipping — under 1000★ and no verified package channel with qualifying downloads',
       );
       await upsertIndexedTool(canonicalUrl, processedTool.node.id, 'skipped', {
         ...baseMeta,
-        skipReason: `channels:${channels.length} max_weekly_dl:${maxWeeklyDownloads} thresholds:${JSON.stringify(thresholds)}`,
+        skipReason: `stars:${stars} channels:${channels.length} max_weekly_dl:${maxWeeklyDownloads} thresholds:${JSON.stringify(thresholds)}`,
       });
       return;
     }
@@ -370,6 +384,22 @@ export async function handleIndexJob(toolId: string, priority: number): Promise<
           .catch((e) => logger.error({ toolId, err: e }, 'Deprecation alert non-fatal'));
         logger.warn({ toolId, reason: dep.reason, severity: dep.severity }, 'Deprecation detected');
       }
+    }
+
+    // 9. Enqueue side-queue registry probe — fast handoff so the slow
+    //    pypistats/etc. download fetch happens off the main GitHub-bound
+    //    flow. The probe handler will update package_managers + IndexedTool
+    //    weekly_downloads at the adaptive rate limiter's pace. Only fire when
+    //    the tool was actually indexed (skipped tools don't need enrichment).
+    //
+    //    For high-star repos the crawler ran with skipDownloads=true, so this
+    //    enqueue is the ONLY way their download counts get filled in. For
+    //    sub-1k repos the crawler already filled them in inline; the probe is
+    //    a refresh (and a no-op if rate limiter says we have current data).
+    if (memgraphWriteSucceeded) {
+      enqueueRegistryProbe(processedTool.node.github_url).catch((err) =>
+        logger.warn({ toolId, err }, 'enqueueRegistryProbe failed (non-fatal)'),
+      );
     }
 
     logger.info({ toolId, nodeId: processedTool.node.id }, 'Index job complete');

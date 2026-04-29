@@ -18,6 +18,199 @@ import { REGISTRY_CONFIGS, type TimeWindow } from './registry-config.js';
 const logger = createLogger({ name: '@toolcairn/indexer:download-fetcher' });
 
 const FETCH_TIMEOUT = 5000;
+const MAX_TRANSIENT_RETRIES = 1;
+
+// ─── Per-host adaptive rate limiter ─────────────────────────────────────────
+//
+// We learn each registry's tolerance from its own responses — never hardcode
+// a wait time or rate. Three signals from the server drive the bucket:
+//
+//   1. `Retry-After` header on 429 → block for exactly that long. The server
+//      told us when it's safe; we honor it verbatim.
+//   2. `X-RateLimit-Remaining` / `X-RateLimit-Reset` on any 2xx → if the
+//      registry publishes them, compute the safe rate as
+//      `remaining / (reset_epoch - now)` and cap our refill there.
+//   3. 429 without Retry-After → the server didn't tell us how long. We halve
+//      the current effective rate (AIMD-style multiplicative-decrease) and
+//      stop sending until the next successful response. No magic numbers.
+//
+// On a streak of successes, the rate slowly recovers (additive-increase) so
+// we don't get permanently stuck in slow mode after a transient burst.
+//
+// Initial state: no limit at all (we don't pretend to know the registry's
+// ceiling). The first 429 — if one ever happens — teaches the bucket.
+
+interface Bucket {
+  /** Currently-available tokens. Starts ~unlimited. */
+  tokens: number;
+  /** Adaptive refill rate per second. Starts very high; learns down on 429s. */
+  refillPerSec: number;
+  /** Soft cap on refill rate (prevents accidental DoS on very forgiving hosts). */
+  capacity: number;
+  /** Last time the bucket was refilled (token math reference). */
+  lastRefillMs: number;
+  /** Hard block until this epoch ms — set by 429 + Retry-After. */
+  blockedUntilMs: number;
+  /** Successful fetches since last 429 — drives slow recovery of refillPerSec. */
+  successesSinceBackoff: number;
+}
+
+const INITIAL_REFILL_PER_SEC = 50; // permissive — let the registry tell us if too much
+const MIN_REFILL_PER_SEC = 0.5; // floor — never crawl slower than 1 req per 2s
+const MAX_CAPACITY = 100;
+const SUCCESSES_PER_RECOVERY = 50; // after 50 successes, increase rate 10%
+const RECOVERY_FACTOR = 1.1;
+const BACKOFF_DIVISOR = 2; // halve rate on a 429 with no Retry-After
+
+const buckets = new Map<string, Bucket>();
+
+function getBucket(host: string): Bucket {
+  let b = buckets.get(host);
+  if (!b) {
+    b = {
+      tokens: INITIAL_REFILL_PER_SEC,
+      refillPerSec: INITIAL_REFILL_PER_SEC,
+      capacity: MAX_CAPACITY,
+      lastRefillMs: Date.now(),
+      blockedUntilMs: 0,
+      successesSinceBackoff: 0,
+    };
+    buckets.set(host, b);
+  }
+  return b;
+}
+
+/** Block until 1 token is available for this host. */
+async function acquireToken(host: string): Promise<void> {
+  const b = getBucket(host);
+  while (true) {
+    const now = Date.now();
+    if (now < b.blockedUntilMs) {
+      await new Promise((r) => setTimeout(r, b.blockedUntilMs - now));
+      continue;
+    }
+    const elapsedSec = (now - b.lastRefillMs) / 1000;
+    b.tokens = Math.min(b.capacity, b.tokens + elapsedSec * b.refillPerSec);
+    b.lastRefillMs = now;
+    if (b.tokens >= 1) {
+      b.tokens -= 1;
+      return;
+    }
+    const waitMs = Math.ceil(((1 - b.tokens) / b.refillPerSec) * 1000);
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+}
+
+/**
+ * Update bucket state from a successful response. If the registry publishes
+ * standard rate-limit headers, learn the true rate from them; otherwise
+ * gradually recover refill speed after a streak of clean responses.
+ */
+function recordSuccess(host: string, resp: Response): void {
+  const b = getBucket(host);
+  const remaining = Number(resp.headers.get('x-ratelimit-remaining'));
+  const resetRaw = resp.headers.get('x-ratelimit-reset');
+  if (Number.isFinite(remaining) && resetRaw) {
+    // X-RateLimit-Reset can be either epoch seconds (GitHub style) or
+    // seconds-from-now (older style). Detect via magnitude.
+    const resetNum = Number(resetRaw);
+    const nowSec = Date.now() / 1000;
+    const secondsLeft =
+      resetNum > nowSec * 2 ? Math.max(1, resetNum - nowSec) : Math.max(1, resetNum);
+    if (remaining > 0 && secondsLeft > 0) {
+      const safeRate = Math.max(MIN_REFILL_PER_SEC, remaining / secondsLeft);
+      // Only ratchet down here — never increase past observed safe rate.
+      if (safeRate < b.refillPerSec) b.refillPerSec = safeRate;
+    }
+  } else {
+    b.successesSinceBackoff++;
+    if (b.successesSinceBackoff >= SUCCESSES_PER_RECOVERY) {
+      b.refillPerSec = Math.min(INITIAL_REFILL_PER_SEC, b.refillPerSec * RECOVERY_FACTOR);
+      b.successesSinceBackoff = 0;
+    }
+  }
+}
+
+/** Record a 429 — block the host as the server requested, or back off adaptively. */
+function recordRateLimited(host: string, resp: Response): void {
+  const b = getBucket(host);
+  const retryAfterRaw = resp.headers.get('retry-after');
+  const retryAfter = Number(retryAfterRaw);
+
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    // Server told us exactly when to retry — honor it verbatim.
+    b.blockedUntilMs = Math.max(b.blockedUntilMs, Date.now() + retryAfter * 1000);
+    logger.warn(
+      { host, retryAfter },
+      'Registry 429 with Retry-After — blocking until server-specified time',
+    );
+  } else {
+    // No Retry-After. Back off the rate, don't invent a wait time.
+    b.refillPerSec = Math.max(MIN_REFILL_PER_SEC, b.refillPerSec / BACKOFF_DIVISOR);
+    logger.warn(
+      { host, newRefillPerSec: b.refillPerSec },
+      'Registry 429 without Retry-After — halving adaptive rate',
+    );
+  }
+  b.tokens = 0;
+  b.successesSinceBackoff = 0;
+}
+
+/**
+ * Fetch JSON with adaptive per-host rate limiting. The bucket learns from
+ * the server's own signals — Retry-After, X-RateLimit-* — and falls back to
+ * AIMD on 429s with no guidance. Bounded retry covers genuine 5xx/network
+ * failures only; 429s are handled via the bucket's block window so we don't
+ * retry tightly against a wall.
+ */
+async function fetchJsonPaced(
+  url: string,
+  headers: Record<string, string>,
+  init?: RequestInit,
+): Promise<Response | null> {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return null;
+  }
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt++) {
+    await acquireToken(host);
+    try {
+      const resp = await fetch(url, {
+        ...init,
+        headers,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
+      });
+      if (resp.ok) {
+        recordSuccess(host, resp);
+        return resp;
+      }
+      if (resp.status === 429) {
+        recordRateLimited(host, resp);
+        if (attempt < MAX_TRANSIENT_RETRIES) continue;
+        return resp;
+      }
+      // Definitive 4xx (404, 403, etc.) — package doesn't exist; no retry.
+      if (resp.status >= 400 && resp.status < 500) return resp;
+      // 5xx — retry once after a brief pause.
+      if (attempt < MAX_TRANSIENT_RETRIES) {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      return resp;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < MAX_TRANSIENT_RETRIES) {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+    }
+  }
+  logger.debug({ url, err: lastErr }, 'fetchJsonPaced exhausted');
+  return null;
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -85,62 +278,92 @@ export function convertToWeeklyEquivalent(
  * Per-registry verification outcome.
  * - `verified` — registry API returned a repo URL that matches `<owner>/<repo>`.
  * - `unverifiable` — registry has no metadataUrl/repoUrlField in config; we can't
- *   cross-check. Upstream decides whether to trust the README match.
- * - `rejected` — registry said NO (either repo URL doesn't match, 404, or fetch error).
+ *   cross-check by design.
+ * - `metadata_empty` — registry was reachable, but the repoUrlField is null/empty.
+ *   Common for PyPI publishers who don't fill `project_urls` (open-webui, openbb)
+ *   and npm publishers who omit the `repository` key (flowise, twentyhq, next.js).
+ *   Caller decides based on signal source: trust if README/topic confirmed,
+ *   reject if speculative-only.
+ * - `rejected` — registry returned a repo URL but it doesn't match `<owner>/<repo>`.
+ *   Definitive negative: the registry says this package belongs to someone else.
  */
-export type OwnershipVerdict = 'verified' | 'unverifiable' | 'rejected';
+export type OwnershipVerdict = 'verified' | 'unverifiable' | 'metadata_empty' | 'rejected';
+
+/** Optional callback for resolving GitHub repo redirects (handles org renames). */
+export type RedirectResolver = (ownerRepoKey: string) => Promise<string | null>;
 
 /**
  * Cross-check whether a `(registry, packageName)` channel belongs to the given
  * `<owner>/<repo>` by hitting the registry's own metadata API and comparing
  * repoUrlField back against the tool's GitHub identity.
  *
- * Returns a 3-way verdict so callers can distinguish "registry says no"
- * (reject the channel) from "we can't tell" (trust the README match because
- * some registries lack a metadata API — hackage, cpan, luarocks, nimble,
- * opam, vcpkg, conan, spm, elm, nix, cran, clojars, terraform, ansible,
- * puppet, chef, flathub, wordpress, vscode, julia, cocoapods).
+ * Returns a 4-way verdict so callers can apply source-aware policy. When a
+ * `resolveRedirect` callback is provided and the initial substring check fails
+ * for a github.com URL, attempts one redirect resolution to handle org renames
+ * (geekan/MetaGPT → foundationagents/metagpt, etc.).
  */
 export async function verifyChannelOwnership(
   registry: string,
   packageName: string,
   ownerName: string,
   repoName: string,
+  options?: { resolveRedirect?: RedirectResolver },
 ): Promise<OwnershipVerdict> {
   const config = REGISTRY_CONFIGS[registry];
   if (!config?.metadataUrl || !config.repoUrlField) {
     return 'unverifiable';
   }
 
+  const url = config.metadataUrl.replace('{pkg}', encodeURIComponent(packageName));
+  const resp = await fetchJsonPaced(url, config.headers ?? {});
+  if (!resp || !resp.ok) return 'rejected';
+
+  let data: unknown;
   try {
-    const url = config.metadataUrl.replace('{pkg}', encodeURIComponent(packageName));
-    const resp = await fetch(url, {
-      headers: config.headers ?? {},
-      signal: AbortSignal.timeout(FETCH_TIMEOUT),
-    });
-    if (!resp.ok) return 'rejected';
-
-    const data = await resp.json();
-    const repoUrlValue = getNestedField(data, config.repoUrlField);
-
-    // The repo URL field might be a string or an object (PyPI's project_urls is a dict;
-    // hex has meta.links; packagist has package.repository as a string).
-    const urlsToCheck: string[] = [];
-    if (typeof repoUrlValue === 'string') {
-      urlsToCheck.push(repoUrlValue);
-    } else if (typeof repoUrlValue === 'object' && repoUrlValue !== null) {
-      urlsToCheck.push(...Object.values(repoUrlValue as Record<string, string>));
-    }
-
-    const ownerRepo = `${ownerName}/${repoName}`.toLowerCase();
-    const matches = urlsToCheck.some(
-      (u) => typeof u === 'string' && u.toLowerCase().includes(ownerRepo),
-    );
-    return matches ? 'verified' : 'rejected';
+    data = await resp.json();
   } catch {
-    // Network / parse error — be conservative and reject.
     return 'rejected';
   }
+
+  const repoUrlValue = getNestedField(data, config.repoUrlField);
+
+  // The repo URL field might be a string or an object (PyPI's project_urls is a dict;
+  // hex has meta.links; packagist has package.repository as a string).
+  const urlsToCheck: string[] = [];
+  if (typeof repoUrlValue === 'string') {
+    urlsToCheck.push(repoUrlValue);
+  } else if (typeof repoUrlValue === 'object' && repoUrlValue !== null) {
+    urlsToCheck.push(...Object.values(repoUrlValue as Record<string, string>));
+  }
+
+  // PyPI fallback: when project_urls is null/empty, also try info.home_page
+  // (some publishers fill home_page but not project_urls — e.g. metagpt).
+  if (registry === 'pypi' && urlsToCheck.length === 0) {
+    const homePage = getNestedField(data, 'info.home_page');
+    if (typeof homePage === 'string' && homePage) urlsToCheck.push(homePage);
+  }
+
+  if (urlsToCheck.length === 0) return 'metadata_empty';
+
+  const ownerRepo = `${ownerName}/${repoName}`.toLowerCase();
+  const stringUrls = urlsToCheck.filter((u): u is string => typeof u === 'string');
+  if (stringUrls.some((u) => u.toLowerCase().includes(ownerRepo))) return 'verified';
+
+  // Initial substring check failed. If a resolver is provided AND any URL
+  // points to a github.com/<other-owner>/<other-repo>, try resolving it to
+  // see whether GitHub redirects that path to our expected owner/repo.
+  if (options?.resolveRedirect) {
+    for (const u of stringUrls) {
+      const m = u.match(/github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git|\/?$|\/[#?].*)/i);
+      if (!m?.[1] || !m?.[2]) continue;
+      const candidateKey = `${m[1]}/${m[2]}`.toLowerCase();
+      if (candidateKey === ownerRepo) continue;
+      const resolved = await options.resolveRedirect(candidateKey);
+      if (resolved && resolved.toLowerCase() === ownerRepo) return 'verified';
+    }
+  }
+
+  return 'rejected';
 }
 
 /**
@@ -182,11 +405,8 @@ async function fetchRegistryDownloads(
     }
 
     const url = config.downloadApiUrl.replace('{pkg}', encodeURIComponent(packageName));
-    const resp = await fetch(url, {
-      headers: config.headers ?? {},
-      signal: AbortSignal.timeout(FETCH_TIMEOUT),
-    });
-    if (!resp.ok) return null;
+    const resp = await fetchJsonPaced(url, config.headers ?? {});
+    if (!resp || !resp.ok) return null;
 
     const data = await resp.json();
     const rawDownloads = getNestedField(data, config.downloadField);
@@ -216,14 +436,14 @@ async function fetchVsCodeDownloads(
   extensionId: string,
 ): Promise<{ downloads: number; timeWindow: TimeWindow } | null> {
   try {
-    const resp = await fetch(
+    const resp = await fetchJsonPaced(
       'https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery',
       {
+        Accept: 'application/json;api-version=3.0-preview.1',
+        'Content-Type': 'application/json',
+      },
+      {
         method: 'POST',
-        headers: {
-          Accept: 'application/json;api-version=3.0-preview.1',
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           filters: [
             {
@@ -237,10 +457,9 @@ async function fetchVsCodeDownloads(
           ],
           flags: 256, // IncludeStatistics
         }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT),
       },
     );
-    if (!resp.ok) return null;
+    if (!resp || !resp.ok) return null;
 
     const data = (await resp.json()) as {
       results?: Array<{
@@ -265,11 +484,11 @@ async function fetchHomebrewDownloads(
   formulaName: string,
 ): Promise<{ downloads: number; timeWindow: TimeWindow } | null> {
   try {
-    const resp = await fetch(
+    const resp = await fetchJsonPaced(
       `https://formulae.brew.sh/api/formula/${encodeURIComponent(formulaName)}.json`,
-      { signal: AbortSignal.timeout(FETCH_TIMEOUT) },
+      {},
     );
-    if (!resp.ok) return null;
+    if (!resp || !resp.ok) return null;
 
     const data = (await resp.json()) as {
       analytics?: {
@@ -323,14 +542,21 @@ export interface VerifiedChannel {
 }
 
 /**
- * Verify every discovered channel against its registry's metadata API, drop
- * the ones the registry explicitly disowns (`rejected`), and enrich the
- * survivors with download counts where available.
+ * Verify every discovered channel against its registry's metadata API and
+ * enrich the survivors with download counts where available. Drop policy is
+ * source-aware:
  *
- * Unlike `fetchAllDownloadCounts`, this function covers channels that DON'T
- * have a download API (go, spm, vcpkg, conan, etc.) — those get verified
- * when possible and otherwise pass through as `unverifiable`. It's the
- * authoritative filter for constructing `Tool.package_managers`.
+ *   verdict = 'verified'        → keep (registry confirmed the repo URL match)
+ *   verdict = 'unverifiable'    → keep (registry has no metadata API by config)
+ *   verdict = 'metadata_empty'  → keep IFF source is 'readme' or 'topic'.
+ *                                 Drop for 'speculative' — without README signal
+ *                                 there's nothing to validate the name match.
+ *   verdict = 'rejected'        → drop (registry says repo URL is someone else's)
+ *
+ * The optional `resolveRedirect` callback handles GitHub org renames: when
+ * verifyChannelOwnership's substring check fails for a github.com URL, it
+ * calls the resolver to see whether GitHub redirects the URL's owner/repo to
+ * the expected one. github.ts provides a cached implementation.
  *
  * Return order preserves input order. Rejected channels are filtered out.
  */
@@ -338,6 +564,18 @@ export async function verifyAndFetchAllChannels(
   channels: DiscoveredPackage[],
   ownerName: string,
   repoName: string,
+  options?: {
+    resolveRedirect?: RedirectResolver;
+    /**
+     * When true, only run the (cheap, fast) ownership verification step. Skip
+     * the (slow, rate-limited) download-count fetch — leave weeklyDownloads=0
+     * and let the side queue's registry-probe handler fill it in later.
+     *
+     * Used by the main indexer path to keep GitHub-bound throughput high:
+     * pypistats.org and similar slow hosts don't bottleneck the main flow.
+     */
+    skipDownloads?: boolean;
+  },
 ): Promise<VerifiedChannel[]> {
   if (channels.length === 0) return [];
 
@@ -349,21 +587,36 @@ export async function verifyAndFetchAllChannels(
         ch.packageName,
         ownerName,
         repoName,
+        { resolveRedirect: options?.resolveRedirect },
       );
-      if (verdict === 'rejected') {
+
+      // Source-aware policy.
+      const drop =
+        verdict === 'rejected' || (verdict === 'metadata_empty' && ch.source === 'speculative');
+
+      if (drop) {
         logger.debug(
-          { registry: ch.registry, pkg: ch.packageName, owner: ownerName, repo: repoName },
-          'Channel rejected by registry — dropping from package_managers',
+          {
+            registry: ch.registry,
+            pkg: ch.packageName,
+            owner: ownerName,
+            repo: repoName,
+            verdict,
+            source: ch.source,
+          },
+          'Channel dropped from package_managers',
         );
         return null;
       }
 
       let weekly = 0;
-      const cfg = REGISTRY_CONFIGS[ch.registry];
-      if (cfg?.hasDownloadApi) {
-        const dl = await fetchRegistryDownloads(ch.registry, ch.packageName);
-        if (dl) {
-          weekly = convertToWeeklyEquivalent(dl.downloads, dl.timeWindow, dl.createdAt);
+      if (!options?.skipDownloads) {
+        const cfg = REGISTRY_CONFIGS[ch.registry];
+        if (cfg?.hasDownloadApi) {
+          const dl = await fetchRegistryDownloads(ch.registry, ch.packageName);
+          if (dl) {
+            weekly = convertToWeeklyEquivalent(dl.downloads, dl.timeWindow, dl.createdAt);
+          }
         }
       }
 

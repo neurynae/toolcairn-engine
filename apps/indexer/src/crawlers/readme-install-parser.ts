@@ -19,10 +19,19 @@ const logger = createLogger({ name: '@toolcairn/indexer:readme-install-parser' }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/**
+ * Where a candidate channel came from. Downstream verification policy
+ * differs per source — speculative guesses must be verifiable, README/topic
+ * signals can pass through with weaker registry metadata because the
+ * maintainer's own README counts as confirmation.
+ */
+export type DiscoverySource = 'readme' | 'topic' | 'speculative';
+
 export interface DiscoveredPackage {
   registry: string;
   packageName: string;
   rawCommand: string;
+  source: DiscoverySource;
 }
 
 // ─── Code Block Extraction ──────────────────────────────────────────────────
@@ -114,7 +123,7 @@ export function parseInstallCommands(readme: string): DiscoveredPackage[] {
         if (seen.has(key)) continue;
         seen.add(key);
 
-        found.push({ registry, packageName: pkg, rawCommand: trimmed });
+        found.push({ registry, packageName: pkg, rawCommand: trimmed, source: 'readme' });
       }
     }
   }
@@ -300,6 +309,7 @@ export function discoverDistributionChannels(
         registry,
         packageName: repoName,
         rawCommand: `topic:${topic}`,
+        source: 'topic',
       });
       seenRegistries.add(registry);
     }

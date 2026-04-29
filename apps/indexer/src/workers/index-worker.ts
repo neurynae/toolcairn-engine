@@ -9,6 +9,7 @@ import {
 import type { QueueHandlers } from '@toolcairn/queue';
 import { getRateLimitStatus, refreshRateLimitsFromGitHub } from '../crawlers/github-discovery.js';
 import { handleIndexJob } from '../queue-consumers/index-consumer.js';
+import { handleRegistryProbe } from '../queue-consumers/registry-probe-consumer.js';
 import { runDiscoveryScheduler } from '../schedulers/discovery-scheduler.js';
 import { runPendingWatchdog } from '../schedulers/pending-watchdog.js';
 import { runReindexScheduler } from '../schedulers/reindex-scheduler.js';
@@ -187,6 +188,7 @@ export async function startIndexWorker(): Promise<void> {
     onSearchEvent: logSearchEvent,
     onRunDiscovery: runDiscovery,
     onRunReindex: runReindex,
+    onRegistryProbe: handleRegistryProbe,
   };
 
   // INDEXER_IDLE_EXIT_MINUTES: when set, exit after queue has been empty for this

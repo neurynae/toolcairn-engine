@@ -4,6 +4,7 @@ export type { QueueError, QueueMessage } from './types.js';
 export {
   enqueueBatchReindex,
   enqueueIndexJob,
+  enqueueRegistryProbe,
   enqueueSearchEvent,
   enqueueDiscoveryTrigger,
   enqueueReindexTrigger,

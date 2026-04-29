@@ -76,7 +76,15 @@ export async function upsertIndexedTool(
           updated_at: new Date(),
           ...(meta?.stars !== undefined && { stars: meta.stars }),
           ...(meta?.weeklyDownloads !== undefined && { weekly_downloads: meta.weeklyDownloads }),
-          ...(meta?.skipReason !== undefined && { skip_reason: meta.skipReason }),
+          // Skip reason follows status:
+          // - status='skipped' with meta.skipReason → write the new reason
+          // - status='indexed'/'pending' → clear stale skip_reason from any prior skip
+          // - status='skipped' without meta.skipReason → leave existing reason (legacy paths)
+          ...(status === 'skipped' && meta?.skipReason !== undefined
+            ? { skip_reason: meta.skipReason }
+            : status !== 'skipped'
+              ? { skip_reason: null }
+              : {}),
         },
         create: {
           github_url: normalizedUrl,
@@ -86,7 +94,7 @@ export async function upsertIndexedTool(
           retry_count: 0,
           stars: meta?.stars,
           weekly_downloads: meta?.weeklyDownloads,
-          skip_reason: meta?.skipReason,
+          skip_reason: status === 'skipped' ? meta?.skipReason : null,
         },
       }),
     );
