@@ -438,40 +438,42 @@ export function dataRoutes() {
     }
   });
 
-  // GET /v1/data/recent-submissions?limit=4 — most recently indexed tools.
-  // Powers the "Recent submissions" panel on /suggest. Returns the most-recent
-  // entries from IndexedTool ordered by last_indexed_at DESC, with display
-  // name + github_url. Filters to status='indexed' so users only see accepted
-  // submissions.
+  // GET /v1/data/recent-submissions?limit=4 — most recent COMMUNITY tool
+  // submissions. Powers the "Recent submissions" panel on /suggest. Reads
+  // from StagedNode (source='community') ordered by created_at DESC. Includes
+  // both pending and graduated rows so the panel reflects real user activity
+  // (not crawler indexer churn). Empty when no users have submitted yet.
   app.get('/recent-submissions', async (c) => {
     try {
       const limit = Math.min(20, Math.max(1, Number(c.req.query('limit') ?? 4)));
-      const rows = await prisma.indexedTool.findMany({
-        where: { index_status: 'indexed', last_indexed_at: { not: null } },
-        orderBy: { last_indexed_at: 'desc' },
+      const rows = await prisma.stagedNode.findMany({
+        where: { node_type: 'Tool', source: 'community' },
+        orderBy: { created_at: 'desc' },
         take: limit,
         select: {
-          github_url: true,
-          last_indexed_at: true,
-          stars: true,
+          id: true,
+          node_data: true,
+          created_at: true,
+          graduated: true,
         },
       });
 
       const entries = rows.map((r) => {
-        // Extract owner/repo from URL like https://github.com/owner/repo
-        const m = r.github_url.match(/github\.com\/([^/]+)\/([^/?#]+)/);
-        const repo = m?.[2] ?? 'unknown';
+        const data = r.node_data as { github_url?: string; name?: string };
+        const url = data.github_url ?? '';
+        const m = url.match(/github\.com\/([^/]+)\/([^/?#]+)/);
+        const repo = m?.[2] ?? data.name ?? 'unknown';
         return {
           name: repo,
           display_name: repo,
-          github_url: r.github_url,
-          indexed_at: r.last_indexed_at?.toISOString() ?? null,
-          stars: r.stars ?? 0,
+          github_url: url,
+          indexed_at: r.created_at.toISOString(),
+          status: r.graduated ? 'approved' : 'pending',
         };
       });
 
       return c.json({ ok: true, data: { entries } }, 200, {
-        'Cache-Control': 'public, max-age=300, stale-while-revalidate=900',
+        'Cache-Control': 'public, max-age=60, stale-while-revalidate=300',
       });
     } catch (e) {
       return c.json(

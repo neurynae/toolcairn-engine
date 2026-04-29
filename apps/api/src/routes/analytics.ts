@@ -366,8 +366,10 @@ export function analyticsRoutes() {
   });
 
   // GET /v1/analytics/leaderboard-kpis — aggregate KPI counts for the
-  // leaderboard header cards: total tools indexed (Postgres), total search
-  // queries executed, and average quality score across top tools.
+  // leaderboard stats card: tools indexed, GitHub stars total, coverage %,
+  // each with a "this week" delta and a global last-updated timestamp.
+  // Backward-compat: original tools_indexed / total_queries / quality_avg
+  // fields are still returned for any older clients.
   app.get('/leaderboard-kpis', async (c) => {
     try {
       const sevenDaysAgo = new Date();
@@ -379,15 +381,28 @@ export function analyticsRoutes() {
         toolCount,
         toolsThisWeek,
         toolsLastWeek,
+        indexedCount,
+        starsAggAll,
+        starsAggThisWeek,
         queryCount,
         queriesThisWeek,
         queriesLastWeek,
         topTools,
+        latestIndexed,
       ] = await Promise.all([
         prisma.indexedTool.count(),
         prisma.indexedTool.count({ where: { last_indexed_at: { gte: sevenDaysAgo } } }),
         prisma.indexedTool.count({
           where: { last_indexed_at: { gte: fourteenDaysAgo, lt: sevenDaysAgo } },
+        }),
+        prisma.indexedTool.count({ where: { index_status: 'indexed' } }),
+        prisma.indexedTool.aggregate({
+          _sum: { stars: true },
+          where: { index_status: 'indexed' },
+        }),
+        prisma.indexedTool.aggregate({
+          _sum: { stars: true },
+          where: { index_status: 'indexed', last_indexed_at: { gte: sevenDaysAgo } },
         }),
         prisma.searchSession.count(),
         prisma.searchSession.count({ where: { created_at: { gte: sevenDaysAgo } } }),
@@ -395,6 +410,11 @@ export function analyticsRoutes() {
           where: { created_at: { gte: fourteenDaysAgo, lt: sevenDaysAgo } },
         }),
         repo.findTopByStars(100),
+        prisma.indexedTool.findFirst({
+          where: { last_indexed_at: { not: null } },
+          orderBy: { last_indexed_at: 'desc' },
+          select: { last_indexed_at: true },
+        }),
       ]);
 
       let qualityAvg = 0;
@@ -408,20 +428,34 @@ export function analyticsRoutes() {
       const pct = (curr: number, prev: number): number =>
         prev > 0 ? Math.round(((curr - prev) / prev) * 1000) / 10 : 0;
 
+      const starsTotal = starsAggAll._sum.stars ?? 0;
+      const starsThisWeek = starsAggThisWeek._sum.stars ?? 0;
+      const coveragePct = toolCount > 0 ? Math.round((indexedCount / toolCount) * 1000) / 10 : 0;
+      const coverageDeltaPct = pct(toolsThisWeek, toolsLastWeek);
+
       return c.json(
         {
           ok: true,
           data: {
-            tools_indexed: toolCount,
+            // Stats-card fields used by /leaderboard top stats card
+            tools_indexed: indexedCount,
+            tools_indexed_this_week: toolsThisWeek,
+            github_stars_total: starsTotal,
+            github_stars_this_week: starsThisWeek,
+            coverage_pct: coveragePct,
+            coverage_delta_pct: coverageDeltaPct,
+            last_updated_at: latestIndexed?.last_indexed_at?.toISOString() ?? null,
+
+            // Backward-compat fields for older clients
             tools_indexed_delta_pct: pct(toolsThisWeek, toolsLastWeek),
             total_queries: queryCount,
             total_queries_delta_pct: pct(queriesThisWeek, queriesLastWeek),
             quality_avg: qualityAvg,
-            quality_avg_delta_pct: 0, // quality is a long-trend metric; delta computed elsewhere
+            quality_avg_delta_pct: 0,
           },
         },
         200,
-        { 'Cache-Control': 'public, max-age=3600, stale-while-revalidate=7200' },
+        { 'Cache-Control': 'public, max-age=600, stale-while-revalidate=1800' },
       );
     } catch (e) {
       return c.json(
